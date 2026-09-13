@@ -1,3 +1,4 @@
+mod deps;
 mod discover;
 mod history;
 mod lang;
@@ -40,6 +41,15 @@ enum Cmd {
         /// Git --since window
         #[arg(long, default_value = "6 months ago")]
         since: String,
+    },
+    /// Import graph: cycles, fan-in/out, instability
+    Deps {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 15)]
+        top: usize,
     },
     /// Per-function cognitive/cyclomatic complexity for source files
     Metrics {
@@ -108,6 +118,29 @@ fn main() -> Result<()> {
             println!("\nco-change pairs (together / strength):");
             for c in hist.co_changes.iter().take(top) {
                 println!("{:>3}  {:.2}  {}  <->  {}", c.together, c.strength, c.a, c.b);
+            }
+        }
+        Cmd::Deps { path, json, top } => {
+            let files = discover::walk(&path)?;
+            let g = deps::build(&files);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&g)?);
+                return Ok(());
+            }
+            println!("{} files, {} in-repo edges\n", g.files.len(), g.edges);
+            println!("directory cycles ({}):", g.dir_cycles.len());
+            for c in g.dir_cycles.iter().take(top) {
+                println!("  {}", c.members.join("  <->  "));
+            }
+            println!("\nfile cycles ({}):", g.file_cycles.len());
+            for c in g.file_cycles.iter().take(top) {
+                println!("  [{}] {}", c.members.len(), c.members.join(", "));
+            }
+            let mut rows: Vec<(&String, &deps::FileDeps)> = g.files.iter().collect();
+            rows.sort_by_key(|(_, d)| std::cmp::Reverse(d.fan_in));
+            println!("\n{:>6} {:>7} {:>5} {:>5}  most depended-on", "fan_in", "fan_out", "tests", "inst");
+            for (p, d) in rows.iter().take(top) {
+                println!("{:>6} {:>7} {:>5} {:>5.2}  {}{}", d.fan_in, d.fan_out, d.test_refs, d.instability, p, if d.in_cycle { "  (cycle)" } else { "" });
             }
         }
         Cmd::Metrics { path, json, top } => {
