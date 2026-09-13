@@ -5,3 +5,4 @@ code: [src/report/**, src/main.rs]
 # report
 
 ## Rules
+- The report is written for an LLM reader: every ranked item carries the reasons it ranked, with symbol names and line ranges, never a bare number.
