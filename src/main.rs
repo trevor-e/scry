@@ -4,6 +4,7 @@ mod discover;
 mod history;
 mod lang;
 mod metrics;
+mod report;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -19,6 +20,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Run every pass and rank the files most worth attention, with reasons
+    Scan {
+        /// Repository root (must be the git root for history to join)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Emit the full report as JSON
+        #[arg(long)]
+        json: bool,
+        /// Entries per section
+        #[arg(long, default_value_t = 15)]
+        top: usize,
+        /// Git --since window for churn
+        #[arg(long, default_value = "6 months ago")]
+        since: String,
+        /// Skip git history (rank on static signals only)
+        #[arg(long)]
+        no_history: bool,
+    },
     /// Walk a repository and report what was found, by language and kind
     Files {
         /// Repository root
@@ -82,6 +101,43 @@ enum Cmd {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Scan { path, json, top, since, no_history } => {
+            let files = discover::walk(&path)?;
+            let source: Vec<discover::SourceFile> =
+                files.iter().filter(|f| f.kind == discover::FileKind::Source).cloned().collect();
+            let tracked: std::collections::HashSet<String> = source.iter().map(|f| f.path.clone()).collect();
+            let history = if no_history {
+                None
+            } else {
+                match history::collect(&path, &since, &tracked) {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        eprintln!("warning: history unavailable: {e:#}");
+                        None
+                    }
+                }
+            };
+            let (file_metrics, functions) = metrics::analyze_all(&source);
+            let graph = deps::build(&files);
+            let clone_report = clones::detect(&source);
+            let report = report::build(
+                report::Inputs {
+                    root: path.canonicalize()?.display().to_string(),
+                    files: &files,
+                    history: history.as_ref(),
+                    file_metrics: &file_metrics,
+                    functions: &functions,
+                    deps: &graph,
+                    clones: &clone_report,
+                },
+                top,
+            );
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", report::render(&report, top));
+            }
+        }
         Cmd::Files { path, json, top } => {
             let files = discover::walk(&path)?;
             if json {
