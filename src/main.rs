@@ -1,3 +1,4 @@
+mod clones;
 mod deps;
 mod discover;
 mod history;
@@ -41,6 +42,15 @@ enum Cmd {
         /// Git --since window
         #[arg(long, default_value = "6 months ago")]
         since: String,
+    },
+    /// Near-exact clone pairs across source files
+    Clones {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 20)]
+        top: usize,
     },
     /// Import graph: cycles, fan-in/out, instability
     Deps {
@@ -118,6 +128,26 @@ fn main() -> Result<()> {
             println!("\nco-change pairs (together / strength):");
             for c in hist.co_changes.iter().take(top) {
                 println!("{:>3}  {:.2}  {}  <->  {}", c.together, c.strength, c.a, c.b);
+            }
+        }
+        Cmd::Clones { path, json, top } => {
+            let files = discover::walk(&path)?;
+            let src: Vec<discover::SourceFile> =
+                files.into_iter().filter(|f| f.kind == discover::FileKind::Source).collect();
+            let r = clones::detect(&src);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+                return Ok(());
+            }
+            println!("{} clone pairs (>= {} tokens) across {} files\n", r.pairs.len(), clones::MIN_TOKENS, r.files.len());
+            for p in r.pairs.iter().take(top) {
+                println!("{:>5} tok  {}:{}-{}  <->  {}:{}-{}", p.tokens, p.a.file, p.a.start_line, p.a.end_line, p.b.file, p.b.start_line, p.b.end_line);
+            }
+            let mut rows: Vec<(&String, &clones::FileClones)> = r.files.iter().collect();
+            rows.sort_by(|x, y| y.1.clone_ratio.partial_cmp(&x.1.clone_ratio).unwrap());
+            println!("\nmost duplicated files (cloned lines / ratio):");
+            for (p, c) in rows.iter().take(top) {
+                println!("{:>5} {:>5.0}%  {}", c.clone_lines, c.clone_ratio * 100.0, p);
             }
         }
         Cmd::Deps { path, json, top } => {
