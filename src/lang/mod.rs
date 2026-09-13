@@ -44,10 +44,6 @@ impl Language {
         parser
     }
 
-    /// True for the JS family (they share one grammar and one import syntax).
-    pub fn is_js_family(self) -> bool {
-        matches!(self, Self::TypeScript | Self::Tsx | Self::JavaScript)
-    }
 
     pub fn name(self) -> &'static str {
         match self {
