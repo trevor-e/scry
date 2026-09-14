@@ -5,6 +5,7 @@ mod discover;
 mod history;
 mod lang;
 mod metrics;
+mod regions;
 mod report;
 
 use anyhow::Result;
@@ -143,9 +144,9 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let (file_metrics, functions) = metrics::analyze_all(&source, &cfg.metrics);
+            let (file_metrics, functions) = metrics::analyze_all(&source, &cfg.metrics, &cfg.tests);
             let graph = deps::build(&files, &cfg.deps);
-            let clone_report = clones::detect(&source, &cfg.clones);
+            let clone_report = clones::detect(&source, &cfg.clones, &cfg.tests);
             let report = report::build(
                 report::Inputs {
                     root: path.canonicalize()?.display().to_string(),
@@ -156,6 +157,7 @@ fn main() -> Result<()> {
                     deps: &graph,
                     clones: &clone_report,
                     cognitive_hard: cfg.metrics.cognitive_hard,
+                    tests: &cfg.tests,
                 },
                 top,
                 &cfg.report,
@@ -222,7 +224,7 @@ fn main() -> Result<()> {
             let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
                 files.into_iter().filter(|f| f.kind == discover::FileKind::Source).collect();
-            let r = clones::detect(&src, &cfg.clones);
+            let r = clones::detect(&src, &cfg.clones, &cfg.tests);
             if json {
                 println!("{}", serde_json::to_string_pretty(&r)?);
                 return Ok(());
@@ -265,7 +267,7 @@ fn main() -> Result<()> {
             let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
                 files.into_iter().filter(|f| f.kind == discover::FileKind::Source).collect();
-            let (file_metrics, mut funcs) = metrics::analyze_all(&src, &cfg.metrics);
+            let (file_metrics, mut funcs) = metrics::analyze_all(&src, &cfg.metrics, &cfg.tests);
             if json {
                 println!("{}", serde_json::to_string_pretty(&serde_json::json!({"files": file_metrics, "functions": funcs}))?);
                 return Ok(());
@@ -277,7 +279,8 @@ fn main() -> Result<()> {
                 cfg.metrics.cognitive_hard);
             println!("{:>4} {:>4} {:>4} {:>5} {:>3}  location", "cog", "cyc", "nest", "lines", "par");
             for f in funcs.iter().take(top) {
-                println!("{:>4} {:>4} {:>4} {:>5} {:>3}  {}:{}  {}", f.cognitive, f.cyclomatic, f.max_nesting, f.lines, f.params, f.file, f.start_line, f.name);
+                let tag = if f.in_test { " (in inline tests)" } else { "" };
+                println!("{:>4} {:>4} {:>4} {:>5} {:>3}  {}:{}  {}{tag}", f.cognitive, f.cyclomatic, f.max_nesting, f.lines, f.params, f.file, f.start_line, f.name);
             }
             let broken: Vec<&str> = file_metrics.iter().filter(|f| f.parse_errors).map(|f| f.path.as_str()).collect();
             if !broken.is_empty() {

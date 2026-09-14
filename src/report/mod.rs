@@ -6,17 +6,21 @@
 //! language, and every ranked file carries the reasons it ranked, in words.
 
 use crate::clones::{CloneReport, ClonePair};
-use crate::config::{Report as Cfg, Weights};
+use crate::config::{Report as Cfg, Tests as TestsCfg, Weights};
 use crate::deps::{Cycle, DepGraph};
 use crate::discover::{FileKind, SourceFile};
 use crate::history::History;
 use crate::metrics::{FileMetrics, FunctionMetrics};
+use crate::regions::{RegionKind, TestRegion};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Signals {
+    /// Whole file. The size signal uses `lines - inline_test_lines`.
     pub lines: usize,
+    /// Lines spanned by inline test regions (Rust `#[cfg(test)]`).
+    pub inline_test_lines: usize,
     pub commits: usize,
     pub fix_commits: usize,
     pub authors: usize,
@@ -39,6 +43,10 @@ pub struct Hotspot {
     pub signals: Signals,
     pub reasons: Vec<String>,
     pub worst_functions: Vec<FunctionMetrics>,
+    pub test_regions: Vec<TestRegion>,
+    /// `1026 in #[cfg(test)] mod at 1283-2308`, printed after the line count when the inline
+    /// test ratio is at or above `[tests].report_inline_ratio_above`.
+    pub inline_test_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +100,7 @@ pub struct Inputs<'a> {
     pub deps: &'a DepGraph,
     pub clones: &'a CloneReport,
     pub cognitive_hard: u32,
+    pub tests: &'a TestsCfg,
 }
 
 /// Percentile rank in [0,1]: share of other values strictly below this one.
@@ -161,14 +170,30 @@ fn stem_tested(tstems: &HashMap<String, Vec<String>>, f: &SourceFile) -> bool {
     })
 }
 
-/// Rust keeps unit tests inside the module; no separate test file will ever reference it.
-fn has_inline_tests(f: &SourceFile) -> bool {
-    f.lang == crate::lang::Language::Rust && f.content.contains("#[cfg(test)]")
+/// `1026 in #[cfg(test)] mod at 1283-2308`; every merged region's range when there are several.
+fn inline_test_note(regions: &[TestRegion], inline_test_lines: usize) -> String {
+    let biggest = regions.iter().max_by_key(|r| r.lines()).map(|r| r.kind);
+    let what = match biggest {
+        Some(RegionKind::CfgTestMod) => "#[cfg(test)] mod",
+        Some(RegionKind::TestFn) => "#[test] fn",
+        _ => "#[cfg(test)] item",
+    };
+    let ranges: Vec<String> = regions.iter().map(|r| format!("{}-{}", r.start_line, r.end_line)).collect();
+    format!("{inline_test_lines} in {what} at {}", ranges.join(", "))
 }
 
 pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report {
-    let source: Vec<&SourceFile> = inp.files.iter().filter(|f| f.kind == FileKind::Source).collect();
     let fm: HashMap<&str, &FileMetrics> = inp.file_metrics.iter().map(|m| (m.path.as_str(), m)).collect();
+    let inline_ratio = |f: &SourceFile| {
+        let t = fm.get(f.path.as_str()).map_or(0, |m| m.inline_test_lines);
+        if f.lines == 0 { 0.0 } else { t as f64 / f.lines as f64 }
+    };
+    // A Source file that is nearly all inline tests is a test file for ranking purposes.
+    let reclassified = |f: &SourceFile| inline_ratio(f) > inp.tests.reclassify_file_above_ratio;
+    let source: Vec<&SourceFile> =
+        inp.files.iter().filter(|f| f.kind == FileKind::Source && !reclassified(f)).collect();
+    let reclassified_files = inp.files.iter().filter(|f| f.kind == FileKind::Source && reclassified(f)).count();
+    let source_lines = |f: &SourceFile| f.lines.saturating_sub(fm.get(f.path.as_str()).map_or(0, |m| m.inline_test_lines));
     let tstems = test_stems(inp.files, test_dirs);
     let empty_hist = History::default();
     let hist = inp.history.unwrap_or(&empty_hist);
@@ -182,6 +207,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let c = inp.clones.files.get(&f.path);
             Signals {
                 lines: f.lines,
+                inline_test_lines: m.map_or(0, |m| m.inline_test_lines),
                 commits: h.map_or(0, |h| h.commits),
                 fix_commits: h.map_or(0, |h| h.fix_commits),
                 authors: h.map_or(0, |h| h.authors),
@@ -194,7 +220,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 in_cycle: d.is_some_and(|d| d.in_cycle),
                 clone_lines: c.map_or(0, |c| c.clone_lines),
                 clone_ratio: c.map_or(0.0, |c| c.clone_ratio),
-                has_tests: d.is_some_and(|d| d.test_refs > 0) || stem_tested(&tstems, f) || has_inline_tests(f),
+                has_tests: d.is_some_and(|d| d.test_refs > 0) || stem_tested(&tstems, f) || m.is_some_and(|m| !m.test_regions.is_empty()),
             }
         })
         .collect();
@@ -203,16 +229,17 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
     let p_fix = percentiles(&signals.iter().map(|s| s.fix_commits).collect::<Vec<_>>());
     let p_maxcog = percentiles(&signals.iter().map(|s| s.max_cognitive).collect::<Vec<_>>());
     let p_totcog = percentiles(&signals.iter().map(|s| s.total_cognitive).collect::<Vec<_>>());
-    let p_lines = percentiles(&signals.iter().map(|s| s.lines).collect::<Vec<_>>());
+    let p_lines = percentiles(&signals.iter().map(|s| s.lines.saturating_sub(s.inline_test_lines)).collect::<Vec<_>>());
     let p_fanin = percentiles(&signals.iter().map(|s| s.fan_in).collect::<Vec<_>>());
     let p_clone = percentiles(&signals.iter().map(|s| s.clone_lines).collect::<Vec<_>>());
     // Commits that touched none of our files (a subdirectory scan of a larger
     // repo, a shallow clone) are not history we can rank on.
     let have_history = !hist.files.is_empty();
 
-    // Worst functions per file, for the explanation.
+    // Worst functions per file, for the explanation. Units inside inline test regions are not
+    // production code and never head a reason.
     let mut worst: HashMap<&str, Vec<&FunctionMetrics>> = HashMap::new();
-    for f in inp.functions {
+    for f in inp.functions.iter().filter(|f| !f.in_test) {
         worst.entry(f.file.as_str()).or_default().push(f);
     }
     for v in worst.values_mut() {
@@ -295,12 +322,17 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             if s.authors == 1 && s.commits >= cfg.reason_bus_factor_min_commits {
                 reasons.push("single author over the window (bus factor 1)".to_string());
             }
+            let test_regions = fm.get(f.path.as_str()).map(|m| m.test_regions.clone()).unwrap_or_default();
+            let inline_test_note = (!test_regions.is_empty() && inline_ratio(f) >= inp.tests.report_inline_ratio_above)
+                .then(|| inline_test_note(&test_regions, s.inline_test_lines));
             Hotspot {
                 path: f.path.clone(),
                 score,
                 signals: s.clone(),
                 reasons,
                 worst_functions: worst.get(f.path.as_str()).map(|v| v.iter().map(|f| (*f).clone()).collect()).unwrap_or_default(),
+                test_regions,
+                inline_test_note,
             }
         })
         .collect();
@@ -314,11 +346,12 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
         let e = dirs.entry(d).or_insert_with(|| DirSummary {
             dir: d.to_string(), files: 0, lines: 0, total_cognitive: 0, largest_file: String::new(), largest_lines: 0,
         });
+        let lines = source_lines(f);
         e.files += 1;
-        e.lines += f.lines;
+        e.lines += lines;
         e.total_cognitive += signals[i].total_cognitive;
-        if f.lines > e.largest_lines {
-            e.largest_lines = f.lines;
+        if lines > e.largest_lines {
+            e.largest_lines = lines;
             e.largest_file = f.path.clone();
         }
     }
@@ -328,10 +361,10 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
     let summary = Summary {
         root: inp.root,
         source_files: source.len(),
-        test_files: inp.files.iter().filter(|f| f.kind == FileKind::Test).count(),
-        source_lines: source.iter().map(|f| f.lines).sum(),
-        functions: inp.functions.len(),
-        complex_functions: inp.functions.iter().filter(|f| f.cognitive > inp.cognitive_hard).count(),
+        test_files: inp.files.iter().filter(|f| f.kind == FileKind::Test).count() + reclassified_files,
+        source_lines: source.iter().map(|f| source_lines(f)).sum(),
+        functions: inp.functions.iter().filter(|f| !f.in_test).count(),
+        complex_functions: inp.functions.iter().filter(|f| !f.in_test && f.cognitive > inp.cognitive_hard).count(),
         history_window: inp.history.map(|h| h.window.clone()),
         commits_scanned: hist.commits_scanned,
         cognitive_hard: inp.cognitive_hard,
@@ -356,6 +389,65 @@ mod tests {
         crate::config::Discover::default().test_dirs
     }
 
+    fn fmetrics(path: &str, total: u32, max: u32, complex: usize) -> FileMetrics {
+        FileMetrics {
+            path: path.into(), functions: 1, total_cognitive: total, max_cognitive: max, max_nesting: 0, complex_functions: complex,
+            parse_errors: false, inline_test_lines: 0, test_regions: vec![],
+        }
+    }
+
+    fn region(kind: RegionKind, start_line: usize, end_line: usize) -> TestRegion {
+        TestRegion { kind, start_byte: 0, end_byte: 0, start_line, end_line }
+    }
+
+    #[test]
+    fn inline_test_regions_shrink_size_and_count_as_tests() {
+        let sf = |p: &str, lines: usize| SourceFile {
+            path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines, bytes: 0, content: String::new(),
+        };
+        // a.rs is mostly tests: ranks small on size and has tests. b.rs is all source, no tests.
+        // c.rs is 95% tests: reclassified, not a hotspot.
+        let files = vec![sf("a.rs", 2308), sf("b.rs", 1500), sf("c.rs", 100)];
+        let mut a = fmetrics("a.rs", 1, 1, 0);
+        a.inline_test_lines = 1300;
+        a.test_regions = vec![region(RegionKind::CfgTestMod, 1009, 2308)];
+        let mut c = fmetrics("c.rs", 1, 1, 0);
+        c.inline_test_lines = 95;
+        c.test_regions = vec![region(RegionKind::CfgTestMod, 6, 100)];
+        let fm = vec![a, fmetrics("b.rs", 1, 1, 0), c];
+        let functions = vec![
+            FunctionMetrics { file: "a.rs".into(), name: "src".into(), start_line: 1, end_line: 2, lines: 2, params: 0, cyclomatic: 1, cognitive: 1, max_nesting: 0, in_test: false },
+            FunctionMetrics { file: "a.rs".into(), name: "tst".into(), start_line: 1300, end_line: 1360, lines: 61, params: 0, cyclomatic: 1, cognitive: 40, max_nesting: 3, in_test: true },
+        ];
+        let deps = DepGraph::default();
+        let clones = CloneReport::default();
+        let tests = TestsCfg::default();
+        let size_only = Cfg {
+            without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 1.0 },
+            ..Cfg::default()
+        };
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests }, 10, &size_only, &td());
+        let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
+        assert_eq!(paths, vec!["b.rs", "a.rs"], "{r:?}");
+        let a = &r.hotspots[1];
+        assert_eq!((a.signals.lines, a.signals.inline_test_lines), (2308, 1300));
+        assert!(a.signals.has_tests);
+        assert!(!r.hotspots[0].signals.has_tests);
+        assert_eq!(a.inline_test_note.as_deref(), Some("1300 in #[cfg(test)] mod at 1009-2308"));
+        assert_eq!(a.test_regions.len(), 1);
+        assert_eq!(a.worst_functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), vec!["src"]);
+        assert_eq!((r.summary.source_files, r.summary.test_files, r.summary.source_lines, r.summary.functions), (2, 1, 1008 + 1500, 1));
+        assert_eq!((r.directories[0].lines, r.directories[0].largest_file.as_str(), r.directories[0].largest_lines), (2508, "b.rs", 1500));
+        let text = render(&r, 10);
+        assert!(text.contains("a.rs  (2308 lines, 1300 in #[cfg(test)] mod at 1009-2308)"), "{text}");
+        assert!(text.contains("b.rs  (1500 lines)"), "{text}");
+        // Below the ratio knob the note is absent; the region still counts as tests.
+        let strict = TestsCfg { report_inline_ratio_above: 0.9, ..TestsCfg::default() };
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &strict }, 10, &size_only, &td());
+        assert!(r.hotspots[1].inline_test_note.is_none());
+        assert!(r.hotspots[1].signals.has_tests);
+    }
+
     #[test]
     fn test_scope_stops_at_the_first_test_dir() {
         assert_eq!(test_scope("backend/tests/unit/test_x.py", &td()), "backend");
@@ -372,12 +464,13 @@ mod tests {
         };
         let files = vec![sf("big.py", 1000), sf("small.py", 10)];
         let fm = vec![
-            FileMetrics { path: "big.py".into(), functions: 1, total_cognitive: 1, max_cognitive: 1, max_nesting: 0, complex_functions: 0, parse_errors: false },
-            FileMetrics { path: "small.py".into(), functions: 1, total_cognitive: 30, max_cognitive: 30, max_nesting: 0, complex_functions: 1, parse_errors: false },
+            fmetrics("big.py", 1, 1, 0),
+            fmetrics("small.py", 30, 30, 1),
         ];
         let deps = DepGraph::default();
         let clones = CloneReport::default();
-        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15 };
+        let tests = TestsCfg::default();
+        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests };
         let by_default = build(inputs(), 10, &Cfg::default(), &td());
         assert_eq!(by_default.hotspots[0].path, "small.py");
         let size_only = Cfg {
@@ -423,7 +516,8 @@ pub fn render(r: &Report, top: usize) -> String {
 
     let _ = writeln!(o, "\nHOTSPOTS  (score = churn x complexity, boosted by fixes, coupling, clones, missing tests)");
     for (i, h) in r.hotspots.iter().take(top).enumerate() {
-        let _ = writeln!(o, "{:>2}. {:>5.1}  {}  ({} lines)", i + 1, h.score, h.path, h.signals.lines);
+        let note = h.inline_test_note.as_ref().map(|n| format!(", {n}")).unwrap_or_default();
+        let _ = writeln!(o, "{:>2}. {:>5.1}  {}  ({} lines{note})", i + 1, h.score, h.path, h.signals.lines);
         for reason in &h.reasons {
             let _ = writeln!(o, "        - {reason}");
         }

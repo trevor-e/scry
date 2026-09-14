@@ -15,3 +15,5 @@ code: [src/metrics/**]
 - Parse errors are reported per file but never abort analysis: tree-sitter recovers locally and the rest of the file is still measured.
 - The AST walk is iterative (explicit stack), never recursive: a single deeply nested expression must not overflow a worker thread's stack and abort the scan.
 - The "hard to follow" threshold is `[metrics].cognitive_hard` in `scry.toml`.
+- A unit whose start lies inside an inline test region (see `regions`) stays in the functions list tagged `in_test = true` and `scry metrics` prints it with ` (in inline tests)`; file totals (`functions`, `total_cognitive`, `max_cognitive`, `max_nesting`, `complex_functions`) count only untagged units.
+- Every file reports `inline_test_lines` (lines spanned by its merged regions) and `test_regions[]` with kind and line range.

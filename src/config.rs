@@ -22,6 +22,7 @@ pub struct Config {
     pub deps: Deps,
     pub clones: Clones,
     pub report: Report,
+    pub tests: Tests,
 }
 
 impl Config {
@@ -211,6 +212,29 @@ pub struct Clones {
 impl Default for Clones {
     fn default() -> Self {
         Self { k: 30, w: 20, min_tokens: 70, max_files: 40, max_locations: 2000 }
+    }
+}
+
+// ---------- tests ----------
+
+/// Inline test regions (`#[cfg(test)] mod`, `#[cfg(test)]` items, bare `#[test]` fns) in Rust Source files.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Tests {
+    /// Detect inline test regions: metrics units inside one are tagged `in_test` and left out of
+    /// file totals, and the clone tokenizer skips their bytes. Off means every line is source.
+    pub inline_modules: bool,
+    /// A hotspot whose inline test lines / file lines is at or above this gets
+    /// `N in #[cfg(test)] mod at a-b` after its line count.
+    pub report_inline_ratio_above: f64,
+    /// A Source file whose inline test ratio is above this is treated as a Test file for
+    /// ranking: it is not a hotspot and does not count toward source lines.
+    pub reclassify_file_above_ratio: f64,
+}
+
+impl Default for Tests {
+    fn default() -> Self {
+        Self { inline_modules: true, report_inline_ratio_above: 0.5, reclassify_file_above_ratio: 0.9 }
     }
 }
 

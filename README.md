@@ -22,6 +22,7 @@ language is one grammar crate plus a node-kind table.
 | metrics | cognitive + cyclomatic complexity, nesting, length, params per function | nesting-aware complexity predicts "hard to change safely" |
 | deps | import graph, SCC cycles (file and directory), fan-in/out, instability | tangles and hubs are where a change fans out |
 | clones | near-exact duplicates via normalised-token winnowing | two copies of a rule drift into two rules |
+| regions | inline test regions in Rust source (`#[cfg(test)]` mods and items, `#[test]` fns) | a 2,300-line file that is half `mod tests` is a 1,300-line file; clones and complexity inside tests are not production findings |
 | report | percentile-normalised composite, reasons per file | one ranked list, no thresholds to tune per language |
 
 The headline score is the hotspot idea from Tornhill's *Your Code as a Crime
@@ -41,7 +42,7 @@ scry config <repo> > scry.toml   # dump the effective settings, edit what you ne
 ```
 
 Sections match the passes: `[discover]`, `[history]`, `[metrics]`, `[deps]`,
-`[clones]`, `[report]`. A file only has to name what it changes:
+`[clones]`, `[report]`, `[tests]`. A file only has to name what it changes:
 
 ```toml
 [discover]

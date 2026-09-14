@@ -7,9 +7,10 @@
 //! because it is what most people have an intuition for, but nesting-aware
 //! cognitive complexity is the one that predicts "hard to change safely".
 
-use crate::config::Metrics as Cfg;
+use crate::config::{Metrics as Cfg, Tests as TestsCfg};
 use crate::discover::SourceFile;
 use crate::lang::Language;
+use crate::regions::{self, TestRegion};
 use rayon::prelude::*;
 use serde::Serialize;
 use tree_sitter::Node;
@@ -25,6 +26,9 @@ pub struct FunctionMetrics {
     pub cyclomatic: u32,
     pub cognitive: u32,
     pub max_nesting: u32,
+    /// Lies inside an inline test region (`#[cfg(test)]` mod/item, `#[test]` fn): kept in the
+    /// list, left out of the file totals and of the worst-function ranking.
+    pub in_test: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,6 +41,9 @@ pub struct FileMetrics {
     /// Functions above the "hard to follow" threshold.
     pub complex_functions: usize,
     pub parse_errors: bool,
+    /// Lines spanned by inline test regions (Rust `#[cfg(test)]` mods and items, `#[test]` fns).
+    pub inline_test_lines: usize,
+    pub test_regions: Vec<TestRegion>,
 }
 
 /// Node-kind tables per grammar. One walker, three tables.
@@ -141,9 +148,9 @@ fn is_bound_callable(node: Node) -> bool {
     })
 }
 
-pub fn analyze_all(files: &[SourceFile], cfg: &Cfg) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
+pub fn analyze_all(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
     let per_file: Vec<(FileMetrics, Vec<FunctionMetrics>)> =
-        files.par_iter().map(|f| analyze_file(f, cfg)).collect();
+        files.par_iter().map(|f| analyze_file(f, cfg, tests)).collect();
     let mut file_metrics = Vec::with_capacity(per_file.len());
     let mut funcs = Vec::new();
     for (fm, fs) in per_file {
@@ -153,30 +160,38 @@ pub fn analyze_all(files: &[SourceFile], cfg: &Cfg) -> (Vec<FileMetrics>, Vec<Fu
     (file_metrics, funcs)
 }
 
-pub fn analyze_file(file: &SourceFile, cfg: &Cfg) -> (FileMetrics, Vec<FunctionMetrics>) {
+pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetrics, Vec<FunctionMetrics>) {
     let mut parser = file.lang.parser();
     let prof = profile(file.lang);
     let src = file.content.as_bytes();
     let mut funcs = Vec::new();
     let mut parse_errors = false;
+    let mut test_regions = Vec::new();
     if let Some(tree) = parser.parse(src, None) {
         let root = tree.root_node();
         parse_errors = root.has_error();
-        collect_units(root, prof, src, &file.path, &mut funcs);
+        if tests.inline_modules && file.lang == Language::Rust {
+            test_regions = regions::test_regions(root, src);
+        }
+        collect_units(root, prof, src, &file.path, &test_regions, &mut funcs);
     }
+    // File totals describe the production code only; tagged units stay in the list.
+    let source = || funcs.iter().filter(|f| !f.in_test);
     let fm = FileMetrics {
         path: file.path.clone(),
-        functions: funcs.len(),
-        total_cognitive: funcs.iter().map(|f| f.cognitive).sum(),
-        max_cognitive: funcs.iter().map(|f| f.cognitive).max().unwrap_or(0),
-        max_nesting: funcs.iter().map(|f| f.max_nesting).max().unwrap_or(0),
-        complex_functions: funcs.iter().filter(|f| f.cognitive > cfg.cognitive_hard).count(),
+        functions: source().count(),
+        total_cognitive: source().map(|f| f.cognitive).sum(),
+        max_cognitive: source().map(|f| f.cognitive).max().unwrap_or(0),
+        max_nesting: source().map(|f| f.max_nesting).max().unwrap_or(0),
+        complex_functions: source().filter(|f| f.cognitive > cfg.cognitive_hard).count(),
         parse_errors,
+        inline_test_lines: regions::inline_lines(&test_regions),
+        test_regions,
     };
     (fm, funcs)
 }
 
-fn collect_units(root: Node, prof: &Profile, src: &[u8], path: &str, out: &mut Vec<FunctionMetrics>) {
+fn collect_units(root: Node, prof: &Profile, src: &[u8], path: &str, test_regions: &[TestRegion], out: &mut Vec<FunctionMetrics>) {
     // Explicit stack: source files can nest expressions thousands deep.
     // (node, inside a reported unit already)
     let mut stack: Vec<(Node, bool)> = vec![(root, false)];
@@ -190,7 +205,9 @@ fn collect_units(root: Node, prof: &Profile, src: &[u8], path: &str, out: &mut V
                 || is_bound_callable(node)
                 || !in_unit);
         if is_unit {
-            out.push(measure(node, prof, src, path));
+            let mut m = measure(node, prof, src, path);
+            m.in_test = regions::contains(test_regions, node.start_byte());
+            out.push(m);
         }
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
@@ -219,6 +236,7 @@ fn measure(node: Node, prof: &Profile, src: &[u8], path: &str) -> FunctionMetric
         cyclomatic: 1 + acc.cyclomatic,
         cognitive: acc.cognitive,
         max_nesting: acc.max_nesting,
+        in_test: false,
     }
 }
 
@@ -406,7 +424,7 @@ def f(path):
 def kw(a, *, b, **kw):
     return a
 ";
-        let (_, fs) = analyze_file(&file("w.py", Language::Python, src), &Cfg::default());
+        let (_, fs) = analyze_file(&file("w.py", Language::Python, src), &Cfg::default(), &TestsCfg::default());
         assert_eq!(fs[0].cognitive, 2, "{:?}", fs[0]); // except + for
         assert_eq!(fs[0].max_nesting, 1);
         assert_eq!(fs[1].params, 3);
@@ -423,7 +441,7 @@ export const Comp = React.forwardRef((props, ref) => { if (props.a) {} });
 describe('suite', () => { it('works', () => { if (1) {} }); });
 function sw(x: number) { switch (x) { case 1: return 1; case 2: return 2; default: return 0; } }
 ";
-        let (_, fs) = analyze_file(&file("r.ts", Language::TypeScript, src), &Cfg::default());
+        let (_, fs) = analyze_file(&file("r.ts", Language::TypeScript, src), &Cfg::default(), &TestsCfg::default());
         let names: Vec<&str> = fs.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["app.post('/x')", "Comp", "describe('suite')", "sw"], "{fs:?}");
         assert_eq!(fs[0].cognitive, 5, "{:?}", fs[0]);
@@ -434,7 +452,7 @@ function sw(x: number) { switch (x) { case 1: return 1; case 2: return 2; defaul
     fn deep_expression_does_not_overflow() {
         let expr = std::iter::repeat_n("a", 60_000).collect::<Vec<_>>().join(" + ");
         let src = format!("export const s = {expr};\nfunction f() {{ return {expr}; }}\n");
-        let (fm, fs) = analyze_file(&file("deep.ts", Language::TypeScript, &src), &Cfg::default());
+        let (fm, fs) = analyze_file(&file("deep.ts", Language::TypeScript, &src), &Cfg::default(), &TestsCfg::default());
         assert!(!fm.parse_errors);
         assert_eq!(fs.len(), 1);
     }
@@ -464,7 +482,7 @@ def f(a, b):
         pass
     return 1 if a else 2   # +1
 ";
-        let (_, fs) = analyze_file(&file("f.py", Language::Python, src), &Cfg::default());
+        let (_, fs) = analyze_file(&file("f.py", Language::Python, src), &Cfg::default(), &TestsCfg::default());
         assert_eq!(fs.len(), 1);
         let f = &fs[0];
         assert_eq!(f.name, "f");
@@ -486,13 +504,41 @@ class K {
 }
 export const g = (x: number) => x && x;   // +1
 ";
-        let (_, fs) = analyze_file(&file("k.ts", Language::TypeScript, src), &Cfg::default());
+        let (_, fs) = analyze_file(&file("k.ts", Language::TypeScript, src), &Cfg::default(), &TestsCfg::default());
         let names: Vec<&str> = fs.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["K.m", "cb", "g"], "{fs:?}");
         assert_eq!(fs[0].cognitive, 8, "{:?}", fs[0]);
         assert_eq!(fs[0].params, 2);
         assert_eq!(fs[1].cognitive, 1);
         assert_eq!(fs[2].cognitive, 1);
+    }
+
+    #[test]
+    fn rust_inline_test_units_are_tagged_and_left_out_of_file_totals() {
+        let src = "\
+fn f(a: u8) -> u8 { if a > 1 { 1 } else { 0 } }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn deep(a: u8) { if a > 1 { if a > 2 { if a > 3 { if a > 4 { if a > 5 { if a > 6 {} } } } } } }
+}
+";
+        let f = file("t.rs", Language::Rust, src);
+        let (fm, fs) = analyze_file(&f, &Cfg { cognitive_hard: 5 }, &TestsCfg::default());
+        assert_eq!(fs.len(), 2, "{fs:?}");
+        assert_eq!((fs[0].name.as_str(), fs[0].in_test), ("f", false));
+        assert_eq!((fs[1].name.as_str(), fs[1].in_test), ("deep", true));
+        assert!(fs[1].cognitive > 5);
+        assert_eq!((fm.functions, fm.total_cognitive, fm.max_cognitive, fm.complex_functions), (1, 2, 2, 0), "{fm:?}");
+        assert_eq!(fm.inline_test_lines, 5);
+        assert_eq!(fm.test_regions.len(), 1);
+        // The knob turns the whole thing off.
+        let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
+        let (fm, fs) = analyze_file(&f, &Cfg { cognitive_hard: 5 }, &off);
+        assert!(fs.iter().all(|f| !f.in_test));
+        assert_eq!((fm.functions, fm.complex_functions, fm.inline_test_lines), (2, 1, 0));
+        assert!(fm.test_regions.is_empty());
     }
 
     #[test]
@@ -508,7 +554,7 @@ fn f(a: Option<u8>) {
     for i in 0..3 { let c = |x| if x { 1 } else { 0 }; }  // for +1, closure nests: if +3, else +1
 }
 ";
-        let (_, fs) = analyze_file(&file("s.rs", Language::Rust, src), &Cfg::default());
+        let (_, fs) = analyze_file(&file("s.rs", Language::Rust, src), &Cfg::default(), &TestsCfg::default());
         assert_eq!(fs[0].name, "S.m");
         assert_eq!(fs[0].cognitive, 5, "{:?}", fs[0]);
         assert_eq!(fs[0].params, 1);

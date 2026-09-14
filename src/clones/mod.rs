@@ -6,8 +6,10 @@
 //! shared run of at least k+w-1 tokens is found while indexing a fraction of
 //! the hashes. Matching fingerprints on the same diagonal are merged into runs.
 
-use crate::config::Clones as Cfg;
+use crate::config::{Clones as Cfg, Tests as TestsCfg};
 use crate::discover::SourceFile;
+use crate::lang::Language;
+use crate::regions;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -45,11 +47,13 @@ pub struct CloneReport {
 struct Tokens {
     hashes: Vec<u64>,
     lines: Vec<usize>,
+    /// Lines inside inline test regions, which emitted no tokens.
+    inline_test_lines: usize,
 }
 
-pub fn detect(files: &[SourceFile], cfg: &Cfg) -> CloneReport {
+pub fn detect(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg) -> CloneReport {
     let k = cfg.k;
-    let toks: Vec<Tokens> = files.par_iter().map(tokenize).collect();
+    let toks: Vec<Tokens> = files.par_iter().map(|f| tokenize(f, tests)).collect();
 
     // fingerprint hash -> (file, token position)
     let mut index: HashMap<u64, Vec<(usize, usize)>> = HashMap::new();
@@ -167,7 +171,7 @@ pub fn detect(files: &[SourceFile], cfg: &Cfg) -> CloneReport {
         ranges.entry(&p.b.file).or_default().push((p.b.start_line, p.b.end_line));
     }
     let mut per_file = HashMap::new();
-    for f in files {
+    for (fi, f) in files.iter().enumerate() {
         let Some(rs) = ranges.get_mut(f.path.as_str()) else { continue };
         rs.sort();
         let mut covered = 0usize;
@@ -183,7 +187,11 @@ pub fn detect(files: &[SourceFile], cfg: &Cfg) -> CloneReport {
             f.path.clone(),
             FileClones {
                 clone_lines: covered,
-                clone_ratio: if f.lines == 0 { 0.0 } else { covered as f64 / f.lines as f64 },
+                // Against the lines that could hold a clone: test regions emitted no tokens.
+                clone_ratio: match f.lines.saturating_sub(toks[fi].inline_test_lines) {
+                    0 => 0.0,
+                    lines => covered as f64 / lines as f64,
+                },
                 pairs: rs.len(),
             },
         );
@@ -252,15 +260,25 @@ const NUMBER_KINDS: &[&str] = &[
     "null", "undefined",
 ];
 
-fn tokenize(file: &SourceFile) -> Tokens {
+fn tokenize(file: &SourceFile, tests: &TestsCfg) -> Tokens {
     let mut parser = file.lang.parser();
     let src = file.content.as_bytes();
-    let mut out = Tokens { hashes: Vec::new(), lines: Vec::new() };
+    let mut out = Tokens { hashes: Vec::new(), lines: Vec::new(), inline_test_lines: 0 };
     let Some(tree) = parser.parse(src, None) else { return out };
+    // Inline test regions emit no tokens, so no run can lie inside one.
+    let test_regions = if tests.inline_modules && file.lang == Language::Rust {
+        regions::test_regions(tree.root_node(), src)
+    } else {
+        Vec::new()
+    };
+    out.inline_test_lines = regions::inline_lines(&test_regions);
     let mut stack: Vec<Node> = vec![tree.root_node()];
     while let Some(n) = stack.pop() {
         let kind = n.kind();
         if kind == "comment" || kind == "line_comment" || kind == "block_comment" {
+            continue;
+        }
+        if !test_regions.is_empty() && regions::contains(&test_regions, n.start_byte()) {
             continue;
         }
         let class = if STRING_KINDS.contains(&kind) {
@@ -325,7 +343,7 @@ mod tests {
     fn renamed_copy_is_found_and_lines_are_right() {
         let a = format!("def alpha(x):\n{}\n    return x\n", body("aa"));
         let b = format!("import os\n\ndef beta(y):\n{}\n    return y\n", body("bb"));
-        let r = detect(&[sf("a.py", a), sf("b.py", b)], &Cfg::default());
+        let r = detect(&[sf("a.py", a), sf("b.py", b)], &Cfg::default(), &TestsCfg::default());
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         let p = &r.pairs[0];
         assert_eq!(p.a.file, "a.py");
@@ -347,11 +365,11 @@ mod tests {
             s + "    return x\n"
         };
         let files: Vec<SourceFile> = ["a", "b", "c", "d", "e", "f"].iter().map(|p| sf(&format!("{p}.py"), body(p))).collect();
-        let r = detect(&files, &Cfg::default());
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
         assert!(r.pairs.len() >= 15, "{} pairs", r.pairs.len());
         assert_eq!(r.files.len(), 6);
         // Deterministic order across runs.
-        let again = detect(&files, &Cfg::default());
+        let again = detect(&files, &Cfg::default(), &TestsCfg::default());
         let key = |r: &CloneReport| r.pairs.iter().map(|p| format!("{}:{}-{}:{}", p.a.file, p.a.start_line, p.b.file, p.b.start_line)).collect::<Vec<_>>();
         assert_eq!(key(&r), key(&again));
     }
@@ -362,8 +380,26 @@ mod tests {
         let b = format!("def beta(y):\n{}\n    return y\n", body("bb"));
         let files = [sf("a.py", a), sf("b.py", b)];
         let strict = Cfg { min_tokens: 10_000, ..Cfg::default() };
-        assert!(detect(&files, &strict).pairs.is_empty());
-        assert_eq!(detect(&files, &Cfg::default()).pairs.len(), 1);
+        assert!(detect(&files, &strict, &TestsCfg::default()).pairs.is_empty());
+        assert_eq!(detect(&files, &Cfg::default(), &TestsCfg::default()).pairs.len(), 1);
+    }
+
+    #[test]
+    fn rust_inline_test_regions_emit_no_tokens() {
+        // The same twelve-line fixture twice inside `mod tests`, and once more in source.
+        let unit = |p: &str| format!("    let {p}_a = compute({p}, 1) + other[2];\n    if {p}_a > 0 && !{p} {{ panic!(\"{{}}\", {p}_a); }}\n    for {p}_i in 0..3 {{ {p}_a += {p}_i * 2; }}\n    while {p}_a > 10 {{ {p}_a -= 1; }}\n    let {p}_b: Vec<u8> = {p}.iter().filter(|x| **x > 0).cloned().collect();\n    match {p}_b.first() {{ Some(v) => {p}_a += *v as i32, None => {p}_a = 0 }}\n");
+        let src = format!(
+            "pub fn alpha(aa: &[u8]) -> i32 {{\n{}    aa_a\n}}\n#[cfg(test)]\nmod tests {{\n    fn one(bb: &[u8]) -> i32 {{\n{}        bb_a\n    }}\n    fn two(cc: &[u8]) -> i32 {{\n{}        cc_a\n    }}\n}}\n",
+            unit("aa"), unit("bb"), unit("cc")
+        );
+        let f = SourceFile { path: "a.rs".into(), lang: Language::Rust, kind: FileKind::Source, lines: src.lines().count(), bytes: src.len(), content: src };
+        let files = [f];
+        let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
+        let with_tests = detect(&files, &Cfg::default(), &off);
+        assert!(with_tests.pairs.iter().any(|p| p.a.start_line > 9 && p.b.start_line > 9), "{:?}", with_tests.pairs);
+        let stripped = detect(&files, &Cfg::default(), &TestsCfg::default());
+        assert!(stripped.pairs.iter().all(|p| p.a.end_line <= 9 && p.b.end_line <= 9), "{:?}", stripped.pairs);
+        assert!(stripped.pairs.len() < with_tests.pairs.len(), "{} vs {}", stripped.pairs.len(), with_tests.pairs.len());
     }
 
     #[test]
@@ -398,7 +434,7 @@ async def handler(request):
         case 'admin': return admin_view(user)
         case _: return plain_view(user)
 ";
-        let r = detect(&[sf("a.py", a.into()), sf("b.py", b.into())], &Cfg::default());
+        let r = detect(&[sf("a.py", a.into()), sf("b.py", b.into())], &Cfg::default(), &TestsCfg::default());
         assert!(r.pairs.is_empty(), "{:?}", r.pairs);
     }
 }

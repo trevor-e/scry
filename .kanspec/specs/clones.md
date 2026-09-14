@@ -14,3 +14,4 @@ code: [src/clones/**]
 - Pairs sort by tokens, then A file/line, then B file/line, so `--top` shows the same subset on every run.
 - Only Source files are compared. Tests and fixtures duplicate by design.
 - `k`, `w`, `min_tokens`, `max_files` and `max_locations` are `[clones]` settings in `scry.toml`.
+- Bytes inside an inline test region (Rust `#[cfg(test)]` mods/items, `#[test]` fns) emit no tokens, so no clone run can lie inside one; `clone_ratio` divides by the lines outside regions. `[tests].inline_modules = false` restores the old behaviour.

@@ -15,3 +15,7 @@ code: [src/report/**, src/main.rs, src/config.rs]
 - Hidden coupling = co-change pairs where neither file imports the other; the top two partners appear as reasons on each file.
 - The `directories` section rolls Source files up by directory with the largest file named, so "largest file per module" is answered without ranking data files.
 - Every weight, the no-tests multiplier, the cycle coupling floor and every reason threshold are `[report]` settings in `scry.toml`; `scry config` prints the effective values. With no file present the score is unchanged from the constants it replaced.
+- Inline test regions come from metrics data, never a string search: `has_tests` is true when a file has at least one region; the size signal, the summary's `source_lines` and the directory rollup use `lines - inline_test_lines`; `signals.inline_test_lines` and `test_regions[]` are in `--json`.
+- A hotspot whose inline test ratio (`inline_test_lines / lines`) is at or above `[tests].report_inline_ratio_above` (0.5) prints `N in #[cfg(test)] mod at a-b` after its line count (`inline_test_note` in `--json`); below it, the plain line count.
+- A Source file whose inline test ratio is above `[tests].reclassify_file_above_ratio` (0.9) is a Test file for ranking: never a hotspot, counted under `test_files`.
+- Units tagged `in_test` never head a worst-function reason or appear in `worst_functions`, and are left out of the summary's function counts.
