@@ -53,6 +53,8 @@ struct Profile {
     branch_flat: &'static [&'static str],
     /// Cyclomatic-only decision points (switch cases, match arms).
     cases: &'static [&'static str],
+    /// Branches whose cyclomatic cost is carried by their cases, not by themselves.
+    switch_like: &'static [&'static str],
     /// The node kind carrying boolean operators, and the operator spellings.
     bool_expr: &'static str,
     bool_ops: &'static [&'static str],
@@ -68,10 +70,11 @@ const PYTHON: Profile = Profile {
     nest_only: &["lambda"],
     branch_nest: &[
         "if_statement", "for_statement", "while_statement", "conditional_expression",
-        "except_clause", "match_statement", "for_in_clause", "with_statement",
+        "except_clause", "match_statement", "for_in_clause",
     ],
     branch_flat: &["elif_clause", "else_clause", "if_clause"],
     cases: &["case_clause"],
+    switch_like: &["match_statement"],
     bool_expr: "boolean_operator",
     bool_ops: &["and", "or"],
     else_clause: "",
@@ -92,6 +95,7 @@ const JS: Profile = Profile {
     ],
     branch_flat: &["else_clause"],
     cases: &["switch_case"],
+    switch_like: &["switch_statement"],
     bool_expr: "binary_expression",
     bool_ops: &["&&", "||", "??"],
     else_clause: "else_clause",
@@ -109,6 +113,7 @@ const RUST: Profile = Profile {
     ],
     branch_flat: &["else_clause"],
     cases: &["match_arm"],
+    switch_like: &["match_expression"],
     bool_expr: "binary_expression",
     bool_ops: &["&&", "||"],
     else_clause: "else_clause",
@@ -172,16 +177,27 @@ pub fn analyze_file(file: &SourceFile) -> (FileMetrics, Vec<FunctionMetrics>) {
     (fm, funcs)
 }
 
-fn collect_units(node: Node, prof: &Profile, src: &[u8], path: &str, out: &mut Vec<FunctionMetrics>) {
-    let kind = node.kind();
-    let is_unit = prof.units.contains(&kind)
-        && (!matches!(kind, "arrow_function" | "function_expression") || is_bound_callable(node));
-    if is_unit {
-        out.push(measure(node, prof, src, path));
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_units(child, prof, src, path, out);
+fn collect_units(root: Node, prof: &Profile, src: &[u8], path: &str, out: &mut Vec<FunctionMetrics>) {
+    // Explicit stack: source files can nest expressions thousands deep.
+    // (node, inside a reported unit already)
+    let mut stack: Vec<(Node, bool)> = vec![(root, false)];
+    while let Some((node, in_unit)) = stack.pop() {
+        let kind = node.kind();
+        let is_unit = prof.units.contains(&kind)
+            && (!matches!(kind, "arrow_function" | "function_expression")
+                // Inline callbacks nest inside their enclosing unit; but a callback
+                // with no enclosing unit (route handlers, forwardRef components,
+                // describe blocks) is the only place its complexity can be reported.
+                || is_bound_callable(node)
+                || !in_unit);
+        if is_unit {
+            out.push(measure(node, prof, src, path));
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        for child in children.into_iter().rev() {
+            stack.push((child, in_unit || is_unit));
+        }
     }
 }
 
@@ -214,52 +230,60 @@ struct Acc {
     max_nesting: u32,
 }
 
-fn walk(node: Node, prof: &Profile, src: &[u8], nesting: u32, acc: &mut Acc) {
-    let kind = node.kind();
-    let mut child_nesting = nesting;
+fn walk(root: Node, prof: &Profile, src: &[u8], nesting: u32, acc: &mut Acc) {
+    let mut stack: Vec<(Node, u32)> = vec![(root, nesting)];
+    while let Some((node, nesting)) = stack.pop() {
+        let kind = node.kind();
+        let mut child_nesting = nesting;
 
-    if prof.units.contains(&kind) || prof.nest_only.contains(&kind) {
-        // Nested callable: its body sits one level deeper, no increment of its own.
-        child_nesting = nesting + 1;
-    } else if kind == prof.if_kind && node.parent().is_some_and(|p| p.kind() == prof.else_clause) {
-        // `else if`: flat +1, children keep the parent's nesting.
-        acc.cognitive += 1;
-        acc.cyclomatic += 1;
-    } else if prof.branch_nest.contains(&kind) {
-        acc.cognitive += 1 + nesting;
-        acc.cyclomatic += 1;
-        child_nesting = nesting + 1;
-        acc.max_nesting = acc.max_nesting.max(child_nesting);
-    } else if prof.branch_flat.contains(&kind) {
-        // An else clause that directly holds an `if` is the `else if` above.
-        let holds_if = !prof.else_clause.is_empty()
-            && kind == prof.else_clause
-            && node.named_child(0).is_some_and(|c| c.kind() == prof.if_kind);
-        if !holds_if {
+        if prof.units.contains(&kind) || prof.nest_only.contains(&kind) {
+            // Nested callable: its body sits one level deeper, no increment of its own.
+            child_nesting = nesting + 1;
+        } else if kind == prof.if_kind && node.parent().is_some_and(|p| p.kind() == prof.else_clause) {
+            // `else if`: flat +1, children keep the parent's nesting.
             acc.cognitive += 1;
-            if kind != "else_clause" {
+            acc.cyclomatic += 1;
+        } else if prof.branch_nest.contains(&kind) {
+            acc.cognitive += 1 + nesting;
+            // A switch/match is one decision per case; the head itself adds none.
+            if !prof.switch_like.contains(&kind) {
                 acc.cyclomatic += 1;
             }
-        }
-    } else if prof.cases.contains(&kind) {
-        acc.cyclomatic += 1;
-    } else if kind == prof.bool_expr {
-        if let Some(op) = operator_of(node, prof, src) {
-            acc.cyclomatic += 1;
-            let same_as_parent = node
-                .parent()
-                .filter(|p| p.kind() == prof.bool_expr)
-                .and_then(|p| operator_of(p, prof, src))
-                .is_some_and(|pop| pop == op);
-            if !same_as_parent {
+            child_nesting = nesting + 1;
+            acc.max_nesting = acc.max_nesting.max(child_nesting);
+        } else if prof.branch_flat.contains(&kind) {
+            // An else clause that directly holds an `if` is the `else if` above.
+            let holds_if = !prof.else_clause.is_empty()
+                && kind == prof.else_clause
+                && node.named_child(0).is_some_and(|c| c.kind() == prof.if_kind);
+            // Python hangs `else` off try/for/while too; only the `if` form is a branch.
+            let else_of_if = kind != "else_clause" || node.parent().is_some_and(|p| p.kind() == prof.if_kind);
+            if !holds_if && else_of_if {
                 acc.cognitive += 1;
+                if kind != "else_clause" {
+                    acc.cyclomatic += 1;
+                }
+            }
+        } else if prof.cases.contains(&kind) {
+            acc.cyclomatic += 1;
+        } else if kind == prof.bool_expr {
+            if let Some(op) = operator_of(node, prof, src) {
+                acc.cyclomatic += 1;
+                let same_as_parent = node
+                    .parent()
+                    .filter(|p| p.kind() == prof.bool_expr)
+                    .and_then(|p| operator_of(p, prof, src))
+                    .is_some_and(|pop| pop == op);
+                if !same_as_parent {
+                    acc.cognitive += 1;
+                }
             }
         }
-    }
 
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        walk(child, prof, src, child_nesting, acc);
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push((child, child_nesting));
+        }
     }
 }
 
@@ -293,7 +317,8 @@ fn unit_name(node: Node, prof: &Profile, src: &[u8]) -> String {
             }
             "pair" => p.child_by_field_name("key").map(|n| text(n, src).to_string()),
             "assignment_expression" => p.child_by_field_name("left").map(|n| text(n, src).to_string()),
-            _ => None,
+            "export_statement" => Some("default".to_string()),
+            _ => call_site_name(node, src),
         }
     });
     let name = name.unwrap_or_else(|| "<anonymous>".to_string());
@@ -318,6 +343,27 @@ fn unit_name(node: Node, prof: &Profile, src: &[u8]) -> String {
     name
 }
 
+/// `app.post('/x', (req, res) => …)` → `app.post('/x')`; `const C = memo(() => …)` → `C`.
+fn call_site_name(node: Node, src: &[u8]) -> Option<String> {
+    let args = node.parent().filter(|p| p.kind() == "arguments")?;
+    let call = args.parent().filter(|p| p.kind() == "call_expression")?;
+    let mut owner = call.parent();
+    while let Some(p) = owner {
+        match p.kind() {
+            "variable_declarator" => return p.child_by_field_name("name").map(|n| text(n, src).to_string()),
+            "call_expression" | "arguments" | "member_expression" | "parenthesized_expression"
+            | "as_expression" | "satisfies_expression" => owner = p.parent(),
+            _ => break,
+        }
+    }
+    let callee: String = text(call.child_by_field_name("function")?, src).chars().take(40).collect();
+    let first_arg = args.named_child(0).filter(|a| a.kind() == "string").map(|a| text(a, src));
+    Some(match first_arg {
+        Some(a) => format!("{callee}({a})"),
+        None => callee,
+    })
+}
+
 fn count_params(node: Node, prof: &Profile, src: &[u8]) -> usize {
     let Some(params) = node
         .child_by_field_name("parameters")
@@ -331,7 +377,7 @@ fn count_params(node: Node, prof: &Profile, src: &[u8]) -> usize {
     let mut cursor = params.walk();
     params
         .named_children(&mut cursor)
-        .filter(|n| n.kind() != "comment" && n.kind() != "self_parameter")
+        .filter(|n| !matches!(n.kind(), "comment" | "self_parameter" | "keyword_separator" | "positional_separator"))
         .filter(|n| !matches!(text(*n, src), "self" | "cls"))
         .count()
 }
@@ -340,6 +386,59 @@ fn count_params(node: Node, prof: &Profile, src: &[u8]) -> usize {
 mod tests {
     use super::*;
     use crate::discover::FileKind;
+
+    #[test]
+    fn python_with_try_else_and_separators_are_not_branches() {
+        let src = "\
+def f(path):
+    with open(path) as fh:
+        data = fh.read()
+    try:
+        x = int(data)
+    except ValueError:   # +1
+        x = 0
+    else:
+        x += 1
+    for i in data:
+        pass
+    else:
+        pass
+    return x
+def kw(a, *, b, **kw):
+    return a
+";
+        let (_, fs) = analyze_file(&file("w.py", Language::Python, src));
+        assert_eq!(fs[0].cognitive, 2, "{:?}", fs[0]); // except + for
+        assert_eq!(fs[0].max_nesting, 1);
+        assert_eq!(fs[1].params, 3);
+    }
+
+    #[test]
+    fn unbound_top_level_callbacks_are_units() {
+        let src = "\
+app.post('/x', async (req, res) => {
+  if (req.body.a) { if (req.body.b) { return; } }   // +1 +2
+  items.forEach(x => { if (x) {} });               // +2 (nested callback)
+});
+export const Comp = React.forwardRef((props, ref) => { if (props.a) {} });
+describe('suite', () => { it('works', () => { if (1) {} }); });
+function sw(x: number) { switch (x) { case 1: return 1; case 2: return 2; default: return 0; } }
+";
+        let (_, fs) = analyze_file(&file("r.ts", Language::TypeScript, src));
+        let names: Vec<&str> = fs.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["app.post('/x')", "Comp", "describe('suite')", "sw"], "{fs:?}");
+        assert_eq!(fs[0].cognitive, 5, "{:?}", fs[0]);
+        assert_eq!(fs[3].cyclomatic, 3, "{:?}", fs[3]); // 1 + two cases, not the switch head
+    }
+
+    #[test]
+    fn deep_expression_does_not_overflow() {
+        let expr = std::iter::repeat_n("a", 60_000).collect::<Vec<_>>().join(" + ");
+        let src = format!("export const s = {expr};\nfunction f() {{ return {expr}; }}\n");
+        let (fm, fs) = analyze_file(&file("deep.ts", Language::TypeScript, &src));
+        assert!(!fm.parse_errors);
+        assert_eq!(fs.len(), 1);
+    }
 
     fn file(path: &str, lang: Language, content: &str) -> SourceFile {
         SourceFile {
@@ -415,6 +514,6 @@ fn f(a: Option<u8>) {
         assert_eq!(fs[0].cognitive, 5, "{:?}", fs[0]);
         assert_eq!(fs[0].params, 1);
         assert_eq!(fs[1].cognitive, 6, "{:?}", fs[1]);
-        assert_eq!(fs[1].cyclomatic, 1 + 2 + 1 + 1 + 1 /*match arms + match? no: for, if, else*/, "{:?}", fs[1]);
+        assert_eq!(fs[1].cyclomatic, 1 + 2 + 1 + 1 /* two arms, for, if */, "{:?}", fs[1]);
     }
 }

@@ -19,8 +19,12 @@ pub const K: usize = 30;
 pub const W: usize = 20;
 /// Shortest run worth reporting, in tokens.
 pub const MIN_TOKENS: usize = 70;
-/// Fingerprints seen in more locations than this are boilerplate, not clones.
-const MAX_LOCATIONS: usize = 40;
+/// Fingerprints seen in more *files* than this are boilerplate, not clones.
+/// Counting files rather than positions keeps a periodic block that was
+/// copied into several files visible: each copy contributes many positions.
+const MAX_FILES: usize = 40;
+/// Hard cap on positions per fingerprint, so the pairing loop stays bounded.
+const MAX_LOCATIONS: usize = 2000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Loc {
@@ -70,6 +74,12 @@ pub fn detect(files: &[SourceFile]) -> CloneReport {
     let mut by_pair: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
     for locs in index.values() {
         if locs.len() < 2 || locs.len() > MAX_LOCATIONS {
+            continue;
+        }
+        let mut files_seen: Vec<usize> = locs.iter().map(|l| l.0).collect();
+        files_seen.sort_unstable();
+        files_seen.dedup();
+        if files_seen.len() > MAX_FILES {
             continue;
         }
         for i in 0..locs.len() {
@@ -151,7 +161,15 @@ pub fn detect(files: &[SourceFile]) -> CloneReport {
                 .collect::<Vec<_>>()
         })
         .collect();
-    pairs.sort_by_key(|p| std::cmp::Reverse(p.tokens));
+    // Full key: HashMap and rayon order vary between runs, and `--top` must not.
+    pairs.sort_by(|p, q| {
+        q.tokens
+            .cmp(&p.tokens)
+            .then_with(|| p.a.file.cmp(&q.a.file))
+            .then_with(|| p.a.start_line.cmp(&q.a.start_line))
+            .then_with(|| p.b.file.cmp(&q.b.file))
+            .then_with(|| p.b.start_line.cmp(&q.b.start_line))
+    });
 
     // Per-file union of cloned lines.
     let mut ranges: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
@@ -324,6 +342,27 @@ mod tests {
         assert!(p.a.start_line <= 2 && p.a.end_line >= 13, "{p:?}");
         assert!(p.b.start_line <= 4 && p.b.end_line >= 15, "{p:?}");
         assert!(r.files["a.py"].clone_ratio > 0.7);
+    }
+
+    #[test]
+    fn periodic_block_copied_into_many_files_is_still_found() {
+        // 14 repeats x 6 files = 84 positions per fingerprint: more than the old
+        // position cap, but only 6 files.
+        let body = |p: &str| {
+            let mut s = format!("def {p}_fn(x):\n");
+            for i in 0..14 {
+                s.push_str(&format!("    {p}_v{i} = compute_{i}(x, {i}) + other[{i}]\n    if {p}_v{i} and not x:\n        raise ValueError({p}_v{i})\n"));
+            }
+            s + "    return x\n"
+        };
+        let files: Vec<SourceFile> = ["a", "b", "c", "d", "e", "f"].iter().map(|p| sf(&format!("{p}.py"), body(p))).collect();
+        let r = detect(&files);
+        assert!(r.pairs.len() >= 15, "{} pairs", r.pairs.len());
+        assert_eq!(r.files.len(), 6);
+        // Deterministic order across runs.
+        let again = detect(&files);
+        let key = |r: &CloneReport| r.pairs.iter().map(|p| format!("{}:{}-{}:{}", p.a.file, p.a.start_line, p.b.file, p.b.start_line)).collect::<Vec<_>>();
+        assert_eq!(key(&r), key(&again));
     }
 
     #[test]

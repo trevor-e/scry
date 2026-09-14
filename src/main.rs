@@ -110,7 +110,12 @@ fn main() -> Result<()> {
                 None
             } else {
                 match history::collect(&path, &since, &tracked) {
-                    Ok(h) => Some(h),
+                    Ok(h) => {
+                        if h.commits_scanned > 0 && h.files.is_empty() {
+                            eprintln!("warning: {} commits scanned but none touched a discovered source file; ranking on static signals", h.commits_scanned);
+                        }
+                        Some(h)
+                    }
                     Err(e) => {
                         eprintln!("warning: history unavailable: {e:#}");
                         None

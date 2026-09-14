@@ -52,7 +52,7 @@ const VENDOR_DIRS: &[&str] = &[
     "node_modules", "vendor", "third_party", "thirdparty", "dist", "build", "target", ".venv",
     "venv", "site-packages", "__pycache__", ".git",
 ];
-const TEST_DIRS: &[&str] = &["test", "tests", "__tests__", "e2e", "spec", "specs", "testing"];
+pub const TEST_DIRS: &[&str] = &["test", "tests", "__tests__", "e2e", "spec", "specs", "testing"];
 const DATA_DIRS: &[&str] = &["fixtures", "fixture", "snapshots", "__snapshots__", "testdata"];
 const GENERATED_DIRS: &[&str] = &["migrations", "generated", "__generated__", "gen"];
 

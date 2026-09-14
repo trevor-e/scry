@@ -11,7 +11,7 @@ use crate::discover::{FileKind, SourceFile};
 use crate::history::History;
 use crate::metrics::{COGNITIVE_HARD, FileMetrics, FunctionMetrics};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Signals {
@@ -125,9 +125,42 @@ fn stem(path: &str) -> String {
         .to_string()
 }
 
-/// Test stems: `test_combat.py`, `combat.test.ts`, `BattleScreen.spec.tsx` → `combat`, `battlescreen`.
-fn test_stems(files: &[SourceFile]) -> HashSet<String> {
-    files.iter().filter(|f| f.kind == FileKind::Test).map(|f| stem(&f.path)).collect()
+/// Directory a test file speaks for: everything above its first test-directory
+/// component. `backend/tests/unit/test_x.py` → `backend`; `src/a/x.test.ts` → `src/a`;
+/// `tests/test_x.py` → `` (the whole repo).
+fn test_scope(path: &str) -> &str {
+    let dir = path.rsplit_once('/').map_or("", |(d, _)| d);
+    let mut end = 0;
+    for comp in dir.split('/').filter(|c| !c.is_empty()) {
+        if crate::discover::TEST_DIRS.contains(&comp) {
+            break;
+        }
+        end += comp.len() + usize::from(end > 0);
+    }
+    &dir[..end]
+}
+
+/// Test stems with the directory tree they cover: `test_combat.py`,
+/// `combat.test.ts`, `BattleScreen.spec.tsx` → `combat`, `battlescreen`.
+/// A `test_utils.py` under `b/tests/` says nothing about `a/utils.py`.
+fn test_stems(files: &[SourceFile]) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for f in files.iter().filter(|f| f.kind == FileKind::Test) {
+        out.entry(stem(&f.path)).or_default().push(test_scope(&f.path).to_string());
+    }
+    out
+}
+
+fn stem_tested(tstems: &HashMap<String, Vec<String>>, f: &SourceFile) -> bool {
+    let dir = f.module_dir();
+    tstems.get(&stem(&f.path)).is_some_and(|scopes| {
+        scopes.iter().any(|s| s.is_empty() || dir == s || dir.starts_with(&format!("{s}/")))
+    })
+}
+
+/// Rust keeps unit tests inside the module; no separate test file will ever reference it.
+fn has_inline_tests(f: &SourceFile) -> bool {
+    f.lang == crate::lang::Language::Rust && f.content.contains("#[cfg(test)]")
 }
 
 pub fn build(inp: Inputs, top: usize) -> Report {
@@ -158,7 +191,7 @@ pub fn build(inp: Inputs, top: usize) -> Report {
                 in_cycle: d.is_some_and(|d| d.in_cycle),
                 clone_lines: c.map_or(0, |c| c.clone_lines),
                 clone_ratio: c.map_or(0.0, |c| c.clone_ratio),
-                has_tests: d.is_some_and(|d| d.test_refs > 0) || tstems.contains(&stem(&f.path)),
+                has_tests: d.is_some_and(|d| d.test_refs > 0) || stem_tested(&tstems, f) || has_inline_tests(f),
             }
         })
         .collect();
@@ -170,7 +203,9 @@ pub fn build(inp: Inputs, top: usize) -> Report {
     let p_lines = percentiles(&signals.iter().map(|s| s.lines).collect::<Vec<_>>());
     let p_fanin = percentiles(&signals.iter().map(|s| s.fan_in).collect::<Vec<_>>());
     let p_clone = percentiles(&signals.iter().map(|s| s.clone_lines).collect::<Vec<_>>());
-    let have_history = hist.commits_scanned > 0;
+    // Commits that touched none of our files (a subdirectory scan of a larger
+    // repo, a shallow clone) are not history we can rank on.
+    let have_history = !hist.files.is_empty();
 
     // Worst functions per file, for the explanation.
     let mut worst: HashMap<&str, Vec<&FunctionMetrics>> = HashMap::new();
@@ -308,6 +343,37 @@ pub fn build(inp: Inputs, top: usize) -> Report {
         hidden_coupling: hidden,
         clones: inp.clones.pairs.iter().take(top).cloned().collect(),
         directories: directories.into_iter().take(top).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scope_stops_at_the_first_test_dir() {
+        assert_eq!(test_scope("backend/tests/unit/test_x.py"), "backend");
+        assert_eq!(test_scope("src/a/x.test.ts"), "src/a");
+        assert_eq!(test_scope("tests/test_x.py"), "");
+        assert_eq!(test_scope("test_x.py"), "");
+        assert_eq!(test_scope("src/a/__tests__/x.test.ts"), "src/a");
+    }
+
+    #[test]
+    fn stem_match_is_scoped_to_the_test_dir_tree() {
+        let sf = |p: &str, kind: FileKind| SourceFile {
+            path: p.into(), lang: crate::lang::Language::Python, kind, lines: 1, bytes: 0, content: String::new(),
+        };
+        let files = vec![
+            sf("a/utils.py", FileKind::Source),
+            sf("b/utils.py", FileKind::Source),
+            sf("b/sub/utils.py", FileKind::Source),
+            sf("b/tests/test_utils.py", FileKind::Test),
+        ];
+        let t = test_stems(&files);
+        assert!(!stem_tested(&t, &files[0]));
+        assert!(stem_tested(&t, &files[1]));
+        assert!(stem_tested(&t, &files[2]));
     }
 }
 

@@ -62,7 +62,11 @@ struct RawImport {
     level: usize,
 }
 
-pub fn build(files: &[SourceFile]) -> DepGraph {
+pub fn build(all: &[SourceFile]) -> DepGraph {
+    // Third-party code checked into the tree is not part of this repo's graph:
+    // its cycles are not ours to fix. Generated files may be imported, but
+    // their own imports are not walked, so they never form cycles either.
+    let files: Vec<&SourceFile> = all.iter().filter(|f| f.kind != FileKind::Vendored).collect();
     let known: HashSet<&str> = files.iter().map(|f| f.path.as_str()).collect();
     let kind_of: HashMap<&str, FileKind> = files.iter().map(|f| (f.path.as_str(), f.kind)).collect();
 
@@ -70,7 +74,7 @@ pub fn build(files: &[SourceFile]) -> DepGraph {
         .par_iter()
         .enumerate()
         .map(|(i, f)| {
-            let raws = extract(f);
+            let raws = if f.kind == FileKind::Generated { Vec::new() } else { extract(f) };
             let mut targets = BTreeSet::new();
             let mut external = 0usize;
             for r in raws {
@@ -268,16 +272,88 @@ fn extract_rust(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
         }
         "use_declaration" => {
             if let Some(arg) = n.child_by_field_name("argument") {
-                // Take the leading path up to the first `{` or `*`; good enough to
-                // find the module file.
-                let text = t(arg, src);
-                let head = text.split(['{', '*']).next().unwrap_or("").trim().trim_end_matches("::");
-                if head.starts_with("crate::") || head.starts_with("super::") || head.starts_with("self::") {
-                    out.push(RawImport { spec: head.to_string(), names: vec![], level: 0 });
+                // Inside `mod tests { … }` (an inline module), `super` is the file's
+                // own module, not the parent file.
+                let mut depth = 0;
+                let mut cur = n.parent();
+                while let Some(p) = cur {
+                    depth += usize::from(p.kind() == "mod_item");
+                    cur = p.parent();
+                }
+                let mut paths = Vec::new();
+                use_paths(arg, src, "", &mut paths);
+                for p in paths.iter().filter_map(|p| rebase_inline(p, depth)) {
+                    if p == "crate" || p == "super" || p == "self"
+                        || p.starts_with("crate::") || p.starts_with("super::") || p.starts_with("self::")
+                    {
+                        out.push(RawImport { spec: p, names: vec![], level: 0 });
+                    }
                 }
             }
         }
         _ => {}
+    }
+}
+
+/// Rewrite a `use` path written `depth` inline modules deep so it is relative to
+/// the file's own module. `super::x` one level down is `self::x`; a path that
+/// never leaves the inline modules names nothing on disk.
+fn rebase_inline(spec: &str, depth: usize) -> Option<String> {
+    if depth == 0 {
+        return Some(spec.to_string());
+    }
+    let mut segs: Vec<&str> = spec.split("::").collect();
+    if segs.first() == Some(&"crate") {
+        return Some(spec.to_string());
+    }
+    let mut d = depth;
+    while d > 0 && segs.first() == Some(&"super") {
+        segs.remove(0);
+        d -= 1;
+    }
+    if d > 0 {
+        return None; // still inside the inline module(s)
+    }
+    match segs.first() {
+        Some(&"super") | Some(&"self") => {}
+        _ => segs.insert(0, "self"),
+    }
+    Some(segs.join("::"))
+}
+
+/// Flatten a `use` tree: `crate::{a::X, b::{self, Y}}` → `crate::a::X`, `crate::b`, `crate::b::Y`.
+fn use_paths(n: Node, src: &[u8], prefix: &str, out: &mut Vec<String>) {
+    let with_prefix = |p: &str| if prefix.is_empty() { p.to_string() } else { format!("{prefix}::{p}") };
+    match n.kind() {
+        "scoped_use_list" => {
+            let inner = n.child_by_field_name("path").map(|p| with_prefix(t(p, src))).unwrap_or_else(|| prefix.to_string());
+            if let Some(list) = n.child_by_field_name("list") {
+                use_paths(list, src, &inner, out);
+            }
+        }
+        "use_list" => {
+            let mut c = n.walk();
+            for ch in n.named_children(&mut c) {
+                use_paths(ch, src, prefix, out);
+            }
+        }
+        "use_as_clause" => {
+            if let Some(p) = n.child_by_field_name("path") {
+                use_paths(p, src, prefix, out);
+            }
+        }
+        "use_wildcard" => {
+            // `path::*` depends on the module at `path`; a bare `*` on the prefix.
+            let mut c = n.walk();
+            match n.named_children(&mut c).next() {
+                Some(p) => out.push(with_prefix(t(p, src))),
+                None if !prefix.is_empty() => out.push(prefix.to_string()),
+                None => {}
+            }
+        }
+        // `self` inside a list names the prefix itself.
+        "self" if !prefix.is_empty() => out.push(prefix.to_string()),
+        _ => out.push(with_prefix(t(n, src))),
     }
 }
 
@@ -433,18 +509,28 @@ fn resolve_rust(from: &str, imp: &RawImport, known: &HashSet<&str>) -> Option<Ve
         }
         return None;
     }
-    let (base, path) = if let Some(p) = imp.spec.strip_prefix("crate::") {
-        // Crate root = nearest ancestor containing lib.rs or main.rs.
-        let root = ancestors(dir).into_iter().find(|a| {
-            known.contains(join(a, "lib.rs").as_str()) || known.contains(join(a, "main.rs").as_str())
-        })?;
-        (root, p)
-    } else if let Some(p) = imp.spec.strip_prefix("super::") {
-        (dir_of(&child_dir).to_string(), p)
-    } else {
-        (child_dir.clone(), imp.spec.trim_start_matches("self::"))
+    let (head, path) = imp.spec.split_once("::").unwrap_or((imp.spec.as_str(), ""));
+    let base = match head {
+        "crate" => {
+            // Crate root = nearest ancestor containing lib.rs or main.rs.
+            ancestors(dir).into_iter().find(|a| {
+                known.contains(join(a, "lib.rs").as_str()) || known.contains(join(a, "main.rs").as_str())
+            })?
+        }
+        "super" => dir_of(&child_dir).to_string(),
+        _ => child_dir.clone(),
     };
     let segs: Vec<&str> = path.split("::").filter(|s| !s.is_empty()).collect();
+    if segs.is_empty() {
+        // `use super::*` / `use crate::*`: the module file at `base` itself.
+        let stem = format!("{base}.rs");
+        for c in [join(&base, "mod.rs"), join(&base, "lib.rs"), join(&base, "main.rs"), stem] {
+            if known.contains(c.as_str()) {
+                return Some(vec![c]);
+            }
+        }
+        return None;
+    }
     // Longest prefix that names a file wins.
     for n in (1..=segs.len()).rev() {
         let rel = segs[..n].join("/");
@@ -500,6 +586,47 @@ mod tests {
         assert_eq!(g.dir_cycles.len(), 1);
         assert_eq!(g.dir_cycles[0].members, vec!["src/a", "src/b"]);
         assert!(g.connected("src/b/index.ts", "src/b/y.tsx"));
+    }
+
+    #[test]
+    fn rust_grouped_use_and_wildcards() {
+        let files = vec![
+            sf("src/main.rs", "mod deps;\nmod lang;\nmod util;\n"),
+            sf("src/deps/mod.rs", "use crate::{lang::Language, util};\n"),
+            sf("src/lang/mod.rs", "use crate::deps::{self, Cycle as C};\n"),
+            sf("src/util.rs", "use super::*;\nuse self::inner::x;\n"),
+        ];
+        let g = build(&files);
+        assert_eq!(g.files["src/deps/mod.rs"].fan_out, 2);
+        assert_eq!(g.files["src/lang/mod.rs"].fan_out, 1);
+        assert!(g.connected("src/util.rs", "src/main.rs"));
+        assert_eq!(g.file_cycles.len(), 1);
+    }
+
+    #[test]
+    fn inline_test_module_super_is_the_file_itself() {
+        let files = vec![
+            sf("src/main.rs", "mod a;\nmod b;\n"),
+            sf("src/a.rs", "pub fn f() {}\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use super::super::b::g;\n    mod deeper { use super::super::f; }\n}\n"),
+            sf("src/b.rs", "pub fn g() {}\n"),
+        ];
+        let g = build(&files);
+        assert_eq!(g.files["src/a.rs"].fan_out, 1, "{:?}", g.files["src/a.rs"]);
+        assert!(g.connected("src/a.rs", "src/b.rs"));
+        assert!(!g.edge_set.contains(&("src/a.rs".to_string(), "src/main.rs".to_string())), "{:?}", g.edge_set);
+    }
+
+    #[test]
+    fn vendored_code_is_not_in_the_graph() {
+        let files = vec![
+            sf("vendor/lib/a.js", "import {b} from './b'\n"),
+            sf("vendor/lib/b.js", "import {a} from './a'\n"),
+            sf("src/x.ts", "import {a} from '../vendor/lib/a'\n"),
+        ];
+        let g = build(&files);
+        assert!(g.file_cycles.is_empty());
+        assert!(!g.files.contains_key("vendor/lib/a.js"));
+        assert_eq!(g.files["src/x.ts"].external, 1);
     }
 
     #[test]
