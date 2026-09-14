@@ -50,10 +50,37 @@ impl SourceFile {
 }
 
 /// Keywords whose presence marks a line as control flow rather than data.
-const LOGIC_MARKERS: &[&str] = &[
-    "if ", "if(", "for ", "for(", "while ", "while(", "return", "def ", "fn ", "function",
-    "=>", "class ", "match ", "switch", "try", "elif ", "else", "yield", "await ", "impl ",
+/// Matched as whole words: `try` must not fire on `sentry` or `country`.
+const LOGIC_KEYWORDS: &[&str] = &[
+    "if", "for", "while", "return", "def", "fn", "function", "class", "match", "switch", "try",
+    "elif", "else", "yield", "await", "impl",
 ];
+
+fn is_word_char(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_'
+}
+
+/// True when the line carries a control-flow keyword as a whole word, or an arrow.
+fn has_logic_marker(line: &str) -> bool {
+    if line.contains("=>") {
+        return true;
+    }
+    let bytes = line.as_bytes();
+    LOGIC_KEYWORDS.iter().any(|kw| {
+        let mut from = 0;
+        while let Some(i) = line[from..].find(kw) {
+            let start = from + i;
+            let end = start + kw.len();
+            let before_ok = start == 0 || !is_word_char(bytes[start - 1]);
+            let after_ok = end == bytes.len() || !is_word_char(bytes[end]);
+            if before_ok && after_ok {
+                return true;
+            }
+            from = start + 1;
+        }
+        false
+    })
+}
 
 pub fn walk(root: &Path, cfg: &Cfg) -> Result<Vec<SourceFile>> {
     let root = root.canonicalize().with_context(|| format!("cannot open {}", root.display()))?;
@@ -147,7 +174,7 @@ pub fn logic_density(content: &str) -> f64 {
             continue;
         }
         total += 1;
-        if LOGIC_MARKERS.iter().any(|m| t.contains(m)) {
+        if has_logic_marker(t) {
             logic += 1;
         }
     }
@@ -181,6 +208,20 @@ mod tests {
         c.data_min_lines = 10;
         c.data_max_logic_density = 0.5;
         assert_eq!(classify("a.py", &"x = 1\n".repeat(12), 12, &c), FileKind::Data);
+    }
+
+    #[test]
+    fn markers_are_whole_words() {
+        assert!(has_logic_marker("    if x:"));
+        assert!(has_logic_marker("} else {"));
+        assert!(has_logic_marker("const f = (a) => a;"));
+        assert!(has_logic_marker("try:"));
+        assert!(!has_logic_marker("    name=\"sentry-api-0-organization-group\","));
+        assert!(!has_logic_marker("  {name: 'United States', code: 'US', 'country-code': '840'},"));
+        assert!(!has_logic_marker("  format: 'classic', mode: 'deferred', kind: 'awaiting',"));
+        // A route table is data even though every line names the project.
+        let table: String = (0..300).map(|i| format!("    re_path(r\"^{i}/$\", View{i}.as_view(), name=\"sentry-api-{i}\"),\n")).collect();
+        assert_eq!(classify("src/sentry/api/urls.py", &table, 300, &Cfg::default()), FileKind::Data);
     }
 
     #[test]

@@ -1,16 +1,16 @@
 ---
 id: t-bd02
 title: 'Discovery logic-density markers match substrings: ''try'' hits ''sentry'' and ''country'', so Sentry''s api/urls.py (4060 lines) and ISO3166codes.ts count as Source and top the clones list; anchor markers on word boundaries (urls.py density 0.248 -> 0.002)'
-state: todo
+state: doing
 spec: null
 proposal: null
 item: null
 deps: []
 followup_of: null
 discovered_in: t-02b6
-branch: null
+branch: ks/t-bd02-discovery-logic-density-markers-match-su
 worktree: null
-claimed_by: null
+claimed_by: claude/7b7df9fd-509a
 pr: null
 head: null
 spec_unchanged: null
@@ -22,3 +22,4 @@ Discovery logic-density markers match substrings: 'try' hits 'sentry' and 'count
 
 ## Log
 - 2026-09-14T01:10Z  todo     claude/7b7df9fd-509a  new (discovered in t-02b6)
+- 2026-09-14T01:13Z  doing    claude/7b7df9fd-509a  start (branch created)
