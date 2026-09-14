@@ -12,7 +12,7 @@ use crate::discover::SourceFile;
 use crate::lang::Language;
 use rayon::prelude::*;
 use serde::Serialize;
-use tree_sitter::Node;
+use tree_sitter::{Node, Tree};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FunctionMetrics {
@@ -141,9 +141,14 @@ fn is_bound_callable(node: Node) -> bool {
     })
 }
 
+/// Parse and measure every file. `scan` parses once for all passes instead
+/// and calls [`analyze_tree`] + [`collect`] itself.
 pub fn analyze_all(files: &[SourceFile], cfg: &Cfg) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
-    let per_file: Vec<(FileMetrics, Vec<FunctionMetrics>)> =
-        files.par_iter().map(|f| analyze_file(f, cfg)).collect();
+    collect(files.par_iter().map(|f| analyze_file(f, cfg)).collect())
+}
+
+/// Flatten per-file results, in file order, into the two lists the report reads.
+pub fn collect(per_file: Vec<(FileMetrics, Vec<FunctionMetrics>)>) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
     let mut file_metrics = Vec::with_capacity(per_file.len());
     let mut funcs = Vec::new();
     for (fm, fs) in per_file {
@@ -154,12 +159,18 @@ pub fn analyze_all(files: &[SourceFile], cfg: &Cfg) -> (Vec<FileMetrics>, Vec<Fu
 }
 
 pub fn analyze_file(file: &SourceFile, cfg: &Cfg) -> (FileMetrics, Vec<FunctionMetrics>) {
-    let mut parser = file.lang.parser();
+    let tree = file.lang.parse(&file.content);
+    analyze_tree(file, tree.as_ref(), cfg)
+}
+
+/// Measure an already-parsed file. `None` stands for a file tree-sitter could
+/// not parse at all and yields zero functions, like an empty file.
+pub fn analyze_tree(file: &SourceFile, tree: Option<&Tree>, cfg: &Cfg) -> (FileMetrics, Vec<FunctionMetrics>) {
     let prof = profile(file.lang);
     let src = file.content.as_bytes();
     let mut funcs = Vec::new();
     let mut parse_errors = false;
-    if let Some(tree) = parser.parse(src, None) {
+    if let Some(tree) = tree {
         let root = tree.root_node();
         parse_errors = root.has_error();
         collect_units(root, prof, src, &file.path, &mut funcs);

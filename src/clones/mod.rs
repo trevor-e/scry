@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use tree_sitter::Node;
+use tree_sitter::{Node, Tree};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Loc {
@@ -42,14 +42,26 @@ pub struct CloneReport {
     pub files: HashMap<String, FileClones>,
 }
 
-struct Tokens {
+/// One file's normalised token stream: a class hash per leaf and the line it sits on.
+pub struct Tokens {
     hashes: Vec<u64>,
     lines: Vec<usize>,
 }
 
+/// Parse and tokenize every file, then find clones. `scan` parses once for
+/// all passes instead and calls [`tokenize`] + [`detect_from`] itself.
 pub fn detect(files: &[SourceFile], cfg: &Cfg) -> CloneReport {
+    let toks: Vec<Tokens> = files
+        .par_iter()
+        .map(|f| tokenize(f.lang.parse(&f.content).as_ref()))
+        .collect();
+    detect_from(files, toks, cfg)
+}
+
+/// Find clones from per-file token streams, `toks[i]` belonging to `files[i]`.
+pub fn detect_from(files: &[SourceFile], toks: Vec<Tokens>, cfg: &Cfg) -> CloneReport {
+    assert_eq!(files.len(), toks.len(), "one token stream per file");
     let k = cfg.k;
-    let toks: Vec<Tokens> = files.par_iter().map(tokenize).collect();
 
     // fingerprint hash -> (file, token position)
     let mut index: HashMap<u64, Vec<(usize, usize)>> = HashMap::new();
@@ -252,11 +264,11 @@ const NUMBER_KINDS: &[&str] = &[
     "null", "undefined",
 ];
 
-fn tokenize(file: &SourceFile) -> Tokens {
-    let mut parser = file.lang.parser();
-    let src = file.content.as_bytes();
+/// Tokenize an already-parsed file; `None` (tree-sitter gave up) is an empty
+/// stream. Only node kinds are hashed, never text, so the source is not needed.
+pub fn tokenize(tree: Option<&Tree>) -> Tokens {
     let mut out = Tokens { hashes: Vec::new(), lines: Vec::new() };
-    let Some(tree) = parser.parse(src, None) else { return out };
+    let Some(tree) = tree else { return out };
     let mut stack: Vec<Node> = vec![tree.root_node()];
     while let Some(n) = stack.pop() {
         let kind = n.kind();

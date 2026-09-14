@@ -9,8 +9,59 @@ mod report;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use discover::{FileKind, SourceFile};
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+/// What the three tree-sitter passes produce from one parse per file.
+struct Parsed {
+    file_metrics: Vec<metrics::FileMetrics>,
+    functions: Vec<metrics::FunctionMetrics>,
+    deps: deps::DepGraph,
+    clones: clones::CloneReport,
+}
+
+/// Parse each file once and run metrics, deps and clones over the same tree.
+/// The tree is dropped before the next file starts, so peak memory is one
+/// tree per worker thread, not one per file. `source` must be the `Source`
+/// files of `files`, in the same order (the standalone subcommands each
+/// parse for themselves and are unaffected).
+fn parse_once(files: &[SourceFile], source: &[SourceFile], cfg: &config::Config) -> Parsed {
+    struct PerFile {
+        metrics: Option<(metrics::FileMetrics, Vec<metrics::FunctionMetrics>)>,
+        imports: Vec<deps::RawImport>,
+        tokens: Option<clones::Tokens>,
+    }
+    let per_file: Vec<PerFile> = files
+        .par_iter()
+        .map(|f| {
+            let ranked = f.kind == FileKind::Source;
+            let tree = if ranked || deps::walks_imports(f) { f.lang.parse(&f.content) } else { None };
+            let tree = tree.as_ref();
+            PerFile {
+                metrics: ranked.then(|| metrics::analyze_tree(f, tree, &cfg.metrics)),
+                imports: deps::imports(f, tree),
+                tokens: ranked.then(|| clones::tokenize(tree)),
+            }
+        })
+        .collect();
+    let mut per_metrics = Vec::with_capacity(source.len());
+    let mut imports = Vec::with_capacity(files.len());
+    let mut tokens = Vec::with_capacity(source.len());
+    for p in per_file {
+        per_metrics.extend(p.metrics);
+        imports.push(p.imports);
+        tokens.extend(p.tokens);
+    }
+    let (file_metrics, functions) = metrics::collect(per_metrics);
+    Parsed {
+        file_metrics,
+        functions,
+        deps: deps::build_from(files, &imports, &cfg.deps),
+        clones: clones::detect_from(source, tokens, &cfg.clones),
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "scry", version, about = "Find the parts of a codebase most likely to need refactoring or to hide bugs")]
@@ -124,8 +175,7 @@ fn main() -> Result<()> {
                 cfg.history.since = s;
             }
             let files = discover::walk(&path, &cfg.discover)?;
-            let source: Vec<discover::SourceFile> =
-                files.iter().filter(|f| f.kind == discover::FileKind::Source).cloned().collect();
+            let source: Vec<SourceFile> = files.iter().filter(|f| f.kind == FileKind::Source).cloned().collect();
             let tracked: std::collections::HashSet<String> = source.iter().map(|f| f.path.clone()).collect();
             let history = if no_history {
                 None
@@ -143,18 +193,16 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let (file_metrics, functions) = metrics::analyze_all(&source, &cfg.metrics);
-            let graph = deps::build(&files, &cfg.deps);
-            let clone_report = clones::detect(&source, &cfg.clones);
+            let parsed = parse_once(&files, &source, &cfg);
             let report = report::build(
                 report::Inputs {
                     root: path.canonicalize()?.display().to_string(),
                     files: &files,
                     history: history.as_ref(),
-                    file_metrics: &file_metrics,
-                    functions: &functions,
-                    deps: &graph,
-                    clones: &clone_report,
+                    file_metrics: &parsed.file_metrics,
+                    functions: &parsed.functions,
+                    deps: &parsed.deps,
+                    clones: &parsed.clones,
                     cognitive_hard: cfg.metrics.cognitive_hard,
                 },
                 top,
@@ -304,4 +352,57 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lang::Language;
+
+    fn sf(path: &str, content: &str) -> SourceFile {
+        let lang = Language::from_path(std::path::Path::new(path)).unwrap();
+        let kind = discover::classify(path, content, content.lines().count(), &config::Discover::default());
+        SourceFile { path: path.into(), lang, kind, lines: content.lines().count(), bytes: content.len(), content: content.into() }
+    }
+
+    /// Twelve structurally different lines, long enough to be a clone.
+    fn body(p: &str) -> String {
+        format!(
+            "    {p}_a = compute({p}, 1) + other[2]\n    if {p}_a and not {p}:\n        raise ValueError({p}_a)\n\
+             \x20   for {p}_i in range(3):\n        {p}_a += {p}_i * 2\n    while {p}_a > 10:\n        {p}_a -= 1\n\
+             \x20   {p}_b = [{p}_x for {p}_x in {p} if {p}_x]\n    try:\n        {p}_c = {p}_b[0]\n    except IndexError:\n        {p}_c = None\n"
+        )
+    }
+
+    #[test]
+    fn one_parse_matches_the_standalone_passes() {
+        let files = vec![
+            sf("pkg/__init__.py", ""),
+            sf("pkg/a.py", &format!("from pkg import b\nfrom .c import thing\n\ndef alpha(x):\n{}\n    return x\n", body("aa"))),
+            sf("pkg/b.py", &format!("import pkg.a\n\ndef beta(y):\n{}\n    return y\n", body("bb"))),
+            sf("pkg/c.py", "from . import a\n"),
+            sf("tests/test_a.py", "from pkg.a import alpha\n"),
+            sf("vendor/lib/x.js", "import {y} from './y'\n"),
+            sf("web/k.ts", "import x from '@/a/x'\nclass K { m(a: number) { if (a) {} else if (a > 1) {} return a ? 1 : 2; } }\n"),
+            sf("web/src/a/x.ts", "export const g = (x: number) => x && x;\n"),
+        ];
+        let cfg = config::Config::default();
+        let source: Vec<SourceFile> = files.iter().filter(|f| f.kind == FileKind::Source).cloned().collect();
+        assert!(source.len() < files.len(), "the fixture needs non-source files");
+        let once = parse_once(&files, &source, &cfg);
+
+        let (fm, fs) = metrics::analyze_all(&source, &cfg.metrics);
+        assert_eq!(json(&once.file_metrics), json(&fm));
+        assert_eq!(json(&once.functions), json(&fs));
+        assert_eq!(json(&once.deps), json(&deps::build(&files, &cfg.deps)));
+        assert_eq!(json(&once.clones), json(&clones::detect(&source, &cfg.clones)));
+        assert_eq!(once.deps.file_cycles.len(), 1);
+        assert_eq!(once.clones.pairs.len(), 1, "{:?}", once.clones.pairs);
+        assert!(once.functions.iter().any(|f| f.name == "K.m"));
+    }
+
+    /// `serde_json::Value` compares maps by content, so HashMap order does not matter.
+    fn json<T: serde::Serialize>(v: &T) -> serde_json::Value {
+        serde_json::to_value(v).unwrap()
+    }
 }

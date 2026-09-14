@@ -13,7 +13,7 @@ use petgraph::graph::{DiGraph, NodeIndex};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use tree_sitter::Node;
+use tree_sitter::{Node, Tree};
 
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct FileDeps {
@@ -53,8 +53,9 @@ impl DepGraph {
     }
 }
 
+/// One import as written, before resolution.
 #[derive(Debug)]
-struct RawImport {
+pub struct RawImport {
     /// Module spec as written: `a.b.c`, `./x`, `crate::y`.
     spec: String,
     /// Python: `from a.b import c` – `c` may itself be a submodule.
@@ -63,23 +64,52 @@ struct RawImport {
     level: usize,
 }
 
+/// Parse every file and build the graph. `scan` parses once for all passes
+/// instead and calls [`imports`] + [`build_from`] itself.
 pub fn build(all: &[SourceFile], cfg: &Cfg) -> DepGraph {
-    // Third-party code checked into the tree is not part of this repo's graph:
-    // its cycles are not ours to fix. Generated files may be imported, but
-    // their own imports are not walked, so they never form cycles either.
-    let files: Vec<&SourceFile> = all.iter().filter(|f| f.kind != FileKind::Vendored).collect();
-    let known: HashSet<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    let kind_of: HashMap<&str, FileKind> = files.iter().map(|f| (f.path.as_str(), f.kind)).collect();
+    let raws: Vec<Vec<RawImport>> = all
+        .par_iter()
+        .map(|f| {
+            let tree = if walks_imports(f) { f.lang.parse(&f.content) } else { None };
+            imports(f, tree.as_ref())
+        })
+        .collect();
+    build_from(all, &raws, cfg)
+}
+
+/// Whether a file's own imports are edges. Third-party code checked into the
+/// tree is not part of this repo's graph: its cycles are not ours to fix.
+/// Generated files may be imported, but their own imports are not walked, so
+/// they never form cycles either.
+pub fn walks_imports(file: &SourceFile) -> bool {
+    !matches!(file.kind, FileKind::Vendored | FileKind::Generated)
+}
+
+/// The imports of one already-parsed file; empty for kinds whose imports are
+/// not walked, so callers need not check [`walks_imports`] themselves.
+pub fn imports(file: &SourceFile, tree: Option<&Tree>) -> Vec<RawImport> {
+    match tree {
+        Some(tree) if walks_imports(file) => extract(file, tree),
+        _ => Vec::new(),
+    }
+}
+
+/// Build the graph from per-file imports, `raws[i]` belonging to `all[i]`.
+pub fn build_from(all: &[SourceFile], raws: &[Vec<RawImport>], cfg: &Cfg) -> DepGraph {
+    assert_eq!(all.len(), raws.len(), "one import list per file");
+    let files: Vec<(&SourceFile, &Vec<RawImport>)> =
+        all.iter().zip(raws).filter(|(f, _)| f.kind != FileKind::Vendored).collect();
+    let known: HashSet<&str> = files.iter().map(|(f, _)| f.path.as_str()).collect();
+    let kind_of: HashMap<&str, FileKind> = files.iter().map(|(f, _)| (f.path.as_str(), f.kind)).collect();
 
     let per_file: Vec<(usize, Vec<String>, usize)> = files
         .par_iter()
         .enumerate()
-        .map(|(i, f)| {
-            let raws = if f.kind == FileKind::Generated { Vec::new() } else { extract(f) };
+        .map(|(i, (f, raws))| {
             let mut targets = BTreeSet::new();
             let mut external = 0usize;
-            for r in raws {
-                match resolve(&f.path, f.lang, &r, &known, cfg) {
+            for r in raws.iter() {
+                match resolve(&f.path, f.lang, r, &known, cfg) {
                     Some(t) => {
                         for t in t {
                             if t != f.path {
@@ -96,13 +126,13 @@ pub fn build(all: &[SourceFile], cfg: &Cfg) -> DepGraph {
 
     let mut graph: DiGraph<usize, ()> = DiGraph::new();
     let idx: HashMap<&str, NodeIndex> =
-        files.iter().enumerate().map(|(i, f)| (f.path.as_str(), graph.add_node(i))).collect();
+        files.iter().enumerate().map(|(i, (f, _))| (f.path.as_str(), graph.add_node(i))).collect();
     let mut out = DepGraph::default();
     let mut fan_in: HashMap<&str, usize> = HashMap::new();
     let mut test_refs: HashMap<&str, usize> = HashMap::new();
 
     for (i, targets, external) in &per_file {
-        let src = files[*i].path.as_str();
+        let src = files[*i].0.path.as_str();
         let is_test = kind_of[src] == FileKind::Test;
         for t in targets {
             let (Some(&a), Some(&b)) = (idx.get(src), idx.get(t.as_str())) else { continue };
@@ -133,7 +163,7 @@ pub fn build(all: &[SourceFile], cfg: &Cfg) -> DepGraph {
         if scc.len() < 2 {
             continue;
         }
-        let mut members: Vec<String> = scc.iter().map(|n| files[graph[*n]].path.clone()).collect();
+        let mut members: Vec<String> = scc.iter().map(|n| files[graph[*n]].0.path.clone()).collect();
         members.sort();
         for m in &members {
             if let Some(d) = out.files.get_mut(m) {
@@ -142,7 +172,9 @@ pub fn build(all: &[SourceFile], cfg: &Cfg) -> DepGraph {
         }
         out.file_cycles.push(Cycle { members });
     }
-    out.file_cycles.sort_by_key(|c| std::cmp::Reverse(c.members.len()));
+    // Largest first, then by members: SCC order varies with hash-map iteration
+    // and the output must not.
+    out.file_cycles.sort_by(|a, b| b.members.len().cmp(&a.members.len()).then_with(|| a.members.cmp(&b.members)));
 
     // Directory-level cycles: collapse files to their directory, drop self-edges.
     let mut dgraph: DiGraph<String, ()> = DiGraph::new();
@@ -167,7 +199,7 @@ pub fn build(all: &[SourceFile], cfg: &Cfg) -> DepGraph {
         members.sort();
         out.dir_cycles.push(Cycle { members });
     }
-    out.dir_cycles.sort_by_key(|c| std::cmp::Reverse(c.members.len()));
+    out.dir_cycles.sort_by(|a, b| b.members.len().cmp(&a.members.len()).then_with(|| a.members.cmp(&b.members)));
     out
 }
 
@@ -177,10 +209,8 @@ fn dir_of(path: &str) -> &str {
 
 // ---------- extraction ----------
 
-fn extract(file: &SourceFile) -> Vec<RawImport> {
-    let mut parser = file.lang.parser();
+fn extract(file: &SourceFile, tree: &Tree) -> Vec<RawImport> {
     let src = file.content.as_bytes();
-    let Some(tree) = parser.parse(src, None) else { return Vec::new() };
     let mut raws = Vec::new();
     let mut stack = vec![tree.root_node()];
     while let Some(n) = stack.pop() {
