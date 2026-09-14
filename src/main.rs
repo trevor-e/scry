@@ -160,6 +160,7 @@ fn main() -> Result<()> {
                     tests: &cfg.tests,
                     list_tables_separately: cfg.clones.list_tables_separately,
                     history_cfg: &cfg.history,
+                    dedupe_cycle_reason: cfg.deps.dedupe_cycle_reason,
                 },
                 top,
                 &cfg.report,
@@ -267,7 +268,11 @@ fn main() -> Result<()> {
             }
             println!("\nfile cycles ({}):", g.file_cycles.len());
             for c in g.file_cycles.iter().take(top) {
-                println!("  [{}] {}", c.members.len(), c.members.join(", "));
+                println!("  {}", c.headline());
+                println!("    files: {}", c.members.join(", "));
+                if let Some(l) = c.cut_set_line() {
+                    println!("    {l}");
+                }
             }
             let mut rows: Vec<(&String, &deps::FileDeps)> = g.files.iter().collect();
             rows.sort_by_key(|(_, d)| std::cmp::Reverse(d.fan_in));

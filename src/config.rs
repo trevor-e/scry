@@ -205,11 +205,47 @@ pub struct Deps {
     /// JS/TS import-prefix aliases: `"@/" = "src"` maps `@/x` to `<nearest src>/x`.
     /// The target is looked for under every ancestor of the importing file.
     pub js_aliases: BTreeMap<String, String>,
+    /// A file cycle with at least this many members gets a cut suggestion; smaller ones only
+    /// the deduped count line.
+    pub min_cycle_size_to_cut: usize,
+    /// Internal edges tried for the single-edge cut, cheapest first (an SCC of 15 files has ~70).
+    pub max_edges_tried: usize,
+    /// The greedy cut set is reported only when it dissolves the cycle within this many edges.
+    pub max_cut_set: usize,
+    /// Symbol cost of a wildcard import (`use x::*`, `from x import *`, `import * as ns`):
+    /// what it pulls in is unknown, so it is never the cheap cut.
+    pub glob_import_symbol_cost: u32,
+    /// Also try dropping every non-`mod` import of one member (the hub cut); reported when it
+    /// leaves a smaller cycle than the best single edge.
+    pub report_hub_cut: bool,
+    /// Print the cycle once under CYCLES and `in the 15-file src cycle (cut: a -> b, Sym)` on
+    /// members, instead of `in an import cycle of 15 files` on every member.
+    pub dedupe_cycle_reason: bool,
+    /// Compute cuts for Rust cycles. Off keeps the deduped count line but no cut text: the
+    /// idiomatic-Rust argument belongs in `[report].cycle_coupling`, not in hiding the cut.
+    pub cut_rust_cycles: bool,
+    /// TS `import type` / `import { type X }` edges are erased at runtime: leave them out of
+    /// the cycle the cuts are searched on.
+    pub ignore_type_only_imports: bool,
+    /// `no single import breaks this cycle` is appended when the best single cut still leaves
+    /// a cycle of at least this share of the members.
+    pub no_single_cut_share: f64,
 }
 
 impl Default for Deps {
     fn default() -> Self {
-        Self { js_aliases: [("@/".to_string(), "src".to_string()), ("~/".to_string(), "src".to_string())].into() }
+        Self {
+            js_aliases: [("@/".to_string(), "src".to_string()), ("~/".to_string(), "src".to_string())].into(),
+            min_cycle_size_to_cut: 4,
+            max_edges_tried: 400,
+            max_cut_set: 6,
+            glob_import_symbol_cost: 20,
+            report_hub_cut: true,
+            dedupe_cycle_reason: true,
+            cut_rust_cycles: true,
+            ignore_type_only_imports: true,
+            no_single_cut_share: 0.8,
+        }
     }
 }
 

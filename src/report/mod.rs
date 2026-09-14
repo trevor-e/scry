@@ -132,6 +132,9 @@ pub struct Inputs<'a> {
     pub list_tables_separately: bool,
     /// `explained_min_share` and `sweep_fraction` (for the sweep note).
     pub history_cfg: &'a HistoryCfg,
+    /// `[deps].dedupe_cycle_reason`: the cycle is described once under CYCLES and members get
+    /// `in the 15-file src cycle (cut: a -> b, Sym)` instead of the count on every one.
+    pub dedupe_cycle_reason: bool,
 }
 
 /// The shared import that best explains a pair: the file both import that changed in the most of
@@ -380,11 +383,11 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             index.entry(h.b.as_str()).or_default().push(h);
         }
     }
-    let cycle_size: HashMap<&str, usize> = inp
+    let cycle_of: HashMap<&str, &Cycle> = inp
         .deps
         .file_cycles
         .iter()
-        .flat_map(|c| c.members.iter().map(move |m| (m.as_str(), c.members.len())))
+        .flat_map(|c| c.members.iter().map(move |m| (m.as_str(), c)))
         .collect();
 
     let mut hotspots: Vec<Hotspot> = source
@@ -421,8 +424,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 }
                 reasons.push(r);
             }
-            if let Some(n) = cycle_size.get(f.path.as_str()) {
-                reasons.push(format!("in an import cycle of {n} files"));
+            if let Some(c) = cycle_of.get(f.path.as_str()) {
+                reasons.push(cycle_reason(c, &f.path, inp.dedupe_cycle_reason));
             }
             if p_fanin[i] >= cfg.reason_fanin_percentile && s.fan_in >= cfg.reason_min_fan_in {
                 reasons.push(format!("imported by {} files: a change here fans out", s.fan_in));
@@ -562,7 +565,7 @@ mod tests {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 1.0 },
             ..Cfg::default()
         };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &size_only, &td());
         let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["b.rs", "a.rs"], "{r:?}");
         let a = &r.hotspots[1];
@@ -579,7 +582,7 @@ mod tests {
         assert!(text.contains("b.rs  (1500 lines)"), "{text}");
         // Below the ratio knob the note is absent; the region still counts as tests.
         let strict = TestsCfg { report_inline_ratio_above: 0.9, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &strict, list_tables_separately: true, history_cfg: &hcfg }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &strict, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &size_only, &td());
         assert!(r.hotspots[1].inline_test_note.is_none());
         assert!(r.hotspots[1].signals.has_tests);
     }
@@ -601,7 +604,7 @@ mod tests {
         let deps = DepGraph::default();
         let tests = TestsCfg::default();
         let hcfg = hcfg();
-        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: sep, history_cfg: &hcfg };
+        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: sep, history_cfg: &hcfg, dedupe_cycle_reason: true };
         let r = build(inputs(true), 10, &Cfg::default(), &td());
         assert_eq!((r.clones.len(), r.tables.len()), (1, 1));
         assert_eq!(r.clones[0].kind, CloneKind::Logic);
@@ -644,7 +647,7 @@ mod tests {
         deps.add_edge("a.rs", "d.rs"); // a<->d import each other: not hidden at all
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
-        let inputs = |hcfg: &'static HistoryCfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: hcfg };
+        let inputs = |hcfg: &'static HistoryCfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: hcfg, dedupe_cycle_reason: true };
         let r = build(inputs(Box::leak(Box::new(HistoryCfg::default()))), 10, &Cfg::default(), &td());
         assert_eq!(r.hidden_coupling.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.together, h.together_nonsweep)).collect::<Vec<_>>(), vec![("a.rs", "b.rs", 6, 4)]);
         assert!(r.hidden_coupling[0].explained_by.is_none());
@@ -669,8 +672,44 @@ mod tests {
         // No sweeps: no footer.
         hist.sweep_commits = 0;
         hist.sweeps.clear();
-        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: strict }, 10, &Cfg::default(), &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: strict, dedupe_cycle_reason: true }, 10, &Cfg::default(), &td());
         assert!(r.sweep_note.is_none() && !render(&r, 10).contains("directory-sweep"));
+    }
+
+    #[test]
+    fn cycle_reason_is_deduped_and_cycles_print_one_block_each() {
+        use crate::deps::{Cuts, Edge, EdgeCut, EdgeKind, HubCut};
+        let sf = |p: &str| SourceFile { path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines: 100, bytes: 0, content: String::new() };
+        let files = vec![sf("src/paths.rs"), sf("src/plan.rs"), sf("src/scan.rs"), sf("src/ctx.rs")];
+        let fm: Vec<FileMetrics> = files.iter().map(|f| fmetrics(&f.path, 1, 1, 0)).collect();
+        let edge = |from: &str, to: &str, names: &[&str]| Edge { from: from.into(), to: to.into(), kind: EdgeKind::Use, symbols: names.len() as u32, names: names.iter().map(|s| s.to_string()).collect(), glob: false, line: 16 };
+        let mut deps = DepGraph::default();
+        deps.file_cycles.push(crate::deps::Cycle {
+            members: files.iter().map(|f| f.path.clone()).collect(),
+            dir: "src".into(),
+            cuts: Some(Cuts {
+                internal_edges: 9, mod_edges: 0, type_only_edges: 0, base: 4,
+                single: Some(EdgeCut { edge: edge("src/paths.rs", "src/plan.rs", &["EntityRef"]), largest_after: 4 }),
+                hub: Some(HubCut { member: "src/paths.rs".into(), imports: 4, symbols: 9, largest_after: 3 }),
+                cut_set: vec![EdgeCut { edge: edge("src/paths.rs", "src/plan.rs", &["EntityRef"]), largest_after: 4 }, EdgeCut { edge: edge("src/plan.rs", "src/scan.rs", &["ScanToken", "Tok"]), largest_after: 3 }],
+                no_single_break: true,
+            }),
+        });
+        deps.file_cycles.push(crate::deps::Cycle { members: vec!["src/a.rs".into(), "src/b.rs".into()], dir: "src".into(), cuts: None });
+        let clones = CloneReport::default();
+        let tests = TestsCfg::default();
+        let hcfg = hcfg();
+        let inputs = |dedupe: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: dedupe };
+        let r = build(inputs(true), 10, &Cfg::default(), &td());
+        let reason = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.iter().find(|x| x.contains("cycle")).cloned().unwrap_or_default();
+        assert_eq!(reason("src/paths.rs"), "in the 4-file src cycle (cut: paths.rs -> plan.rs, EntityRef)");
+        assert_eq!(reason("src/plan.rs"), "in the 4-file src cycle (cut: paths.rs -> plan.rs, EntityRef)");
+        assert_eq!(reason("src/scan.rs"), "in the 4-file src cycle");
+        let text = render(&r, 10);
+        assert!(text.contains("\nCYCLES\n  4-file cycle in src: cheapest cut src/paths.rs -> src/plan.rs imports 1 symbol (EntityRef, line 16) -> largest remaining cycle 4; hub cut: drop paths.rs's 4 imports (9 symbols) -> 3; no single import breaks this cycle\n    files: src/paths.rs, src/plan.rs, src/scan.rs, src/ctx.rs\n    cut set of 2 imports dissolves it: src/paths.rs -> src/plan.rs (EntityRef), src/plan.rs -> src/scan.rs (ScanToken, Tok)\n  2-file cycle in src\n    files: src/a.rs, src/b.rs\n"), "{text}");
+        // Without dedupe: the old count line on every member.
+        let r = build(inputs(false), 10, &Cfg::default(), &td());
+        assert!(r.hotspots.iter().all(|h| h.reasons.contains(&"in an import cycle of 4 files".to_string())), "{:?}", r.hotspots);
     }
 
     #[test]
@@ -696,7 +735,7 @@ mod tests {
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
         let hcfg = hcfg();
-        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg };
+        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true };
         let by_default = build(inputs(), 10, &Cfg::default(), &td());
         assert_eq!(by_default.hotspots[0].path, "small.py");
         let size_only = Cfg {
@@ -723,6 +762,15 @@ mod tests {
         assert!(stem_tested(&t, &files[1]));
         assert!(stem_tested(&t, &files[2]));
     }
+}
+
+/// `in the 15-file src cycle (cut: paths.rs -> plan.rs, EntityRef)`: the cut clause only on the
+/// two files of the cheapest cut edge. Without dedupe, `in an import cycle of 15 files`.
+fn cycle_reason(c: &Cycle, path: &str, dedupe: bool) -> String {
+    if !dedupe {
+        return format!("in an import cycle of {} files", c.members.len());
+    }
+    format!("in the {}-file {} cycle{}", c.members.len(), c.dir, c.cut_note(path).unwrap_or_default())
 }
 
 /// `; 2 sweep commits ignored` inside a hidden-coupling reason, empty when none were.
@@ -774,7 +822,11 @@ pub fn render(r: &Report, top: usize) -> String {
         let _ = writeln!(o, "  dirs  {}", c.members.join(" <-> "));
     }
     for c in r.file_cycles.iter().take(top) {
-        let _ = writeln!(o, "  files [{}] {}", c.members.len(), c.members.join(", "));
+        let _ = writeln!(o, "  {}", c.headline());
+        let _ = writeln!(o, "    files: {}", c.members.join(", "));
+        if let Some(l) = c.cut_set_line() {
+            let _ = writeln!(o, "    {l}");
+        }
     }
 
     let _ = writeln!(o, "\nHIDDEN COUPLING  (change together, no import between them)");
