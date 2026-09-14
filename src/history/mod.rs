@@ -2,8 +2,8 @@
 //! and the cheapest: one `git log` over the window, parsed once.
 //!
 //! - churn: commits touching the file in the window
-//! - fix commits: commits whose subject reads like a bug fix
-//! - authors: distinct committers (bus factor)
+//! - fix commits: commits whose subject reads like a bug fix (a mass edit never is)
+//! - authors: distinct non-bot committers (bus factor)
 //! - co-change: file pairs that ship together; paired with the import graph this
 //!   exposes hidden coupling no static tool can see.
 
@@ -21,6 +21,10 @@ pub struct FileHistory {
     pub authors: usize,
     /// Commits among `commits` that were directory sweeps: churn, but never pair evidence.
     pub sweep_commits: usize,
+    /// Commits among `commits` by a `bot_patterns` author: churn, but never an author.
+    pub bot_commits: usize,
+    /// Fix-worded commits among `commits` that were over the mass-edit cap and so not counted in `fix_commits`.
+    pub capped_fix_commits: usize,
     /// Unix seconds of the newest commit touching the file.
     pub last_touched: i64,
     #[serde(skip)]
@@ -72,6 +76,10 @@ pub struct History {
     pub sweep_commits: usize,
     /// True when non-sweep commits reached `min_commits_for_lift`, so pairs under `min_lift` were dropped.
     pub lift_applied: bool,
+    /// Commits whose author name matched `bot_patterns`: still churn, never an author.
+    pub bot_commits: usize,
+    /// Fix-worded commits over `max_cochange_commit_size` that `fix_mass_edit_cap` kept out of every file's fix count.
+    pub capped_fix_commits: usize,
     pub sweeps: Vec<SweepCommit>,
     pub files: HashMap<String, FileHistory>,
     pub co_changes: Vec<CoChange>,
@@ -84,6 +92,12 @@ pub struct History {
 pub fn subject_is_fix(subject: &str, fix_words: &[String]) -> bool {
     let s = subject.to_ascii_lowercase();
     s.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| fix_words.iter().any(|f| f == w))
+}
+
+/// Case-insensitive substring match of the author name against `bot_patterns`.
+pub fn author_is_bot(author: &str, bot_patterns: &[String]) -> bool {
+    let a = author.to_lowercase();
+    bot_patterns.iter().any(|p| !p.is_empty() && a.contains(&p.to_lowercase()))
 }
 
 /// Path of `root` inside its git work tree (`""` at the top level, `pkg/` below it).
@@ -149,11 +163,20 @@ pub fn parse(text: &str, prefix: &str, cfg: &Cfg, tracked: &HashSet<String>) -> 
             fields.next().unwrap_or(""),
         );
         hist.commits_scanned += 1;
-        let is_fix = subject_is_fix(subject, &cfg.fix_words);
         let touched: Vec<&str> = lines.map(str::trim).filter(|l| !l.is_empty()).collect();
         // Mass edits (formatters, renames) say nothing about coupling; judge that
         // on everything the commit touched, not just the files we track.
         let mass_edit = touched.len() > cfg.max_cochange_commit_size;
+        // A fix word on a mass edit ("review pass: fix eleven defects", 49 files) says nothing
+        // about which file was broken: churn, not a fix, for every file it touched.
+        let fix_worded = subject_is_fix(subject, &cfg.fix_words);
+        let capped_fix = fix_worded && mass_edit && cfg.fix_mass_edit_cap;
+        let is_fix = fix_worded && !capped_fix;
+        // Bots (dependabot, renovate, pre-commit-ci) commit but do not know the code: churn,
+        // never an author, so a file only ever touched by one human and a bot is bus factor 1.
+        let is_bot = author_is_bot(author, &cfg.bot_patterns);
+        hist.bot_commits += usize::from(is_bot);
+        hist.capped_fix_commits += usize::from(capped_fix);
         let files: Vec<&str> = touched
             .iter()
             .filter_map(|l| l.strip_prefix(prefix))
@@ -179,8 +202,12 @@ pub fn parse(text: &str, prefix: &str, cfg: &Cfg, tracked: &HashSet<String>) -> 
             let e = hist.files.entry((*f).to_string()).or_default();
             e.commits += 1;
             e.fix_commits += usize::from(is_fix);
+            e.capped_fix_commits += usize::from(capped_fix);
             e.sweep_commits += usize::from(sweep);
-            e.author_set.insert(author.to_string());
+            e.bot_commits += usize::from(is_bot);
+            if !is_bot {
+                e.author_set.insert(author.to_string());
+            }
             e.last_touched = e.last_touched.max(ts);
         }
         if files.len() >= 2 && !mass_edit {
@@ -317,6 +344,52 @@ mod tests {
         let h = parse(&log(&commits), "", &Cfg { min_commits_for_lift: 100, ..Cfg::default() }, &t);
         let ab = h.co_changes.iter().find(|c| c.a == "src/a.rs" && c.b == "src/b.rs").unwrap();
         assert!(!h.lift_applied && ab.together_nonsweep == 12 && (ab.lift - 12.0 * 32.0 / 144.0).abs() < 1e-9, "{ab:?}");
+    }
+
+    #[test]
+    fn bots_are_churn_but_never_authors() {
+        let t = tracked(&["src/a.rs", "src/b.rs"]);
+        let text = log(&[
+            ("ann", "add a", &["src/a.rs", "src/b.rs"]),
+            ("dependabot[bot]", "bump serde", &["src/a.rs"]),
+            ("Renovate Bot", "update deps", &["src/a.rs"]),
+            ("pre-commit-ci[bot]", "[pre-commit.ci] auto fixes", &["src/a.rs", "src/b.rs"]),
+            ("bob", "fix b", &["src/b.rs"]),
+        ]);
+        let h = parse(&text, "", &Cfg::default(), &t);
+        assert_eq!(h.bot_commits, 3);
+        let a = &h.files["src/a.rs"];
+        // Four commits, three by bots (matched case-insensitively): one author, so bus factor 1.
+        assert_eq!((a.commits, a.bot_commits, a.authors, a.fix_commits), (4, 3, 1, 1));
+        let b = &h.files["src/b.rs"];
+        assert_eq!((b.commits, b.bot_commits, b.authors, b.fix_commits), (3, 1, 2, 2));
+        // An empty pattern list counts everyone; a pattern is a substring of the name only.
+        let h = parse(&text, "", &Cfg { bot_patterns: vec![], ..Cfg::default() }, &t);
+        assert_eq!((h.bot_commits, h.files["src/a.rs"].authors), (0, 4));
+        assert!(author_is_bot("GitHub Actions [BOT]", &Cfg::default().bot_patterns));
+        assert!(!author_is_bot("Robot Jones", &Cfg::default().bot_patterns));
+        assert!(!author_is_bot("ann", &["".to_string()]));
+    }
+
+    #[test]
+    fn a_fix_word_on_a_mass_edit_is_not_a_fix() {
+        let t = tracked(&["src/a.rs", "src/b.rs"]);
+        let docs: Vec<String> = (0..24).map(|i| format!("docs/{i}.md")).collect();
+        let mut big: Vec<&str> = vec!["src/a.rs", "src/b.rs"];
+        big.extend(docs.iter().map(String::as_str));
+        let text = log(&[("ann", "Review pass: fix eleven defects", &big), ("ann", "fix a", &["src/a.rs"])]);
+        // 26 files > cap of 25: churn for both, a fix for neither; the small fix still counts.
+        let h = parse(&text, "", &Cfg::default(), &t);
+        assert_eq!(h.capped_fix_commits, 1);
+        assert_eq!((h.files["src/a.rs"].commits, h.files["src/a.rs"].fix_commits, h.files["src/a.rs"].capped_fix_commits), (2, 1, 1));
+        assert_eq!((h.files["src/b.rs"].commits, h.files["src/b.rs"].fix_commits, h.files["src/b.rs"].capped_fix_commits), (1, 0, 1));
+        // Exactly at the cap it is not a mass edit.
+        let at_cap: Vec<&str> = big[..25].to_vec();
+        let h = parse(&log(&[("ann", "fix many", &at_cap)]), "", &Cfg::default(), &t);
+        assert_eq!((h.capped_fix_commits, h.files["src/a.rs"].fix_commits), (0, 1));
+        // Knob off: the old behaviour, every fix-worded commit is a fix.
+        let h = parse(&text, "", &Cfg { fix_mass_edit_cap: false, ..Cfg::default() }, &t);
+        assert_eq!((h.capped_fix_commits, h.files["src/a.rs"].fix_commits, h.files["src/b.rs"].fix_commits), (0, 2, 1));
     }
 
     #[test]

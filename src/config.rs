@@ -135,8 +135,16 @@ pub struct History {
     pub since: String,
     /// Whole words that make a commit subject a fix.
     pub fix_words: Vec<String>,
-    /// Commits touching more files than this are mass edits: no co-change evidence.
+    /// Commits touching more files than this are mass edits: no co-change evidence, and (when
+    /// `fix_mass_edit_cap`) no fix evidence either. Judged on everything the commit touched.
     pub max_cochange_commit_size: usize,
+    /// A fix word on a commit over `max_cochange_commit_size` does not make it a fix commit for
+    /// the files it touched (a 49-file "review pass: fix eleven defects" says nothing about which
+    /// file was broken); it still counts as a commit.
+    pub fix_mass_edit_cap: bool,
+    /// Case-insensitive substrings of an author name that mark a bot. Bot commits still count as
+    /// commits but never toward a file's author set, so the bus-factor reason ignores them.
+    pub bot_patterns: Vec<String>,
     /// A co-change pair needs at least this many shared commits…
     pub min_cochange_together: usize,
     /// …and together / min(commits_a, commits_b) at least this. Both are judged on non-sweep counts.
@@ -170,6 +178,8 @@ impl Default for History {
                 "patch", "patched", "wrong", "incorrect", "flake", "flaky", "flakey",
             ]),
             max_cochange_commit_size: 25,
+            fix_mass_edit_cap: true,
+            bot_patterns: strings(&["[bot]", "dependabot", "renovate", "pre-commit-ci"]),
             min_cochange_together: 3,
             min_cochange_strength: 0.4,
             sweep_fraction: 0.5,

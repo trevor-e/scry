@@ -18,7 +18,7 @@ language is one grammar crate plus a node-kind table.
 | Pass | Signal | Why it matters |
 |---|---|---|
 | discovery | file kind (source/test/data/generated/vendored), language | raw metrics on the wrong kind of file are confident nonsense |
-| history | churn, fix commits, authors, co-change pairs (from `git log`); a commit that rewrites most of one directory is a *sweep* (still churn, never pair evidence), and every pair carries its lift over chance | the strongest defect predictor is *how often a thing changes*; an agent session that edits every command file at once says nothing about which of them belong together |
+| history | churn, fix commits, authors, co-change pairs (from `git log`); a commit that rewrites most of one directory is a *sweep* (still churn, never pair evidence), a fix word on a commit over the 25-file mass-edit cap is not a fix, bot authors (dependabot, renovate, `[bot]`) never count toward the author set, and every pair carries its lift over chance | the strongest defect predictor is *how often a thing changes*; an agent session that edits every command file at once says nothing about which of them belong together, a 49-file "fix eleven defects" pass says nothing about which file was broken, and a bot is not a second maintainer |
 | metrics | cognitive + cyclomatic complexity, nesting, length, params per function | nesting-aware complexity predicts "hard to change safely" |
 | deps | import graph, SCC cycles (file and directory), fan-in/out, instability; every edge knows its kind (`use` / `mod` / `type_only`) and how many names it carries, so a large cycle comes with its cheapest single-import cut, a hub cut and a greedy cut set | tangles and hubs are where a change fans out; an agent adds `use crate::x` wherever convenient, so its cycle is dense and the report should say what cutting one import buys instead of repeating the cycle on every member |
 | clones | near-exact duplicates via normalised-token winnowing; a uniform table (dispatch `match`, registry array, map literal) matching its own second half is dropped, and pairs whose both sides are runs of uniform entries are tagged `table` and listed under a TABLES sub-heading with the logic/table split in the file's reason | two copies of a rule drift into two rules; two parallel maps over one enum must drift together, but they are not duplicated logic |
@@ -59,6 +59,8 @@ test_dirs = ["test", "tests", "qa"]      # replaces the default list
 [history]
 fix_words = ["fix", "fixes", "fixed", "bug", "regression"]
 sweep_min_files = 8                      # a sweep must touch this many files of one directory (default 6)
+fix_mass_edit_cap = false                # count fix words on commits over max_cochange_commit_size (default true: they are not fixes)
+bot_patterns = ["[bot]", "renovate"]     # author-name substrings that never count as an author (default adds dependabot, pre-commit-ci)
 min_lift = 2.0                           # drop co-change pairs under this lift once the window has 20 commits (default 3.0)
 
 [deps]

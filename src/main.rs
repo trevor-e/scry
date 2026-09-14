@@ -212,14 +212,16 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             let n = hist.commits_scanned - hist.sweep_commits;
-            println!("{} commits since {} ({} directory sweeps; lift >= {:.1} {} on {n} non-sweep commits)\n",
+            println!("{} commits since {} ({} directory sweeps; lift >= {:.1} {} on {n} non-sweep commits)",
                 hist.commits_scanned, hist.window, hist.sweep_commits, cfg.history.min_lift,
                 if hist.lift_applied { "applied" } else { "not applied" });
+            println!("{} bot commits (not authors); {} fix-worded commits over the {}-file mass-edit cap not counted as fixes\n",
+                hist.bot_commits, hist.capped_fix_commits, cfg.history.max_cochange_commit_size);
             let mut rows: Vec<(&String, &history::FileHistory)> = hist.files.iter().collect();
             rows.sort_by_key(|(_, h)| std::cmp::Reverse((h.commits, h.fix_commits)));
-            println!("{:>7} {:>5} {:>7} {:>6}  path", "commits", "fixes", "authors", "sweeps");
+            println!("{:>7} {:>5} {:>7} {:>6} {:>4}  path", "commits", "fixes", "authors", "sweeps", "bots");
             for (p, h) in rows.iter().take(top) {
-                println!("{:>7} {:>5} {:>7} {:>6}  {}", h.commits, h.fix_commits, h.authors, h.sweep_commits, p);
+                println!("{:>7} {:>5} {:>7} {:>6} {:>4}  {}", h.commits, h.fix_commits, h.authors, h.sweep_commits, h.bot_commits, p);
             }
             println!("\nco-change pairs (together non-sweep / raw / strength / lift):");
             for c in hist.co_changes.iter().take(top) {
