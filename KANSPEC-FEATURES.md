@@ -8,6 +8,6 @@
 | Walk a repo, classify files (source/test/data/generated/vendored), detect language | discovery | src/discover/**, src/lang/** | — |
 | Git-derived signals: churn, fix commits, authors, temporal co-change | history | src/history/** | — |
 | Tree-sitter per-function metrics: cognitive/cyclomatic complexity, nesting, length, params | metrics | src/metrics/** | — |
-| Composite hotspot ranking and human/JSON report for LLM consumption | report | src/report/**, src/main.rs | — |
+| Composite hotspot ranking and human/JSON report for LLM consumption | report | src/report/**, src/main.rs, src/config.rs | — |
 
 Staleness is computed from git at read time, not stored here: `kanspec features --stale`.
