@@ -27,7 +27,7 @@ struct Parsed {
 /// tree per worker thread, not one per file. `source` must be the `Source`
 /// files of `files`, in the same order (the standalone subcommands each
 /// parse for themselves and are unaffected).
-fn parse_once(files: &[SourceFile], source: &[SourceFile], cfg: &config::Config) -> Parsed {
+fn parse_once(files: &[SourceFile], source: &[SourceFile], cfg: &config::Config, ts: &deps::TsConfigs) -> Parsed {
     struct PerFile {
         metrics: Option<(metrics::FileMetrics, Vec<metrics::FunctionMetrics>)>,
         imports: Vec<deps::RawImport>,
@@ -58,7 +58,7 @@ fn parse_once(files: &[SourceFile], source: &[SourceFile], cfg: &config::Config)
     Parsed {
         file_metrics,
         functions,
-        deps: deps::build_from(files, &imports, &cfg.deps),
+        deps: deps::build_from(files, &imports, &cfg.deps, ts),
         clones: clones::detect_from(source, tokens, &cfg.clones),
     }
 }
@@ -193,7 +193,8 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let parsed = parse_once(&files, &source, &cfg);
+            let ts = deps::TsConfigs::load(&path);
+            let parsed = parse_once(&files, &source, &cfg, &ts);
             let report = report::build(
                 report::Inputs {
                     root: path.canonicalize()?.display().to_string(),
@@ -288,7 +289,7 @@ fn main() -> Result<()> {
         }
         Cmd::Deps { path, json, top } => {
             let files = discover::walk(&path, &cfg.discover)?;
-            let g = deps::build(&files, &cfg.deps);
+            let g = deps::build(&files, &cfg.deps, &deps::TsConfigs::load(&path));
             if json {
                 println!("{}", serde_json::to_string_pretty(&g)?);
                 return Ok(());
@@ -389,12 +390,13 @@ mod tests {
         let cfg = config::Config::default();
         let source: Vec<SourceFile> = files.iter().filter(|f| f.kind == FileKind::Source).cloned().collect();
         assert!(source.len() < files.len(), "the fixture needs non-source files");
-        let once = parse_once(&files, &source, &cfg);
+        let ts = deps::TsConfigs::default();
+        let once = parse_once(&files, &source, &cfg, &ts);
 
         let (fm, fs) = metrics::analyze_all(&source, &cfg.metrics);
         assert_eq!(json(&once.file_metrics), json(&fm));
         assert_eq!(json(&once.functions), json(&fs));
-        assert_eq!(json(&once.deps), json(&deps::build(&files, &cfg.deps)));
+        assert_eq!(json(&once.deps), json(&deps::build(&files, &cfg.deps, &ts)));
         assert_eq!(json(&once.clones), json(&clones::detect(&source, &cfg.clones)));
         assert_eq!(once.deps.file_cycles.len(), 1);
         assert_eq!(once.clones.pairs.len(), 1, "{:?}", once.clones.pairs);

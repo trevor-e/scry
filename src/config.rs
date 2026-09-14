@@ -182,12 +182,20 @@ impl Default for Metrics {
 pub struct Deps {
     /// JS/TS import-prefix aliases: `"@/" = "src"` maps `@/x` to `<nearest src>/x`.
     /// The target is looked for under every ancestor of the importing file.
+    /// `tsconfig.json` / `jsconfig.json` `paths` and `baseUrl` are read on top of this.
     pub js_aliases: BTreeMap<String, String>,
+    /// Directories Python absolute imports resolve from, after the importing
+    /// file's own ancestors (`["src"]` for a src layout). Empty means detect:
+    /// every directory that directly holds a top-level package.
+    pub py_roots: Vec<String>,
 }
 
 impl Default for Deps {
     fn default() -> Self {
-        Self { js_aliases: [("@/".to_string(), "src".to_string()), ("~/".to_string(), "src".to_string())].into() }
+        Self {
+            js_aliases: [("@/".to_string(), "src".to_string()), ("~/".to_string(), "src".to_string())].into(),
+            py_roots: vec![],
+        }
     }
 }
 
