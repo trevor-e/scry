@@ -51,6 +51,24 @@ impl DepGraph {
         self.edge_set.contains(&(a.to_string(), b.to_string()))
             || self.edge_set.contains(&(b.to_string(), a.to_string()))
     }
+
+    /// In-repo files that both `a` and `b` import directly, sorted.
+    pub fn shared_imports(&self, a: &str, b: &str) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .edge_set
+            .iter()
+            .filter(|(s, t)| s == a && self.edge_set.contains(&(b.to_string(), t.clone())))
+            .map(|(_, t)| t.clone())
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[cfg(test)]
+    pub(crate) fn add_edge(&mut self, from: &str, to: &str) {
+        self.edge_set.insert((from.to_string(), to.to_string()));
+        self.edges = self.edge_set.len();
+    }
 }
 
 #[derive(Debug)]

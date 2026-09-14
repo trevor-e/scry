@@ -159,6 +159,7 @@ fn main() -> Result<()> {
                     cognitive_hard: cfg.metrics.cognitive_hard,
                     tests: &cfg.tests,
                     list_tables_separately: cfg.clones.list_tables_separately,
+                    history_cfg: &cfg.history,
                 },
                 top,
                 &cfg.report,
@@ -209,16 +210,26 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&hist)?);
                 return Ok(());
             }
-            println!("{} commits since {}\n", hist.commits_scanned, hist.window);
+            let n = hist.commits_scanned - hist.sweep_commits;
+            println!("{} commits since {} ({} directory sweeps; lift >= {:.1} {} on {n} non-sweep commits)\n",
+                hist.commits_scanned, hist.window, hist.sweep_commits, cfg.history.min_lift,
+                if hist.lift_applied { "applied" } else { "not applied" });
             let mut rows: Vec<(&String, &history::FileHistory)> = hist.files.iter().collect();
             rows.sort_by_key(|(_, h)| std::cmp::Reverse((h.commits, h.fix_commits)));
-            println!("{:>7} {:>5} {:>7}  path", "commits", "fixes", "authors");
+            println!("{:>7} {:>5} {:>7} {:>6}  path", "commits", "fixes", "authors", "sweeps");
             for (p, h) in rows.iter().take(top) {
-                println!("{:>7} {:>5} {:>7}  {}", h.commits, h.fix_commits, h.authors, p);
+                println!("{:>7} {:>5} {:>7} {:>6}  {}", h.commits, h.fix_commits, h.authors, h.sweep_commits, p);
             }
-            println!("\nco-change pairs (together / strength):");
+            println!("\nco-change pairs (together non-sweep / raw / strength / lift):");
             for c in hist.co_changes.iter().take(top) {
-                println!("{:>3}  {:.2}  {}  <->  {}", c.together, c.strength, c.a, c.b);
+                println!("{:>3} {:>3}  {:.2}  {:>5.1}x  {}  <->  {}", c.together_nonsweep, c.together, c.strength, c.lift, c.a, c.b);
+            }
+            if !hist.sweeps.is_empty() {
+                println!("\nsweep commits (excluded from pair counts, still churn):");
+                for s in hist.sweeps.iter().take(top) {
+                    let dir = if s.dir.is_empty() { "." } else { s.dir.as_str() };
+                    println!("  {}  {:>3} files, {}/{} of {dir}  {}", &s.hash[..s.hash.len().min(10)], s.files, s.dir_touched, s.dir_files, s.subject);
+                }
             }
         }
         Cmd::Clones { path, json, top } => {

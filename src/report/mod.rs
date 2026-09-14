@@ -6,10 +6,10 @@
 //! language, and every ranked file carries the reasons it ranked, in words.
 
 use crate::clones::{CloneKind, CloneReport, ClonePair, TableRef};
-use crate::config::{Report as Cfg, Tests as TestsCfg, Weights};
+use crate::config::{History as HistoryCfg, Report as Cfg, Tests as TestsCfg, Weights};
 use crate::deps::{Cycle, DepGraph};
 use crate::discover::{FileKind, SourceFile};
-use crate::history::History;
+use crate::history::{CoChange, History};
 use crate::metrics::{FileMetrics, FunctionMetrics};
 use crate::regions::{RegionKind, TestRegion};
 use serde::Serialize;
@@ -54,12 +54,24 @@ pub struct Hotspot {
     pub inline_test_note: Option<String>,
 }
 
+/// A co-change pair with no import between its members. In `hidden_coupling` when nothing
+/// explains it; in `explained_coupling` when a shared import changed in the same commits.
 #[derive(Debug, Clone, Serialize)]
 pub struct HiddenCoupling {
     pub a: String,
     pub b: String,
+    /// Co-commits including directory sweeps.
     pub together: usize,
+    /// Co-commits without sweeps: the count the pair was judged on and the one printed.
+    pub together_nonsweep: usize,
     pub strength: f64,
+    /// Times more often than chance the pair ships together (non-sweep counts).
+    pub lift: f64,
+    /// A file both members import that changed in at least `[history].explained_min_share` of
+    /// their non-sweep co-commits: the pair is shotgun surgery on it, not hidden coupling.
+    pub explained_by: Option<String>,
+    /// Non-sweep co-commits in which `explained_by` also changed.
+    pub explained_commits: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -82,6 +94,8 @@ pub struct Summary {
     pub complex_functions: usize,
     pub history_window: Option<String>,
     pub commits_scanned: usize,
+    /// Directory-sweep commits among `commits_scanned`: churn, but excluded from pair counts.
+    pub sweep_commits: usize,
     pub cognitive_hard: u32,
 }
 
@@ -92,6 +106,11 @@ pub struct Report {
     pub dir_cycles: Vec<Cycle>,
     pub file_cycles: Vec<Cycle>,
     pub hidden_coupling: Vec<HiddenCoupling>,
+    /// Co-change pairs with no import between them that a shared import explains (`explained_by`).
+    pub explained_coupling: Vec<HiddenCoupling>,
+    /// `5 directory-sweep commits (>= 50% of src/cmd) excluded from pair counts; still counted
+    /// as churn`, printed under HIDDEN COUPLING when the window had sweeps.
+    pub sweep_note: Option<String>,
     /// Top pairs; only the `logic` ones when tables are listed separately.
     pub clones: Vec<ClonePair>,
     /// Top `table` pairs when `[clones].list_tables_separately`; empty otherwise (they sit in `clones`).
@@ -111,6 +130,46 @@ pub struct Inputs<'a> {
     pub tests: &'a TestsCfg,
     /// `[clones].list_tables_separately`.
     pub list_tables_separately: bool,
+    /// `explained_min_share` and `sweep_fraction` (for the sweep note).
+    pub history_cfg: &'a HistoryCfg,
+}
+
+/// The shared import that best explains a pair: the file both import that changed in the most of
+/// the pair's non-sweep co-commits, when that is at least `explained_min_share` of them.
+fn explained_by(c: &CoChange, hist: &History, deps: &DepGraph, min_share: f64) -> Option<(String, usize)> {
+    let shared = deps.shared_imports(&c.a, &c.b);
+    if shared.is_empty() {
+        return None;
+    }
+    let mut counts = vec![0usize; shared.len()];
+    let mut co = 0;
+    for files in hist.co_commits.iter().filter(|f| f.contains(&c.a) && f.contains(&c.b)) {
+        co += 1;
+        for (i, f) in shared.iter().enumerate() {
+            counts[i] += usize::from(files.contains(f));
+        }
+    }
+    let (i, best) = counts.iter().enumerate().max_by(|x, y| x.1.cmp(y.1).then(y.0.cmp(&x.0)))?;
+    (co > 0 && *best as f64 / co as f64 >= min_share).then(|| (shared[i].clone(), *best))
+}
+
+/// `5 directory-sweep commits (>= 50% of src/cmd) excluded from pair counts; still counted as churn`.
+fn sweep_note(hist: &History, fraction: f64) -> Option<String> {
+    if hist.sweep_commits == 0 {
+        return None;
+    }
+    let mut by_dir: BTreeMap<&str, usize> = BTreeMap::new();
+    for s in &hist.sweeps {
+        *by_dir.entry(if s.dir.is_empty() { "." } else { s.dir.as_str() }).or_default() += 1;
+    }
+    let mut dirs: Vec<(&str, usize)> = by_dir.into_iter().collect();
+    dirs.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(y.0)));
+    let names: Vec<&str> = dirs.iter().map(|(d, _)| *d).collect();
+    let plural = if hist.sweep_commits == 1 { "" } else { "s" };
+    Some(format!(
+        "{} directory-sweep commit{plural} (>= {:.0}% of {}) excluded from pair counts; still counted as churn",
+        hist.sweep_commits, fraction * 100.0, names.join(", ")
+    ))
 }
 
 /// The clone reason. Plain when every cloned line is logic; otherwise the split in whole
@@ -300,18 +359,26 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
         v.truncate(3);
     }
 
-    // Co-change partners with no import relation, indexed by file.
-    let mut hidden: Vec<HiddenCoupling> = hist
-        .co_changes
-        .iter()
-        .filter(|c| !inp.deps.connected(&c.a, &c.b))
-        .map(|c| HiddenCoupling { a: c.a.clone(), b: c.b.clone(), together: c.together, strength: c.strength })
-        .collect();
-    hidden.sort_by(|x, y| y.together.cmp(&x.together));
+    // Co-change partners with no import relation, indexed by file. A pair whose members both
+    // import a file that changed in the same commits is explained by that import instead.
+    let (mut hidden, mut explained): (Vec<HiddenCoupling>, Vec<HiddenCoupling>) = (Vec::new(), Vec::new());
+    for c in hist.co_changes.iter().filter(|c| !inp.deps.connected(&c.a, &c.b)) {
+        let (explained_by, explained_commits) = explained_by(c, hist, inp.deps, inp.history_cfg.explained_min_share).unzip();
+        let h = HiddenCoupling {
+            a: c.a.clone(), b: c.b.clone(), together: c.together, together_nonsweep: c.together_nonsweep, strength: c.strength, lift: c.lift,
+            explained_by, explained_commits: explained_commits.unwrap_or(0),
+        };
+        if h.explained_by.is_some() { explained.push(h) } else { hidden.push(h) }
+    }
+    hidden.sort_by(|x, y| y.together_nonsweep.cmp(&x.together_nonsweep));
+    explained.sort_by(|x, y| y.together_nonsweep.cmp(&x.together_nonsweep));
     let mut hidden_by_file: HashMap<&str, Vec<&HiddenCoupling>> = HashMap::new();
-    for h in &hidden {
-        hidden_by_file.entry(h.a.as_str()).or_default().push(h);
-        hidden_by_file.entry(h.b.as_str()).or_default().push(h);
+    let mut explained_by_file: HashMap<&str, Vec<&HiddenCoupling>> = HashMap::new();
+    for (list, index) in [(&hidden, &mut hidden_by_file), (&explained, &mut explained_by_file)] {
+        for h in list {
+            index.entry(h.a.as_str()).or_default().push(h);
+            index.entry(h.b.as_str()).or_default().push(h);
+        }
     }
     let cycle_size: HashMap<&str, usize> = inp
         .deps
@@ -366,7 +433,14 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             if let Some(hs) = hidden_by_file.get(f.path.as_str()) {
                 for h in hs.iter().take(cfg.reason_hidden_partners) {
                     let other = if h.a == f.path { &h.b } else { &h.a };
-                    reasons.push(format!("changes together with {other} ({}x) but neither imports the other", h.together));
+                    reasons.push(format!("changes together with {other} ({}x, {:.1}x more often than chance{}) but neither imports the other", h.together_nonsweep, h.lift, sweeps_ignored(h)));
+                }
+            }
+            if let Some(hs) = explained_by_file.get(f.path.as_str()) {
+                for h in hs.iter().take(cfg.reason_hidden_partners) {
+                    let other = if h.a == f.path { &h.b } else { &h.a };
+                    let via = h.explained_by.as_deref().unwrap_or("");
+                    reasons.push(format!("changes together with {other} ({}x): both import {via}, which changed in {} of those commits", h.together_nonsweep, h.explained_commits));
                 }
             }
             if !s.has_tests {
@@ -420,6 +494,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
         complex_functions: inp.functions.iter().filter(|f| !f.in_test && f.cognitive > inp.cognitive_hard).count(),
         history_window: inp.history.map(|h| h.window.clone()),
         commits_scanned: hist.commits_scanned,
+        sweep_commits: hist.sweep_commits,
         cognitive_hard: inp.cognitive_hard,
     };
 
@@ -430,6 +505,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
         file_cycles: inp.deps.file_cycles.clone(),
         tables: if inp.list_tables_separately { inp.clones.pairs.iter().filter(|p| p.kind == CloneKind::Table).take(top).cloned().collect() } else { Vec::new() },
         hidden_coupling: hidden,
+        explained_coupling: explained,
+        sweep_note: sweep_note(hist, inp.history_cfg.sweep_fraction),
         clones: inp.clones.pairs.iter().filter(|p| !inp.list_tables_separately || p.kind == CloneKind::Logic).take(top).cloned().collect(),
         directories: directories.into_iter().take(top).collect(),
     }
@@ -441,6 +518,10 @@ mod tests {
 
     fn td() -> Vec<String> {
         crate::config::Discover::default().test_dirs
+    }
+
+    fn hcfg() -> HistoryCfg {
+        HistoryCfg::default()
     }
 
     fn fmetrics(path: &str, total: u32, max: u32, complex: usize) -> FileMetrics {
@@ -476,11 +557,12 @@ mod tests {
         let deps = DepGraph::default();
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
+        let hcfg = hcfg();
         let size_only = Cfg {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 1.0 },
             ..Cfg::default()
         };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg }, 10, &size_only, &td());
         let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["b.rs", "a.rs"], "{r:?}");
         let a = &r.hotspots[1];
@@ -497,7 +579,7 @@ mod tests {
         assert!(text.contains("b.rs  (1500 lines)"), "{text}");
         // Below the ratio knob the note is absent; the region still counts as tests.
         let strict = TestsCfg { report_inline_ratio_above: 0.9, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &strict, list_tables_separately: true }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &strict, list_tables_separately: true, history_cfg: &hcfg }, 10, &size_only, &td());
         assert!(r.hotspots[1].inline_test_note.is_none());
         assert!(r.hotspots[1].signals.has_tests);
     }
@@ -518,7 +600,8 @@ mod tests {
         let fm = vec![fmetrics("a.rs", 1, 1, 0), fmetrics("b.rs", 1, 1, 0)];
         let deps = DepGraph::default();
         let tests = TestsCfg::default();
-        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: sep };
+        let hcfg = hcfg();
+        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: sep, history_cfg: &hcfg };
         let r = build(inputs(true), 10, &Cfg::default(), &td());
         assert_eq!((r.clones.len(), r.tables.len()), (1, 1));
         assert_eq!(r.clones[0].kind, CloneKind::Logic);
@@ -532,6 +615,62 @@ mod tests {
         assert_eq!((r.clones.len(), r.tables.len()), (2, 0));
         let text = render(&r, 10);
         assert!(!text.contains("TABLES") && text.contains("a.rs:136-174  (array_expression, 6 entries)"), "{text}");
+    }
+
+    #[test]
+    fn hidden_coupling_prints_lift_and_sweeps_and_explained_pairs_leave_the_list() {
+        use crate::history::{CoChange, FileHistory, SweepCommit};
+        let sf = |p: &str| SourceFile { path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines: 100, bytes: 0, content: String::new() };
+        let files = vec![sf("a.rs"), sf("b.rs"), sf("c.rs"), sf("d.rs"), sf("x.rs")];
+        let fm: Vec<FileMetrics> = ["a.rs", "b.rs", "c.rs", "d.rs", "x.rs"].iter().map(|p| fmetrics(p, 1, 1, 0)).collect();
+        let pair = |a: &str, b: &str, together, nonsweep, strength, lift| CoChange { a: a.into(), b: b.into(), together, together_nonsweep: nonsweep, strength, lift };
+        let sweep = |hash: &str| SweepCommit { hash: hash.into(), subject: "sweep".into(), files: 5, dir: "".into(), dir_touched: 5, dir_files: 5 };
+        let v = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let mut hist = History {
+            window: "6 months ago".into(), commits_scanned: 30, sweep_commits: 2, lift_applied: true, sweeps: vec![sweep("h1"), sweep("h2")],
+            co_changes: vec![pair("a.rs", "b.rs", 6, 4, 0.8, 3.5), pair("c.rs", "d.rs", 5, 5, 1.0, 4.0), pair("a.rs", "d.rs", 3, 3, 0.5, 3.2)],
+            // c and d shipped together five times; x.rs went along in four of them.
+            co_commits: vec![v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs"]), v(&["a.rs", "b.rs"])],
+            ..History::default()
+        };
+        for p in ["a.rs", "b.rs", "c.rs", "d.rs", "x.rs"] {
+            let mut fh = FileHistory::default();
+            fh.commits = 8;
+            hist.files.insert(p.into(), fh);
+        }
+        let mut deps = DepGraph::default();
+        deps.add_edge("c.rs", "x.rs");
+        deps.add_edge("d.rs", "x.rs");
+        deps.add_edge("a.rs", "d.rs"); // a<->d import each other: not hidden at all
+        let clones = CloneReport::default();
+        let tests = TestsCfg::default();
+        let inputs = |hcfg: &'static HistoryCfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: hcfg };
+        let r = build(inputs(Box::leak(Box::new(HistoryCfg::default()))), 10, &Cfg::default(), &td());
+        assert_eq!(r.hidden_coupling.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.together, h.together_nonsweep)).collect::<Vec<_>>(), vec![("a.rs", "b.rs", 6, 4)]);
+        assert!(r.hidden_coupling[0].explained_by.is_none());
+        let e = &r.explained_coupling;
+        assert_eq!(e.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.explained_by.as_deref(), h.explained_commits)).collect::<Vec<_>>(), vec![("c.rs", "d.rs", Some("x.rs"), 4)]);
+        assert_eq!(r.summary.sweep_commits, 2);
+        assert_eq!(r.sweep_note.as_deref(), Some("2 directory-sweep commits (>= 50% of .) excluded from pair counts; still counted as churn"));
+        let reason = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.iter().find(|x| x.contains("changes together")).cloned().unwrap_or_default();
+        assert_eq!(reason("a.rs"), "changes together with b.rs (4x, 3.5x more often than chance; 2 sweep commits ignored) but neither imports the other");
+        assert_eq!(reason("b.rs"), "changes together with a.rs (4x, 3.5x more often than chance; 2 sweep commits ignored) but neither imports the other");
+        assert_eq!(reason("c.rs"), "changes together with d.rs (5x): both import x.rs, which changed in 4 of those commits");
+        assert_eq!(reason("x.rs"), "");
+        let text = render(&r, 10);
+        assert!(text.contains("   4x 0.80  lift  3.5  a.rs  <->  b.rs  (2 sweep commits ignored)\n  EXPLAINED  (both import a file that changed in the same commits: shotgun surgery on it)\n   5x 1.00  c.rs  <->  d.rs  via x.rs (4 of 5)\n  2 directory-sweep commits (>= 50% of .) excluded from pair counts; still counted as churn\n"), "{text}");
+        // A stricter share leaves c<->d unexplained: hidden, with no sweep clause (none were ignored).
+        let strict = Box::leak(Box::new(HistoryCfg { explained_min_share: 0.9, ..HistoryCfg::default() }));
+        let r = build(inputs(strict), 10, &Cfg::default(), &td());
+        assert_eq!(r.hidden_coupling.len(), 2);
+        assert!(r.explained_coupling.is_empty());
+        let reason = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.iter().find(|x| x.contains("changes together")).cloned().unwrap_or_default();
+        assert_eq!(reason("c.rs"), "changes together with d.rs (5x, 4.0x more often than chance) but neither imports the other");
+        // No sweeps: no footer.
+        hist.sweep_commits = 0;
+        hist.sweeps.clear();
+        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: strict }, 10, &Cfg::default(), &td());
+        assert!(r.sweep_note.is_none() && !render(&r, 10).contains("directory-sweep"));
     }
 
     #[test]
@@ -556,7 +695,8 @@ mod tests {
         let deps = DepGraph::default();
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
-        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true };
+        let hcfg = hcfg();
+        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg };
         let by_default = build(inputs(), 10, &Cfg::default(), &td());
         assert_eq!(by_default.hotspots[0].path, "small.py");
         let size_only = Cfg {
@@ -582,6 +722,15 @@ mod tests {
         assert!(!stem_tested(&t, &files[0]));
         assert!(stem_tested(&t, &files[1]));
         assert!(stem_tested(&t, &files[2]));
+    }
+}
+
+/// `; 2 sweep commits ignored` inside a hidden-coupling reason, empty when none were.
+fn sweeps_ignored(h: &HiddenCoupling) -> String {
+    match h.together - h.together_nonsweep {
+        0 => String::new(),
+        1 => "; 1 sweep commit ignored".to_string(),
+        n => format!("; {n} sweep commits ignored"),
     }
 }
 
@@ -633,7 +782,18 @@ pub fn render(r: &Report, top: usize) -> String {
         let _ = writeln!(o, "  none");
     }
     for h in r.hidden_coupling.iter().take(top) {
-        let _ = writeln!(o, "  {:>2}x {:.2}  {}  <->  {}", h.together, h.strength, h.a, h.b);
+        let ignored = sweeps_ignored(h);
+        let note = if ignored.is_empty() { String::new() } else { format!("  ({})", &ignored[2..]) };
+        let _ = writeln!(o, "  {:>2}x {:.2}  lift {:>4.1}  {}  <->  {}{note}", h.together_nonsweep, h.strength, h.lift, h.a, h.b);
+    }
+    if !r.explained_coupling.is_empty() {
+        let _ = writeln!(o, "  EXPLAINED  (both import a file that changed in the same commits: shotgun surgery on it)");
+        for h in r.explained_coupling.iter().take(top) {
+            let _ = writeln!(o, "  {:>2}x {:.2}  {}  <->  {}  via {} ({} of {})", h.together_nonsweep, h.strength, h.a, h.b, h.explained_by.as_deref().unwrap_or(""), h.explained_commits, h.together_nonsweep);
+        }
+    }
+    if let Some(n) = &r.sweep_note {
+        let _ = writeln!(o, "  {n}");
     }
 
     let _ = writeln!(o, "\nCLONES  (largest near-exact duplicates)");

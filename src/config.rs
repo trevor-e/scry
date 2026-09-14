@@ -139,8 +139,23 @@ pub struct History {
     pub max_cochange_commit_size: usize,
     /// A co-change pair needs at least this many shared commits…
     pub min_cochange_together: usize,
-    /// …and together / min(commits_a, commits_b) at least this.
+    /// …and together / min(commits_a, commits_b) at least this. Both are judged on non-sweep counts.
     pub min_cochange_strength: f64,
+    /// A commit is a directory sweep when, for some directory holding at least
+    /// `sweep_min_dir_files` tracked Source files, it touches at least this share of them…
+    pub sweep_fraction: f64,
+    pub sweep_min_dir_files: usize,
+    /// …and at least this many of them (a 2-file fix in a 4-file directory is not a sweep).
+    /// Sweeps still count as churn (commits, fix commits, authors) but never toward pair counts.
+    pub sweep_min_files: usize,
+    /// Pairs with lift below this are dropped, where lift = together_nonsweep / (commits_a x
+    /// commits_b / N) with the per-file commit counts (sweeps included) and N = non-sweep commits…
+    pub min_lift: f64,
+    /// …but only once N is at least this; below it lift is reported and not applied.
+    pub min_commits_for_lift: usize,
+    /// A pair whose members both import a file that changed in at least this share of their
+    /// co-commits is `explained_by` that import: shotgun surgery on it, not hidden coupling.
+    pub explained_min_share: f64,
 }
 
 impl Default for History {
@@ -157,6 +172,12 @@ impl Default for History {
             max_cochange_commit_size: 25,
             min_cochange_together: 3,
             min_cochange_strength: 0.4,
+            sweep_fraction: 0.5,
+            sweep_min_dir_files: 4,
+            sweep_min_files: 6,
+            min_lift: 3.0,
+            min_commits_for_lift: 20,
+            explained_min_share: 0.5,
         }
     }
 }

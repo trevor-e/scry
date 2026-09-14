@@ -19,28 +19,66 @@ pub struct FileHistory {
     pub commits: usize,
     pub fix_commits: usize,
     pub authors: usize,
+    /// Commits among `commits` that were directory sweeps: churn, but never pair evidence.
+    pub sweep_commits: usize,
     /// Unix seconds of the newest commit touching the file.
     pub last_touched: i64,
     #[serde(skip)]
     author_set: HashSet<String>,
 }
 
+impl FileHistory {
+    /// Commits the pair rule and lift are judged on.
+    pub fn nonsweep(&self) -> usize {
+        self.commits - self.sweep_commits
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CoChange {
     pub a: String,
     pub b: String,
-    /// Commits containing both files.
+    /// Commits containing both files (sweeps included, mass edits excluded).
     pub together: usize,
-    /// together / min(commits_a, commits_b): 1.0 means one never ships without the other.
+    /// `together` without sweep commits: what the pair rule and lift are judged on.
+    pub together_nonsweep: usize,
+    /// together_nonsweep / min(non-sweep commits_a, commits_b): 1.0 means one never ships without the other.
     pub strength: f64,
+    /// together_nonsweep / (commits_a x commits_b / N), with the per-file `commits` (sweeps
+    /// included) and N = non-sweep commits in the window: how many times more often than chance
+    /// the two ship together. A file that rides every sweep earns a lower lift, deliberately.
+    pub lift: f64,
+}
+
+/// A commit that touched at least `sweep_fraction` (and `sweep_min_files`) of one directory's tracked files.
+#[derive(Debug, Clone, Serialize)]
+pub struct SweepCommit {
+    pub hash: String,
+    pub subject: String,
+    /// Tracked files the commit touched in total.
+    pub files: usize,
+    /// The directory that qualified it (the one with the most touched files when several do).
+    pub dir: String,
+    /// Touched tracked files in `dir` / tracked files in `dir`.
+    pub dir_touched: usize,
+    pub dir_files: usize,
 }
 
 #[derive(Debug, Default, Serialize)]
 pub struct History {
     pub window: String,
     pub commits_scanned: usize,
+    /// Directory-sweep commits in the window: excluded from pair counts, still churn.
+    pub sweep_commits: usize,
+    /// True when non-sweep commits reached `min_commits_for_lift`, so pairs under `min_lift` were dropped.
+    pub lift_applied: bool,
+    pub sweeps: Vec<SweepCommit>,
     pub files: HashMap<String, FileHistory>,
     pub co_changes: Vec<CoChange>,
+    /// Tracked files of every commit that fed `together_nonsweep` (non-sweep, non-mass-edit, >= 2
+    /// tracked files), so the report can recount which shared import changed alongside a pair.
+    #[serde(skip)]
+    pub co_commits: Vec<Vec<String>>,
 }
 
 pub fn subject_is_fix(subject: &str, fix_words: &[String]) -> bool {
@@ -59,10 +97,14 @@ fn git_prefix(root: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Directory a tracked file sits in (`""` at the root).
+fn dir_of(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(d, _)| d)
+}
+
 /// `tracked` limits the result to paths we care about (the discovered source set),
 /// which keeps the co-change pair matrix small.
 pub fn collect(root: &Path, cfg: &Cfg, tracked: &HashSet<String>) -> Result<History> {
-    let since = cfg.since.as_str();
     let prefix = git_prefix(root)?;
     let out = Command::new("git")
         .arg("-C")
@@ -77,21 +119,30 @@ pub fn collect(root: &Path, cfg: &Cfg, tracked: &HashSet<String>) -> Result<Hist
             "--name-only",
             "--format=%x01%H%x02%an%x02%ct%x02%s",
         ])
-        .arg(format!("--since={since}"))
+        .arg(format!("--since={}", cfg.since))
         .output()
         .context("running git log")?;
     if !out.status.success() {
         bail!("git log failed: {}", String::from_utf8_lossy(&out.stderr).trim());
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let mut hist = History { window: since.to_string(), ..Default::default() };
-    let mut pairs: HashMap<(String, String), usize> = HashMap::new();
+    Ok(parse(&String::from_utf8_lossy(&out.stdout), &prefix, cfg, tracked))
+}
+
+/// The pass proper, over the text of one `git log --name-only` in our format.
+pub fn parse(text: &str, prefix: &str, cfg: &Cfg, tracked: &HashSet<String>) -> History {
+    let mut hist = History { window: cfg.since.clone(), ..Default::default() };
+    // (together, together_nonsweep)
+    let mut pairs: HashMap<(String, String), (usize, usize)> = HashMap::new();
+    let mut dir_size: HashMap<&str, usize> = HashMap::new();
+    for f in tracked {
+        *dir_size.entry(dir_of(f)).or_default() += 1;
+    }
 
     for chunk in text.split('\u{1}').skip(1) {
         let mut lines = chunk.lines();
         let header = lines.next().unwrap_or("");
         let mut fields = header.split('\u{2}');
-        let (_hash, author, ts, subject) = (
+        let (hash, author, ts, subject) = (
             fields.next().unwrap_or(""),
             fields.next().unwrap_or(""),
             fields.next().and_then(|t| t.parse::<i64>().ok()).unwrap_or(0),
@@ -105,13 +156,30 @@ pub fn collect(root: &Path, cfg: &Cfg, tracked: &HashSet<String>) -> Result<Hist
         let mass_edit = touched.len() > cfg.max_cochange_commit_size;
         let files: Vec<&str> = touched
             .iter()
-            .filter_map(|l| l.strip_prefix(prefix.as_str()))
+            .filter_map(|l| l.strip_prefix(prefix))
             .filter(|l| tracked.contains(*l))
             .collect();
+        // A sweep rewrites most of one directory: an agent session editing every command
+        // file at once. Real churn, but "changed together" then means nothing.
+        let mut by_dir: HashMap<&str, usize> = HashMap::new();
+        for f in &files {
+            *by_dir.entry(dir_of(f)).or_default() += 1;
+        }
+        let sweep_dir = by_dir
+            .iter()
+            .map(|(d, k)| (*d, *k, dir_size[d]))
+            .filter(|(_, k, n)| *n >= cfg.sweep_min_dir_files && *k as f64 >= cfg.sweep_fraction * *n as f64 && *k >= cfg.sweep_min_files)
+            .max_by(|x, y| x.1.cmp(&y.1).then_with(|| y.0.cmp(x.0)));
+        let sweep = sweep_dir.is_some();
+        if let Some((dir, dir_touched, dir_files)) = sweep_dir {
+            hist.sweep_commits += 1;
+            hist.sweeps.push(SweepCommit { hash: hash.to_string(), subject: subject.to_string(), files: files.len(), dir: dir.to_string(), dir_touched, dir_files });
+        }
         for f in &files {
             let e = hist.files.entry((*f).to_string()).or_default();
             e.commits += 1;
             e.fix_commits += usize::from(is_fix);
+            e.sweep_commits += usize::from(sweep);
             e.author_set.insert(author.to_string());
             e.last_touched = e.last_touched.max(ts);
         }
@@ -119,8 +187,13 @@ pub fn collect(root: &Path, cfg: &Cfg, tracked: &HashSet<String>) -> Result<Hist
             for i in 0..files.len() {
                 for j in i + 1..files.len() {
                     let (a, b) = if files[i] < files[j] { (files[i], files[j]) } else { (files[j], files[i]) };
-                    *pairs.entry((a.to_string(), b.to_string())).or_default() += 1;
+                    let e = pairs.entry((a.to_string(), b.to_string())).or_default();
+                    e.0 += 1;
+                    e.1 += usize::from(!sweep);
                 }
+            }
+            if !sweep {
+                hist.co_commits.push(files.iter().map(|f| f.to_string()).collect());
             }
         }
     }
@@ -129,25 +202,33 @@ pub fn collect(root: &Path, cfg: &Cfg, tracked: &HashSet<String>) -> Result<Hist
         e.authors = e.author_set.len();
     }
 
+    // Null model: two files with ca and cb commits out of N meet ca x cb / N times by chance.
+    // Strength is judged on non-sweep counts; lift keeps the per-file commit counts (sweeps
+    // included) over the non-sweep N, so a file that rides every sweep must ship with its
+    // partner that much more often outside them to count.
+    let n = hist.commits_scanned - hist.sweep_commits;
+    hist.lift_applied = n >= cfg.min_commits_for_lift;
     let mut co: Vec<CoChange> = pairs
         .into_iter()
-        .filter(|(_, n)| *n >= cfg.min_cochange_together)
-        .filter_map(|((a, b), together)| {
-            let ca = hist.files.get(&a)?.commits;
-            let cb = hist.files.get(&b)?.commits;
-            let strength = together as f64 / ca.min(cb).max(1) as f64;
-            (strength >= cfg.min_cochange_strength).then_some(CoChange { a, b, together, strength })
+        .filter(|(_, (_, nonsweep))| *nonsweep >= cfg.min_cochange_together)
+        .filter_map(|((a, b), (together, together_nonsweep))| {
+            let (fa, fb) = (hist.files.get(&a)?, hist.files.get(&b)?);
+            let strength = together_nonsweep as f64 / fa.nonsweep().min(fb.nonsweep()).max(1) as f64;
+            let lift = together_nonsweep as f64 * n as f64 / (fa.commits * fb.commits).max(1) as f64;
+            let keep = strength >= cfg.min_cochange_strength && (!hist.lift_applied || lift >= cfg.min_lift);
+            keep.then_some(CoChange { a, b, together, together_nonsweep, strength, lift })
         })
         .collect();
     co.sort_by(|x, y| {
-        y.together
-            .cmp(&x.together)
+        y.together_nonsweep
+            .cmp(&x.together_nonsweep)
             .then(y.strength.partial_cmp(&x.strength).unwrap())
+            .then(y.lift.partial_cmp(&x.lift).unwrap())
             .then_with(|| x.a.cmp(&y.a))
             .then_with(|| x.b.cmp(&y.b))
     });
     hist.co_changes = co;
-    Ok(hist)
+    hist
 }
 
 #[cfg(test)]
@@ -166,5 +247,89 @@ mod tests {
         assert!(subject_is_fix("fix(lobby): scroll jump", &w));
         assert!(!subject_is_fix("Lobby: one page scroll", &w));
         assert!(subject_is_fix("Lobby: one page scroll", &["lobby".to_string()]));
+    }
+
+    /// One `git log` chunk per (author, subject, files), in the `--format` we parse.
+    fn log(commits: &[(&str, &str, &[&str])]) -> String {
+        commits
+            .iter()
+            .enumerate()
+            .map(|(i, (author, subject, files))| format!("\u{1}h{i}\u{2}{author}\u{2}{}\u{2}{subject}\n{}\n\n", 1000 + i, files.join("\n")))
+            .collect()
+    }
+
+    fn tracked(paths: &[&str]) -> HashSet<String> {
+        paths.iter().map(|p| p.to_string()).collect()
+    }
+
+    const CMD: [&str; 6] = ["src/cmd/a.rs", "src/cmd/b.rs", "src/cmd/c.rs", "src/cmd/d.rs", "src/cmd/e.rs", "src/cmd/f.rs"];
+
+    #[test]
+    fn sweeps_are_churn_but_not_pair_evidence() {
+        let mut t = tracked(&CMD);
+        t.extend(tracked(&["src/x.rs", "src/y.rs", "src/z.rs"]));
+        let five = &CMD[..5];
+        let text = log(&[
+            ("bob", "fix everything", &["src/cmd/a.rs", "src/cmd/b.rs", "src/cmd/c.rs", "src/cmd/d.rs", "src/cmd/e.rs", "src/cmd/f.rs", "src/x.rs"]),
+            ("ann", "sweep again", &CMD),
+            ("ann", "n1", &["src/cmd/a.rs", "src/cmd/b.rs"]),
+            ("ann", "n2", &["src/cmd/a.rs", "src/cmd/b.rs"]),
+            ("ann", "n3", &["src/cmd/a.rs", "src/cmd/b.rs", "src/cmd/c.rs"]),
+            // All of src, but src holds only 3 tracked files: under sweep_min_dir_files.
+            ("ann", "n4", &["src/x.rs", "src/y.rs", "src/z.rs", "src/cmd/c.rs"]),
+            // 5 of 6 is over the fraction but under the absolute floor of 6.
+            ("ann", "p", five),
+        ]);
+        let h = parse(&text, "", &Cfg::default(), &t);
+        assert_eq!((h.commits_scanned, h.sweep_commits, h.lift_applied), (7, 2, false));
+        assert_eq!(h.sweeps.iter().map(|s| (s.hash.as_str(), s.files, s.dir.as_str(), s.dir_touched, s.dir_files)).collect::<Vec<_>>(), vec![("h0", 7, "src/cmd", 6, 6), ("h1", 6, "src/cmd", 6, 6)]);
+        let a = &h.files["src/cmd/a.rs"];
+        // Sweeps count toward commits, fix commits and authors.
+        assert_eq!((a.commits, a.sweep_commits, a.nonsweep(), a.fix_commits, a.authors), (6, 2, 4, 1, 2));
+        assert_eq!(h.files["src/cmd/f.rs"].commits, 2);
+        // a<->b: 6 raw, 4 outside sweeps; a<->c has only 2 outside sweeps; d<->e only 1.
+        assert_eq!(h.co_changes.len(), 1, "{:?}", h.co_changes);
+        let c = &h.co_changes[0];
+        assert_eq!((c.a.as_str(), c.b.as_str(), c.together, c.together_nonsweep, c.strength), ("src/cmd/a.rs", "src/cmd/b.rs", 6, 4, 1.0));
+        // lift = 4 / (6 x 6 / 5): reported but not applied below min_commits_for_lift.
+        assert!((c.lift - 4.0 * 5.0 / 36.0).abs() < 1e-9, "{}", c.lift);
+        assert_eq!(h.co_commits.len(), 5);
+        assert!(h.co_commits.iter().all(|c| c.len() < 6));
+    }
+
+    #[test]
+    fn lift_is_applied_once_the_window_is_long_enough() {
+        let t = tracked(&["src/a.rs", "src/b.rs", "src/q.rs", "src/r.rs"]);
+        let mut commits: Vec<(&str, &str, &[&str])> = vec![("ann", "ab", &["src/a.rs", "src/b.rs"]); 3];
+        commits.extend(std::iter::repeat_n(("ann", "q", &["src/q.rs"][..]), 20));
+        let h = parse(&log(&commits), "", &Cfg::default(), &t);
+        assert!(h.lift_applied);
+        assert_eq!(h.co_changes.len(), 1);
+        assert!((h.co_changes[0].lift - 3.0 * 23.0 / 9.0).abs() < 1e-9);
+        // Nine 4-file commits over all of src (4 < sweep_min_files: not sweeps) make every file
+        // busy: a<->b is now 12 of N=32 with 12 commits each, lift 12 / (12 x 12 / 32) = 2.7, and
+        // every pair through q.rs (29 commits) is lower still. All dropped.
+        commits.extend(std::iter::repeat_n(("ann", "q", &["src/a.rs", "src/b.rs", "src/q.rs", "src/r.rs"][..]), 9));
+        let h = parse(&log(&commits), "", &Cfg::default(), &t);
+        assert_eq!((h.sweep_commits, h.lift_applied), (0, true));
+        assert!(h.co_changes.is_empty(), "{:?}", h.co_changes);
+        // Below the gate the same pairs are kept with their lift printed.
+        let h = parse(&log(&commits), "", &Cfg { min_commits_for_lift: 100, ..Cfg::default() }, &t);
+        let ab = h.co_changes.iter().find(|c| c.a == "src/a.rs" && c.b == "src/b.rs").unwrap();
+        assert!(!h.lift_applied && ab.together_nonsweep == 12 && (ab.lift - 12.0 * 32.0 / 144.0).abs() < 1e-9, "{ab:?}");
+    }
+
+    #[test]
+    fn mass_edits_stay_excluded_and_a_prefix_is_stripped() {
+        let t = tracked(&CMD);
+        let docs: Vec<String> = (0..24).map(|i| format!("pkg/docs/{i}.md")).collect();
+        let mut big: Vec<&str> = vec!["pkg/src/cmd/a.rs", "pkg/src/cmd/b.rs", "pkg/src/cmd/c.rs", "pkg/src/cmd/d.rs", "pkg/src/cmd/e.rs", "pkg/src/cmd/f.rs"];
+        big.extend(docs.iter().map(String::as_str));
+        let text = log(&[("ann", "reformat", &big), ("ann", "ab", &["pkg/src/cmd/a.rs", "pkg/src/cmd/b.rs"])]);
+        let h = parse(&text, "pkg/", &Cfg::default(), &t);
+        // 30 files: a mass edit (no pair evidence) that is also a sweep of src/cmd.
+        assert_eq!((h.commits_scanned, h.sweep_commits, h.sweeps[0].dir.as_str(), h.sweeps[0].files), (2, 1, "src/cmd", 6));
+        assert_eq!((h.files["src/cmd/a.rs"].commits, h.files["src/cmd/a.rs"].sweep_commits), (2, 1));
+        assert_eq!(h.co_commits, vec![vec!["src/cmd/a.rs".to_string(), "src/cmd/b.rs".to_string()]]);
     }
 }

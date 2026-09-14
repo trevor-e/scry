@@ -18,7 +18,7 @@ language is one grammar crate plus a node-kind table.
 | Pass | Signal | Why it matters |
 |---|---|---|
 | discovery | file kind (source/test/data/generated/vendored), language | raw metrics on the wrong kind of file are confident nonsense |
-| history | churn, fix commits, authors, co-change pairs (from `git log`) | the strongest defect predictor is *how often a thing changes* |
+| history | churn, fix commits, authors, co-change pairs (from `git log`); a commit that rewrites most of one directory is a *sweep* (still churn, never pair evidence), and every pair carries its lift over chance | the strongest defect predictor is *how often a thing changes*; an agent session that edits every command file at once says nothing about which of them belong together |
 | metrics | cognitive + cyclomatic complexity, nesting, length, params per function | nesting-aware complexity predicts "hard to change safely" |
 | deps | import graph, SCC cycles (file and directory), fan-in/out, instability | tangles and hubs are where a change fans out |
 | clones | near-exact duplicates via normalised-token winnowing; a uniform table (dispatch `match`, registry array, map literal) matching its own second half is dropped, and pairs whose both sides are runs of uniform entries are tagged `table` and listed under a TABLES sub-heading with the logic/table split in the file's reason | two copies of a rule drift into two rules; two parallel maps over one enum must drift together, but they are not duplicated logic |
@@ -30,6 +30,9 @@ Scene*: churn × complexity, with boosts for fix commits, coupling, duplication
 and missing tests. Every ranked file carries the reasons it ranked, with
 function names and line ranges. Co-change pairs with no import between them
 ("hidden coupling") are called out separately: no static tool can see those.
+Sweep commits are left out of those pair counts, pairs below 3x lift are dropped
+once the window is long enough, and a pair whose members both import a file that
+changed in the same commits is reported as shotgun surgery on that import instead.
 
 ## Configuration
 
@@ -51,6 +54,8 @@ test_dirs = ["test", "tests", "qa"]      # replaces the default list
 
 [history]
 fix_words = ["fix", "fixes", "fixed", "bug", "regression"]
+sweep_min_files = 8                      # a sweep must touch this many files of one directory (default 6)
+min_lift = 2.0                           # drop co-change pairs under this lift once the window has 20 commits (default 3.0)
 
 [clones]
 min_tokens = 100
