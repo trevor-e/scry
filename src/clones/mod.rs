@@ -6,25 +6,13 @@
 //! shared run of at least k+w-1 tokens is found while indexing a fraction of
 //! the hashes. Matching fingerprints on the same diagonal are merged into runs.
 
+use crate::config::Clones as Cfg;
 use crate::discover::SourceFile;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use tree_sitter::Node;
-
-/// Tokens per fingerprint window. ~4–6 lines of typical code.
-pub const K: usize = 30;
-/// Winnowing window: one fingerprint kept per W consecutive k-grams.
-pub const W: usize = 20;
-/// Shortest run worth reporting, in tokens.
-pub const MIN_TOKENS: usize = 70;
-/// Fingerprints seen in more *files* than this are boilerplate, not clones.
-/// Counting files rather than positions keeps a periodic block that was
-/// copied into several files visible: each copy contributes many positions.
-const MAX_FILES: usize = 40;
-/// Hard cap on positions per fingerprint, so the pairing loop stays bounded.
-const MAX_LOCATIONS: usize = 2000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Loc {
@@ -59,13 +47,14 @@ struct Tokens {
     lines: Vec<usize>,
 }
 
-pub fn detect(files: &[SourceFile]) -> CloneReport {
+pub fn detect(files: &[SourceFile], cfg: &Cfg) -> CloneReport {
+    let k = cfg.k;
     let toks: Vec<Tokens> = files.par_iter().map(tokenize).collect();
 
     // fingerprint hash -> (file, token position)
     let mut index: HashMap<u64, Vec<(usize, usize)>> = HashMap::new();
     for (fi, t) in toks.iter().enumerate() {
-        for (pos, h) in winnow(&t.hashes) {
+        for (pos, h) in winnow(&t.hashes, cfg.k, cfg.w) {
             index.entry(h).or_default().push((fi, pos));
         }
     }
@@ -73,13 +62,13 @@ pub fn detect(files: &[SourceFile]) -> CloneReport {
     // Candidate matches grouped by unordered file pair.
     let mut by_pair: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
     for locs in index.values() {
-        if locs.len() < 2 || locs.len() > MAX_LOCATIONS {
+        if locs.len() < 2 || locs.len() > cfg.max_locations {
             continue;
         }
         let mut files_seen: Vec<usize> = locs.iter().map(|l| l.0).collect();
         files_seen.sort_unstable();
         files_seen.dedup();
-        if files_seen.len() > MAX_FILES {
+        if files_seen.len() > cfg.max_files {
             continue;
         }
         for i in 0..locs.len() {
@@ -88,7 +77,7 @@ pub fn detect(files: &[SourceFile]) -> CloneReport {
                 if x.0 > y.0 || (x.0 == y.0 && x.1 > y.1) {
                     std::mem::swap(&mut x, &mut y);
                 }
-                if x.0 == y.0 && y.1 - x.1 < K {
+                if x.0 == y.0 && y.1 - x.1 < k {
                     continue; // overlapping with itself
                 }
                 by_pair.entry((x.0, y.0)).or_default().push((x.1, y.1));
@@ -106,13 +95,13 @@ pub fn detect(files: &[SourceFile]) -> CloneReport {
             for (a, b) in matches {
                 match cur {
                     Some((sa, sb, len)) if a as i64 - b as i64 == sa as i64 - sb as i64 && a <= sa + len => {
-                        cur = Some((sa, sb, (a + K) - sa));
+                        cur = Some((sa, sb, (a + k) - sa));
                     }
                     _ => {
                         if let Some(r) = cur.take() {
                             runs.push(r);
                         }
-                        cur = Some((a, b, K));
+                        cur = Some((a, b, k));
                     }
                 }
             }
@@ -138,7 +127,7 @@ pub fn detect(files: &[SourceFile]) -> CloneReport {
             // Repetitive code matches itself on every shifted diagonal. Keep the
             // longest run and drop any run whose A-range *and* B-range both
             // overlap an accepted run: that is the same clone seen at an offset.
-            runs.retain(|(_, _, len)| *len >= MIN_TOKENS);
+            runs.retain(|(_, _, len)| *len >= cfg.min_tokens);
             // Within one file, ranges that overlap each other are a repeating
             // pattern (a table, an unrolled loop), not a copy.
             if fa == fb {
@@ -212,16 +201,18 @@ fn loc(path: &str, t: &Tokens, start: usize, len: usize) -> Loc {
 }
 
 /// Winnowing (Schleimer, Wilkerson, Aiken 2003): hash every k-gram, keep the
-/// minimum of each w-window, rightmost on ties, de-duplicated.
-fn winnow(hashes: &[u64]) -> Vec<(usize, u64)> {
-    if hashes.len() < K {
+/// minimum of each w-window, rightmost on ties, de-duplicated. Any shared run
+/// of at least k+w-1 tokens is guaranteed to share a fingerprint.
+fn winnow(hashes: &[u64], k: usize, w: usize) -> Vec<(usize, u64)> {
+    let (k, w) = (k.max(1), w.max(1));
+    if hashes.len() < k {
         return Vec::new();
     }
-    let grams: Vec<u64> = hashes.windows(K).map(hash_slice).collect();
+    let grams: Vec<u64> = hashes.windows(k).map(hash_slice).collect();
     let mut out = Vec::new();
     let mut last: Option<usize> = None;
-    for start in 0..=grams.len().saturating_sub(W) {
-        let win = &grams[start..(start + W).min(grams.len())];
+    for start in 0..=grams.len().saturating_sub(w) {
+        let win = &grams[start..(start + w).min(grams.len())];
         let mut best = 0;
         for (i, g) in win.iter().enumerate() {
             if *g <= win[best] {
@@ -233,7 +224,7 @@ fn winnow(hashes: &[u64]) -> Vec<(usize, u64)> {
             out.push((pos, grams[pos]));
             last = Some(pos);
         }
-        if start + W >= grams.len() {
+        if start + w >= grams.len() {
             break;
         }
     }
@@ -334,7 +325,7 @@ mod tests {
     fn renamed_copy_is_found_and_lines_are_right() {
         let a = format!("def alpha(x):\n{}\n    return x\n", body("aa"));
         let b = format!("import os\n\ndef beta(y):\n{}\n    return y\n", body("bb"));
-        let r = detect(&[sf("a.py", a), sf("b.py", b)]);
+        let r = detect(&[sf("a.py", a), sf("b.py", b)], &Cfg::default());
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         let p = &r.pairs[0];
         assert_eq!(p.a.file, "a.py");
@@ -356,13 +347,23 @@ mod tests {
             s + "    return x\n"
         };
         let files: Vec<SourceFile> = ["a", "b", "c", "d", "e", "f"].iter().map(|p| sf(&format!("{p}.py"), body(p))).collect();
-        let r = detect(&files);
+        let r = detect(&files, &Cfg::default());
         assert!(r.pairs.len() >= 15, "{} pairs", r.pairs.len());
         assert_eq!(r.files.len(), 6);
         // Deterministic order across runs.
-        let again = detect(&files);
+        let again = detect(&files, &Cfg::default());
         let key = |r: &CloneReport| r.pairs.iter().map(|p| format!("{}:{}-{}:{}", p.a.file, p.a.start_line, p.b.file, p.b.start_line)).collect::<Vec<_>>();
         assert_eq!(key(&r), key(&again));
+    }
+
+    #[test]
+    fn min_tokens_is_tunable() {
+        let a = format!("def alpha(x):\n{}\n    return x\n", body("aa"));
+        let b = format!("def beta(y):\n{}\n    return y\n", body("bb"));
+        let files = [sf("a.py", a), sf("b.py", b)];
+        let strict = Cfg { min_tokens: 10_000, ..Cfg::default() };
+        assert!(detect(&files, &strict).pairs.is_empty());
+        assert_eq!(detect(&files, &Cfg::default()).pairs.len(), 1);
     }
 
     #[test]
@@ -397,7 +398,7 @@ async def handler(request):
         case 'admin': return admin_view(user)
         case _: return plain_view(user)
 ";
-        let r = detect(&[sf("a.py", a.into()), sf("b.py", b.into())]);
+        let r = detect(&[sf("a.py", a.into()), sf("b.py", b.into())], &Cfg::default());
         assert!(r.pairs.is_empty(), "{:?}", r.pairs);
     }
 }

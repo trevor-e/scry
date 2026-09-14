@@ -9,3 +9,4 @@ code: [src/discover/**, src/lang/**]
 - Classification is path-first, then content: vendored dirs > generated markers/dirs > test dirs/names > fixture dirs/names > logic-density threshold (≥150 lines with <4% control-flow lines is Data).
 - Walks honour `.gitignore` and skip hidden dirs; anything the repo does not track is not analysed.
 - Paths are reported relative to the scanned root with `/` separators on every platform.
+- Directory name lists, test-file name rules, generated markers, the data-file threshold and `exclude` globs are all `[discover]` settings in `scry.toml`; the defaults are the historical constants.

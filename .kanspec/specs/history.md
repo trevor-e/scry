@@ -10,3 +10,4 @@ code: [src/history/**]
 - Co-change is only computed for commits touching at most 25 files in total (tracked or not) and at least 2 tracked ones; larger commits are mass edits and are ignored. Pairs sort by together, strength, then path, so output order is stable. A pair is reported at ≥3 shared commits and strength ≥0.4 where strength = together / min(commits_a, commits_b).
 - Only paths in the caller's tracked set (normally Source files) are counted, so tests, fixtures and generated files never inflate churn.
 - Renames are not followed (`--no-renames`); a renamed file restarts its history.
+- The window, fix-word list and co-change thresholds are `[history]` settings in `scry.toml`; `--since` on the CLI overrides the file.

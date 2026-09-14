@@ -7,6 +7,7 @@
 //! - co-change: file pairs that ship together; paired with the import graph this
 //!   exposes hidden coupling no static tool can see.
 
+use crate::config::History as Cfg;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -42,24 +43,9 @@ pub struct History {
     pub co_changes: Vec<CoChange>,
 }
 
-/// Commits touching more files than this are mass edits (renames, formatters)
-/// and say nothing about coupling.
-const MAX_COCHANGE_COMMIT_SIZE: usize = 25;
-const MIN_COCHANGE_TOGETHER: usize = 3;
-const MIN_COCHANGE_STRENGTH: f64 = 0.4;
-
-/// Whole words only: "fixtures" and "prefix" are not fixes.
-const FIX_WORDS: &[&str] = &[
-    "fix", "fixes", "fixed", "fixing", "bugfix", "bugfixes", "hotfix", "hotfixes",
-    "bug", "bugs", "buggy", "regression", "regressions", "regress", "regressed",
-    "broke", "broken", "crash", "crashes", "crashed", "crashing",
-    "repair", "repairs", "repaired", "correct", "corrects", "corrected", "correction",
-    "patch", "patched", "wrong", "incorrect", "flake", "flaky", "flakey",
-];
-
-pub fn subject_is_fix(subject: &str) -> bool {
+pub fn subject_is_fix(subject: &str, fix_words: &[String]) -> bool {
     let s = subject.to_ascii_lowercase();
-    s.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| FIX_WORDS.contains(&w))
+    s.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| fix_words.iter().any(|f| f == w))
 }
 
 /// Path of `root` inside its git work tree (`""` at the top level, `pkg/` below it).
@@ -75,7 +61,8 @@ fn git_prefix(root: &Path) -> Result<String> {
 
 /// `tracked` limits the result to paths we care about (the discovered source set),
 /// which keeps the co-change pair matrix small.
-pub fn collect(root: &Path, since: &str, tracked: &HashSet<String>) -> Result<History> {
+pub fn collect(root: &Path, cfg: &Cfg, tracked: &HashSet<String>) -> Result<History> {
+    let since = cfg.since.as_str();
     let prefix = git_prefix(root)?;
     let out = Command::new("git")
         .arg("-C")
@@ -111,11 +98,11 @@ pub fn collect(root: &Path, since: &str, tracked: &HashSet<String>) -> Result<Hi
             fields.next().unwrap_or(""),
         );
         hist.commits_scanned += 1;
-        let is_fix = subject_is_fix(subject);
+        let is_fix = subject_is_fix(subject, &cfg.fix_words);
         let touched: Vec<&str> = lines.map(str::trim).filter(|l| !l.is_empty()).collect();
         // Mass edits (formatters, renames) say nothing about coupling; judge that
         // on everything the commit touched, not just the files we track.
-        let mass_edit = touched.len() > MAX_COCHANGE_COMMIT_SIZE;
+        let mass_edit = touched.len() > cfg.max_cochange_commit_size;
         let files: Vec<&str> = touched
             .iter()
             .filter_map(|l| l.strip_prefix(prefix.as_str()))
@@ -144,12 +131,12 @@ pub fn collect(root: &Path, since: &str, tracked: &HashSet<String>) -> Result<Hi
 
     let mut co: Vec<CoChange> = pairs
         .into_iter()
-        .filter(|(_, n)| *n >= MIN_COCHANGE_TOGETHER)
+        .filter(|(_, n)| *n >= cfg.min_cochange_together)
         .filter_map(|((a, b), together)| {
             let ca = hist.files.get(&a)?.commits;
             let cb = hist.files.get(&b)?.commits;
             let strength = together as f64 / ca.min(cb).max(1) as f64;
-            (strength >= MIN_COCHANGE_STRENGTH).then_some(CoChange { a, b, together, strength })
+            (strength >= cfg.min_cochange_strength).then_some(CoChange { a, b, together, strength })
         })
         .collect();
     co.sort_by(|x, y| {
@@ -168,14 +155,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fix_detection_uses_word_starts() {
-        assert!(subject_is_fix("Fix hover flicker on tile picks"));
-        assert!(subject_is_fix("battle: fixes regression in LoS"));
-        assert!(subject_is_fix("Bugfix: wrong damage roll"));
-        assert!(!subject_is_fix("Add prefix to route names"));
-        assert!(!subject_is_fix("Add test fixtures for combat"));
-        assert!(!subject_is_fix("Debug logging for the patcher"));
-        assert!(subject_is_fix("fix(lobby): scroll jump"));
-        assert!(!subject_is_fix("Lobby: one page scroll"));
+    fn fix_detection_uses_whole_words() {
+        let w = Cfg::default().fix_words;
+        assert!(subject_is_fix("Fix hover flicker on tile picks", &w));
+        assert!(subject_is_fix("battle: fixes regression in LoS", &w));
+        assert!(subject_is_fix("Bugfix: wrong damage roll", &w));
+        assert!(!subject_is_fix("Add prefix to route names", &w));
+        assert!(!subject_is_fix("Add test fixtures for combat", &w));
+        assert!(!subject_is_fix("Debug logging for the patcher", &w));
+        assert!(subject_is_fix("fix(lobby): scroll jump", &w));
+        assert!(!subject_is_fix("Lobby: one page scroll", &w));
+        assert!(subject_is_fix("Lobby: one page scroll", &["lobby".to_string()]));
     }
 }

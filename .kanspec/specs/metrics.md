@@ -14,3 +14,4 @@ code: [src/metrics/**]
 - The "hard to follow" threshold is cognitive > 15 (`COGNITIVE_HARD`); files report how many units exceed it.
 - Parse errors are reported per file but never abort analysis: tree-sitter recovers locally and the rest of the file is still measured.
 - The AST walk is iterative (explicit stack), never recursive: a single deeply nested expression must not overflow a worker thread's stack and abort the scan.
+- The "hard to follow" threshold is `[metrics].cognitive_hard` in `scry.toml`.

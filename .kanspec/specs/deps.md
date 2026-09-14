@@ -13,3 +13,4 @@ code: [src/deps/**]
 - Cycles are Tarjan SCCs of size ≥2, reported at file level and again with files collapsed to directories (test files excluded from the directory graph).
 - `fan_in` counts non-test importers; test importers are reported separately as `test_refs` and feed the test-proximity signal.
 - `instability` = fan_out / (fan_in + fan_out).
+- JS/TS import-prefix aliases are `[deps].js_aliases` in `scry.toml` (`"@/" = "src"` by default); a target is looked for under every ancestor of the importing file.

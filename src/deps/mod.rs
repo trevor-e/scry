@@ -5,6 +5,7 @@
 //! and fed to Tarjan's SCC. Cycles are reported at two granularities: file
 //! cycles are the concrete tangle, directory cycles are the architectural one.
 
+use crate::config::Deps as Cfg;
 use crate::discover::{FileKind, SourceFile};
 use crate::lang::Language;
 use petgraph::algo::tarjan_scc;
@@ -62,7 +63,7 @@ struct RawImport {
     level: usize,
 }
 
-pub fn build(all: &[SourceFile]) -> DepGraph {
+pub fn build(all: &[SourceFile], cfg: &Cfg) -> DepGraph {
     // Third-party code checked into the tree is not part of this repo's graph:
     // its cycles are not ours to fix. Generated files may be imported, but
     // their own imports are not walked, so they never form cycles either.
@@ -78,7 +79,7 @@ pub fn build(all: &[SourceFile]) -> DepGraph {
             let mut targets = BTreeSet::new();
             let mut external = 0usize;
             for r in raws {
-                match resolve(&f.path, f.lang, &r, &known) {
+                match resolve(&f.path, f.lang, &r, &known, cfg) {
                     Some(t) => {
                         for t in t {
                             if t != f.path {
@@ -363,11 +364,11 @@ fn unquote(s: &str) -> String {
 
 // ---------- resolution ----------
 
-fn resolve(from: &str, lang: Language, imp: &RawImport, known: &HashSet<&str>) -> Option<Vec<String>> {
+fn resolve(from: &str, lang: Language, imp: &RawImport, known: &HashSet<&str>, cfg: &Cfg) -> Option<Vec<String>> {
     match lang {
         Language::Python => resolve_python(from, imp, known),
         Language::Rust => resolve_rust(from, imp, known),
-        _ => resolve_js(from, imp, known).map(|p| vec![p]),
+        _ => resolve_js(from, imp, known, cfg).map(|p| vec![p]),
     }
 }
 
@@ -458,14 +459,15 @@ fn resolve_python(from: &str, imp: &RawImport, known: &HashSet<&str>) -> Option<
 
 const JS_EXTS: &[&str] = &[".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts"];
 
-fn resolve_js(from: &str, imp: &RawImport, known: &HashSet<&str>) -> Option<String> {
+fn resolve_js(from: &str, imp: &RawImport, known: &HashSet<&str>, cfg: &Cfg) -> Option<String> {
     let dir = dir_of(from);
     let spec = imp.spec.as_str();
+    let alias = cfg.js_aliases.iter().find_map(|(pre, target)| spec.strip_prefix(pre.as_str()).map(|rest| (target, rest)));
     let bases: Vec<String> = if spec.starts_with("./") || spec.starts_with("../") || spec == "." || spec == ".." {
         vec![join(dir, spec)]
-    } else if let Some(rest) = spec.strip_prefix("@/").or_else(|| spec.strip_prefix("~/")) {
-        // Common alias: `@/x` -> `<nearest src>/x`.
-        ancestors(dir).into_iter().map(|a| join(&a, &format!("src/{rest}"))).collect()
+    } else if let Some((target, rest)) = alias {
+        // `@/x` -> `<nearest ancestor>/<target>/x`.
+        ancestors(dir).into_iter().map(|a| join(&join(&a, target), rest)).collect()
     } else {
         return None;
     };
@@ -549,7 +551,7 @@ mod tests {
 
     fn sf(path: &str, content: &str) -> SourceFile {
         let lang = Language::from_path(std::path::Path::new(path)).unwrap();
-        let kind = crate::discover::classify(path, content, 1);
+        let kind = crate::discover::classify(path, content, 1, &crate::config::Discover::default());
         SourceFile { path: path.into(), lang, kind, lines: 1, bytes: content.len(), content: content.into() }
     }
 
@@ -562,13 +564,25 @@ mod tests {
             sf("backend/engine/c.py", "from . import a\n"),
             sf("backend/tests/test_a.py", "from engine.a import x\n"),
         ];
-        let g = build(&files);
+        let g = build(&files, &Cfg::default());
         assert_eq!(g.file_cycles.len(), 1);
         assert_eq!(g.file_cycles[0].members, vec!["backend/engine/a.py", "backend/engine/b.py", "backend/engine/c.py"]);
         let a = &g.files["backend/engine/a.py"];
         assert_eq!(a.test_refs, 1);
         assert_eq!(a.fan_in, 2); // b and c
         assert!(g.dir_cycles.is_empty());
+    }
+
+    #[test]
+    fn js_alias_from_config() {
+        let files = vec![
+            sf("web/app/a.ts", "import x from '#lib/x'\n"),
+            sf("web/lib/x.ts", ""),
+        ];
+        assert_eq!(build(&files, &Cfg::default()).files["web/app/a.ts"].external, 1);
+        let mut cfg = Cfg::default();
+        cfg.js_aliases.insert("#lib/".into(), "lib".into());
+        assert_eq!(build(&files, &cfg).files["web/app/a.ts"].fan_out, 1);
     }
 
     #[test]
@@ -579,7 +593,7 @@ mod tests {
             sf("src/b/y.tsx", "import x from '@/a/x'\nimport React from 'react'\n"),
             sf("src/b/index.ts", "export const q = require('./y')\n"),
         ];
-        let g = build(&files);
+        let g = build(&files, &Cfg::default());
         assert_eq!(g.files["src/a/x.ts"].fan_out, 2);
         assert_eq!(g.files["src/b/y.tsx"].external, 1);
         assert_eq!(g.file_cycles.len(), 1);
@@ -596,7 +610,7 @@ mod tests {
             sf("src/lang/mod.rs", "use crate::deps::{self, Cycle as C};\n"),
             sf("src/util.rs", "use super::*;\nuse self::inner::x;\n"),
         ];
-        let g = build(&files);
+        let g = build(&files, &Cfg::default());
         assert_eq!(g.files["src/deps/mod.rs"].fan_out, 2);
         assert_eq!(g.files["src/lang/mod.rs"].fan_out, 1);
         assert!(g.connected("src/util.rs", "src/main.rs"));
@@ -610,7 +624,7 @@ mod tests {
             sf("src/a.rs", "pub fn f() {}\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use super::super::b::g;\n    mod deeper { use super::super::f; }\n}\n"),
             sf("src/b.rs", "pub fn g() {}\n"),
         ];
-        let g = build(&files);
+        let g = build(&files, &Cfg::default());
         assert_eq!(g.files["src/a.rs"].fan_out, 1, "{:?}", g.files["src/a.rs"]);
         assert!(g.connected("src/a.rs", "src/b.rs"));
         assert!(!g.edge_set.contains(&("src/a.rs".to_string(), "src/main.rs".to_string())), "{:?}", g.edge_set);
@@ -623,7 +637,7 @@ mod tests {
             sf("vendor/lib/b.js", "import {a} from './a'\n"),
             sf("src/x.ts", "import {a} from '../vendor/lib/a'\n"),
         ];
-        let g = build(&files);
+        let g = build(&files, &Cfg::default());
         assert!(g.file_cycles.is_empty());
         assert!(!g.files.contains_key("vendor/lib/a.js"));
         assert_eq!(g.files["src/x.ts"].external, 1);
@@ -636,7 +650,7 @@ mod tests {
             sf("src/deps/mod.rs", "use crate::lang::Language;\n"),
             sf("src/lang/mod.rs", "use super::deps::Cycle;\n"),
         ];
-        let g = build(&files);
+        let g = build(&files, &Cfg::default());
         assert_eq!(g.files["src/main.rs"].fan_out, 2);
         assert!(g.connected("src/deps/mod.rs", "src/lang/mod.rs"));
         assert_eq!(g.file_cycles.len(), 1);

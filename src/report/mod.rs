@@ -6,10 +6,11 @@
 //! language, and every ranked file carries the reasons it ranked, in words.
 
 use crate::clones::{CloneReport, ClonePair};
+use crate::config::{Report as Cfg, Weights};
 use crate::deps::{Cycle, DepGraph};
 use crate::discover::{FileKind, SourceFile};
 use crate::history::History;
-use crate::metrics::{COGNITIVE_HARD, FileMetrics, FunctionMetrics};
+use crate::metrics::{FileMetrics, FunctionMetrics};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 
@@ -68,6 +69,7 @@ pub struct Summary {
     pub complex_functions: usize,
     pub history_window: Option<String>,
     pub commits_scanned: usize,
+    pub cognitive_hard: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,6 +91,7 @@ pub struct Inputs<'a> {
     pub functions: &'a [FunctionMetrics],
     pub deps: &'a DepGraph,
     pub clones: &'a CloneReport,
+    pub cognitive_hard: u32,
 }
 
 /// Percentile rank in [0,1]: share of other values strictly below this one.
@@ -128,11 +131,11 @@ fn stem(path: &str) -> String {
 /// Directory a test file speaks for: everything above its first test-directory
 /// component. `backend/tests/unit/test_x.py` → `backend`; `src/a/x.test.ts` → `src/a`;
 /// `tests/test_x.py` → `` (the whole repo).
-fn test_scope(path: &str) -> &str {
+fn test_scope<'a>(path: &'a str, test_dirs: &[String]) -> &'a str {
     let dir = path.rsplit_once('/').map_or("", |(d, _)| d);
     let mut end = 0;
     for comp in dir.split('/').filter(|c| !c.is_empty()) {
-        if crate::discover::TEST_DIRS.contains(&comp) {
+        if test_dirs.iter().any(|t| t == comp) {
             break;
         }
         end += comp.len() + usize::from(end > 0);
@@ -143,10 +146,10 @@ fn test_scope(path: &str) -> &str {
 /// Test stems with the directory tree they cover: `test_combat.py`,
 /// `combat.test.ts`, `BattleScreen.spec.tsx` → `combat`, `battlescreen`.
 /// A `test_utils.py` under `b/tests/` says nothing about `a/utils.py`.
-fn test_stems(files: &[SourceFile]) -> HashMap<String, Vec<String>> {
+fn test_stems(files: &[SourceFile], test_dirs: &[String]) -> HashMap<String, Vec<String>> {
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
     for f in files.iter().filter(|f| f.kind == FileKind::Test) {
-        out.entry(stem(&f.path)).or_default().push(test_scope(&f.path).to_string());
+        out.entry(stem(&f.path)).or_default().push(test_scope(&f.path, test_dirs).to_string());
     }
     out
 }
@@ -163,10 +166,10 @@ fn has_inline_tests(f: &SourceFile) -> bool {
     f.lang == crate::lang::Language::Rust && f.content.contains("#[cfg(test)]")
 }
 
-pub fn build(inp: Inputs, top: usize) -> Report {
+pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report {
     let source: Vec<&SourceFile> = inp.files.iter().filter(|f| f.kind == FileKind::Source).collect();
     let fm: HashMap<&str, &FileMetrics> = inp.file_metrics.iter().map(|m| (m.path.as_str(), m)).collect();
-    let tstems = test_stems(inp.files);
+    let tstems = test_stems(inp.files, test_dirs);
     let empty_hist = History::default();
     let hist = inp.history.unwrap_or(&empty_hist);
 
@@ -243,31 +246,29 @@ pub fn build(inp: Inputs, top: usize) -> Report {
         .map(|(i, f)| {
             let s = &signals[i];
             let churn = if s.commits == 0 { 0.0 } else { p_commits[i] };
-            let cx = if s.max_cognitive == 0 { 0.0 } else { 0.6 * p_maxcog[i] + 0.4 * p_totcog[i] };
+            let ms = cfg.complexity_max_share;
+            let cx = if s.max_cognitive == 0 { 0.0 } else { ms * p_maxcog[i] + (1.0 - ms) * p_totcog[i] };
             let hotspot = (churn * cx).sqrt();
-            let coupling = if s.fan_in == 0 { 0.0 } else { p_fanin[i] }.max(if s.in_cycle { 0.6 } else { 0.0 });
+            let coupling = if s.fan_in == 0 { 0.0 } else { p_fanin[i] }.max(if s.in_cycle { cfg.cycle_coupling } else { 0.0 });
             let clone = if s.clone_lines == 0 { 0.0 } else { p_clone[i] };
             let fix = if s.fix_commits == 0 { 0.0 } else { p_fix[i] };
-            let base = if have_history {
-                0.45 * hotspot + 0.15 * fix + 0.15 * cx + 0.10 * coupling + 0.10 * clone + 0.05 * p_lines[i]
-            } else {
-                0.55 * cx + 0.15 * coupling + 0.15 * clone + 0.15 * p_lines[i]
-            };
-            let score = 100.0 * base * if s.has_tests { 1.0 } else { 1.15 };
+            let w: &Weights = if have_history { &cfg.with_history } else { &cfg.without_history };
+            let base = w.hotspot * hotspot + w.fixes * fix + w.complexity * cx + w.coupling * coupling + w.clones * clone + w.size * p_lines[i];
+            let score = 100.0 * base * if s.has_tests { 1.0 } else { cfg.no_tests_multiplier };
 
             let mut reasons = Vec::new();
             let window = hist.window.trim_end_matches(" ago");
-            if have_history && p_commits[i] >= 0.8 && s.commits > 0 {
+            if have_history && p_commits[i] >= cfg.reason_churn_percentile && s.commits > 0 {
                 reasons.push(format!(
                     "{} commits in the last {window} ({} fix commits, {} authors)",
                     s.commits, s.fix_commits, s.authors
                 ));
-            } else if s.fix_commits >= 2 {
+            } else if s.fix_commits >= cfg.reason_min_fix_commits {
                 reasons.push(format!("{} fix commits in the last {window}", s.fix_commits));
             }
             if s.complex_functions > 0 {
                 let w = worst.get(f.path.as_str()).and_then(|v| v.first());
-                let mut r = format!("{} function(s) over cognitive {COGNITIVE_HARD}", s.complex_functions);
+                let mut r = format!("{} function(s) over cognitive {}", s.complex_functions, inp.cognitive_hard);
                 if let Some(w) = w {
                     r.push_str(&format!("; worst {} at {} (lines {}-{}, nesting {})", w.name, w.cognitive, w.start_line, w.end_line, w.max_nesting));
                 }
@@ -276,14 +277,14 @@ pub fn build(inp: Inputs, top: usize) -> Report {
             if let Some(n) = cycle_size.get(f.path.as_str()) {
                 reasons.push(format!("in an import cycle of {n} files"));
             }
-            if p_fanin[i] >= 0.9 && s.fan_in >= 5 {
+            if p_fanin[i] >= cfg.reason_fanin_percentile && s.fan_in >= cfg.reason_min_fan_in {
                 reasons.push(format!("imported by {} files: a change here fans out", s.fan_in));
             }
-            if s.clone_ratio >= 0.15 {
+            if s.clone_ratio >= cfg.reason_clone_ratio {
                 reasons.push(format!("{:.0}% of its lines are duplicated elsewhere ({} lines)", s.clone_ratio * 100.0, s.clone_lines));
             }
             if let Some(hs) = hidden_by_file.get(f.path.as_str()) {
-                for h in hs.iter().take(2) {
+                for h in hs.iter().take(cfg.reason_hidden_partners) {
                     let other = if h.a == f.path { &h.b } else { &h.a };
                     reasons.push(format!("changes together with {other} ({}x) but neither imports the other", h.together));
                 }
@@ -291,7 +292,7 @@ pub fn build(inp: Inputs, top: usize) -> Report {
             if !s.has_tests {
                 reasons.push("no test file references it".to_string());
             }
-            if s.authors == 1 && s.commits >= 5 {
+            if s.authors == 1 && s.commits >= cfg.reason_bus_factor_min_commits {
                 reasons.push("single author over the window (bus factor 1)".to_string());
             }
             Hotspot {
@@ -330,9 +331,10 @@ pub fn build(inp: Inputs, top: usize) -> Report {
         test_files: inp.files.iter().filter(|f| f.kind == FileKind::Test).count(),
         source_lines: source.iter().map(|f| f.lines).sum(),
         functions: inp.functions.len(),
-        complex_functions: inp.functions.iter().filter(|f| f.cognitive > COGNITIVE_HARD).count(),
+        complex_functions: inp.functions.iter().filter(|f| f.cognitive > inp.cognitive_hard).count(),
         history_window: inp.history.map(|h| h.window.clone()),
         commits_scanned: hist.commits_scanned,
+        cognitive_hard: inp.cognitive_hard,
     };
 
     Report {
@@ -350,13 +352,40 @@ pub fn build(inp: Inputs, top: usize) -> Report {
 mod tests {
     use super::*;
 
+    fn td() -> Vec<String> {
+        crate::config::Discover::default().test_dirs
+    }
+
     #[test]
     fn test_scope_stops_at_the_first_test_dir() {
-        assert_eq!(test_scope("backend/tests/unit/test_x.py"), "backend");
-        assert_eq!(test_scope("src/a/x.test.ts"), "src/a");
-        assert_eq!(test_scope("tests/test_x.py"), "");
-        assert_eq!(test_scope("test_x.py"), "");
-        assert_eq!(test_scope("src/a/__tests__/x.test.ts"), "src/a");
+        assert_eq!(test_scope("backend/tests/unit/test_x.py", &td()), "backend");
+        assert_eq!(test_scope("src/a/x.test.ts", &td()), "src/a");
+        assert_eq!(test_scope("tests/test_x.py", &td()), "");
+        assert_eq!(test_scope("test_x.py", &td()), "");
+        assert_eq!(test_scope("src/a/__tests__/x.test.ts", &td()), "src/a");
+    }
+
+    #[test]
+    fn weights_change_the_ranking() {
+        let sf = |p: &str, lines: usize| SourceFile {
+            path: p.into(), lang: crate::lang::Language::Python, kind: FileKind::Source, lines, bytes: 0, content: String::new(),
+        };
+        let files = vec![sf("big.py", 1000), sf("small.py", 10)];
+        let fm = vec![
+            FileMetrics { path: "big.py".into(), functions: 1, total_cognitive: 1, max_cognitive: 1, max_nesting: 0, complex_functions: 0, parse_errors: false },
+            FileMetrics { path: "small.py".into(), functions: 1, total_cognitive: 30, max_cognitive: 30, max_nesting: 0, complex_functions: 1, parse_errors: false },
+        ];
+        let deps = DepGraph::default();
+        let clones = CloneReport::default();
+        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15 };
+        let by_default = build(inputs(), 10, &Cfg::default(), &td());
+        assert_eq!(by_default.hotspots[0].path, "small.py");
+        let size_only = Cfg {
+            without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 1.0 },
+            ..Cfg::default()
+        };
+        let by_size = build(inputs(), 10, &size_only, &td());
+        assert_eq!(by_size.hotspots[0].path, "big.py");
     }
 
     #[test]
@@ -370,7 +399,7 @@ mod tests {
             sf("b/sub/utils.py", FileKind::Source),
             sf("b/tests/test_utils.py", FileKind::Test),
         ];
-        let t = test_stems(&files);
+        let t = test_stems(&files, &td());
         assert!(!stem_tested(&t, &files[0]));
         assert!(stem_tested(&t, &files[1]));
         assert!(stem_tested(&t, &files[2]));
@@ -385,7 +414,7 @@ pub fn render(r: &Report, top: usize) -> String {
     let _ = writeln!(
         o,
         "{} source files ({} lines), {} test files, {} functions ({} over cognitive {})",
-        s.source_files, s.source_lines, s.test_files, s.functions, s.complex_functions, COGNITIVE_HARD
+        s.source_files, s.source_lines, s.test_files, s.functions, s.complex_functions, s.cognitive_hard
     );
     match &s.history_window {
         Some(w) => { let _ = writeln!(o, "history: {} commits since {w}", s.commits_scanned); }

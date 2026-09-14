@@ -1,0 +1,315 @@
+//! Every tunable in one place, loadable from `scry.toml`.
+//!
+//! Precedence: built-in defaults < `scry.toml` at the scanned root < `--config <file>`
+//! < explicit CLI flags. Every section and every key is optional, so a repo's
+//! file only has to name what it changes. `scry config <root>` prints the
+//! effective result as TOML, which is the easiest starting point for a new file.
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::Path;
+
+/// File name looked for at the scanned root.
+pub const FILE_NAME: &str = "scry.toml";
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Config {
+    pub discover: Discover,
+    pub history: History,
+    pub metrics: Metrics,
+    pub deps: Deps,
+    pub clones: Clones,
+    pub report: Report,
+}
+
+impl Config {
+    /// Defaults, then the root's `scry.toml` if present, then `explicit` if given.
+    pub fn load(root: &Path, explicit: Option<&Path>) -> Result<Self> {
+        let mut cfg = Config::default();
+        let at_root = root.join(FILE_NAME);
+        if at_root.is_file() {
+            cfg = Self::parse_into(cfg, &at_root)?;
+        }
+        if let Some(p) = explicit {
+            cfg = Self::parse_into(cfg, p)?;
+        }
+        Ok(cfg)
+    }
+
+    /// A file's contents override `base` field by field; sections it omits keep `base`.
+    fn parse_into(base: Self, path: &Path) -> Result<Self> {
+        let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        // Layering: serialize the base, splice the file's tables over it, deserialize.
+        let mut merged: toml::Table = toml::Table::try_from(&base).context("serializing defaults")?;
+        let over: toml::Table = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        merge_tables(&mut merged, over);
+        merged.try_into().with_context(|| format!("invalid {}", path.display()))
+    }
+
+    pub fn to_toml(&self) -> String {
+        toml::to_string_pretty(self).expect("config serializes")
+    }
+}
+
+fn merge_tables(base: &mut toml::Table, over: toml::Table) {
+    for (k, v) in over {
+        match (base.get_mut(&k), v) {
+            (Some(toml::Value::Table(b)), toml::Value::Table(o)) => merge_tables(b, o),
+            (_, v) => {
+                base.insert(k, v);
+            }
+        }
+    }
+}
+
+fn strings(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+// ---------- discover ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Discover {
+    /// Gitignore-style globs dropped from the walk entirely (`art/**`, `scripts/*.py`).
+    pub exclude: Vec<String>,
+    /// Any path component in this list marks the file Vendored.
+    pub vendor_dirs: Vec<String>,
+    /// Any path component in this list marks the file Test.
+    pub test_dirs: Vec<String>,
+    /// Any path component in this list marks the file Data.
+    pub data_dirs: Vec<String>,
+    /// Any path component in this list marks the file Generated.
+    pub generated_dirs: Vec<String>,
+    /// File-stem prefixes that mark a Test file (`test_x.py`).
+    pub test_stem_prefixes: Vec<String>,
+    /// File-stem suffixes that mark a Test file (`x_test.go`, `x.spec.ts`).
+    pub test_stem_suffixes: Vec<String>,
+    /// Exact stems that are Test files.
+    pub test_stems: Vec<String>,
+    /// Stem substrings that mark a Data file.
+    pub data_stem_contains: Vec<String>,
+    /// Lower-cased phrases in the first `generated_marker_lines` lines that mark Generated.
+    pub generated_markers: Vec<String>,
+    pub generated_marker_lines: usize,
+    /// A file this long or longer with a control-flow line share below
+    /// `data_max_logic_density` is Data, not Source.
+    pub data_min_lines: usize,
+    pub data_max_logic_density: f64,
+}
+
+impl Default for Discover {
+    fn default() -> Self {
+        Self {
+            exclude: vec![],
+            vendor_dirs: strings(&[
+                "node_modules", "vendor", "third_party", "thirdparty", "dist", "build", "target",
+                ".venv", "venv", "site-packages", "__pycache__", ".git",
+            ]),
+            test_dirs: strings(&["test", "tests", "__tests__", "e2e", "spec", "specs", "testing"]),
+            data_dirs: strings(&["fixtures", "fixture", "snapshots", "__snapshots__", "testdata"]),
+            generated_dirs: strings(&["migrations", "generated", "__generated__", "gen"]),
+            test_stem_prefixes: strings(&["test_"]),
+            test_stem_suffixes: strings(&["_test", ".test", ".spec", ".snapshots", "Probes"]),
+            test_stems: strings(&["conftest"]),
+            data_stem_contains: strings(&["fixture"]),
+            generated_markers: strings(&[
+                "@generated", "do not edit", "auto-generated", "automatically generated", "generated by",
+            ]),
+            generated_marker_lines: 8,
+            data_min_lines: 150,
+            data_max_logic_density: 0.04,
+        }
+    }
+}
+
+// ---------- history ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct History {
+    /// `git log --since` window.
+    pub since: String,
+    /// Whole words that make a commit subject a fix.
+    pub fix_words: Vec<String>,
+    /// Commits touching more files than this are mass edits: no co-change evidence.
+    pub max_cochange_commit_size: usize,
+    /// A co-change pair needs at least this many shared commits…
+    pub min_cochange_together: usize,
+    /// …and together / min(commits_a, commits_b) at least this.
+    pub min_cochange_strength: f64,
+}
+
+impl Default for History {
+    fn default() -> Self {
+        Self {
+            since: "6 months ago".into(),
+            fix_words: strings(&[
+                "fix", "fixes", "fixed", "fixing", "bugfix", "bugfixes", "hotfix", "hotfixes",
+                "bug", "bugs", "buggy", "regression", "regressions", "regress", "regressed",
+                "broke", "broken", "crash", "crashes", "crashed", "crashing",
+                "repair", "repairs", "repaired", "correct", "corrects", "corrected", "correction",
+                "patch", "patched", "wrong", "incorrect", "flake", "flaky", "flakey",
+            ]),
+            max_cochange_commit_size: 25,
+            min_cochange_together: 3,
+            min_cochange_strength: 0.4,
+        }
+    }
+}
+
+// ---------- metrics ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Metrics {
+    /// Functions above this cognitive complexity are "hard to follow".
+    pub cognitive_hard: u32,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self { cognitive_hard: 15 }
+    }
+}
+
+// ---------- deps ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Deps {
+    /// JS/TS import-prefix aliases: `"@/" = "src"` maps `@/x` to `<nearest src>/x`.
+    /// The target is looked for under every ancestor of the importing file.
+    pub js_aliases: BTreeMap<String, String>,
+}
+
+impl Default for Deps {
+    fn default() -> Self {
+        Self { js_aliases: [("@/".to_string(), "src".to_string()), ("~/".to_string(), "src".to_string())].into() }
+    }
+}
+
+// ---------- clones ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Clones {
+    /// Tokens per fingerprint window.
+    pub k: usize,
+    /// Winnowing window: one fingerprint kept per `w` consecutive k-grams.
+    pub w: usize,
+    /// Shortest run worth reporting, in tokens.
+    pub min_tokens: usize,
+    /// A fingerprint in more files than this is boilerplate.
+    pub max_files: usize,
+    /// Hard cap on positions per fingerprint.
+    pub max_locations: usize,
+}
+
+impl Default for Clones {
+    fn default() -> Self {
+        Self { k: 30, w: 20, min_tokens: 70, max_files: 40, max_locations: 2000 }
+    }
+}
+
+// ---------- report ----------
+
+/// Partial `[report.with_history]` tables are filled from the defaults by the
+/// table merge in `Config::load`, so every field is required here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Weights {
+    /// sqrt(churn × complexity). Zero without history.
+    pub hotspot: f64,
+    pub fixes: f64,
+    pub complexity: f64,
+    pub coupling: f64,
+    pub clones: f64,
+    pub size: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Report {
+    /// Weights when git history joined at least one file.
+    pub with_history: Weights,
+    /// Weights when it did not (`--no-history`, not a repo, subdirectory scan).
+    pub without_history: Weights,
+    /// Score multiplier for a file no test references.
+    pub no_tests_multiplier: f64,
+    /// complexity = this × pct(max cognitive) + (1 − this) × pct(total cognitive).
+    pub complexity_max_share: f64,
+    /// Coupling floor for a file inside an import cycle.
+    pub cycle_coupling: f64,
+    /// Reason thresholds.
+    pub reason_churn_percentile: f64,
+    pub reason_min_fix_commits: usize,
+    pub reason_fanin_percentile: f64,
+    pub reason_min_fan_in: usize,
+    pub reason_clone_ratio: f64,
+    pub reason_hidden_partners: usize,
+    pub reason_bus_factor_min_commits: usize,
+}
+
+impl Default for Report {
+    fn default() -> Self {
+        Self {
+            with_history: Weights { hotspot: 0.45, fixes: 0.15, complexity: 0.15, coupling: 0.10, clones: 0.10, size: 0.05 },
+            without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.55, coupling: 0.15, clones: 0.15, size: 0.15 },
+            no_tests_multiplier: 1.15,
+            complexity_max_share: 0.6,
+            cycle_coupling: 0.6,
+            reason_churn_percentile: 0.8,
+            reason_min_fix_commits: 2,
+            reason_fanin_percentile: 0.9,
+            reason_min_fan_in: 5,
+            reason_clone_ratio: 0.15,
+            reason_hidden_partners: 2,
+            reason_bus_factor_min_commits: 5,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_round_trip_through_toml() {
+        let d = Config::default();
+        let back: Config = toml::from_str(&d.to_toml()).unwrap();
+        assert_eq!(back, d);
+    }
+
+    #[test]
+    fn partial_file_overrides_only_what_it_names() {
+        let dir = std::env::temp_dir().join(format!("scry-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(FILE_NAME), "[clones]\nmin_tokens = 50\n\n[report.with_history]\nhotspot = 0.6\n\n[discover]\ntest_dirs = [\"qa\"]\n").unwrap();
+        let c = Config::load(&dir, None).unwrap();
+        assert_eq!(c.clones.min_tokens, 50);
+        assert_eq!(c.clones.k, 30);
+        assert_eq!(c.report.with_history.hotspot, 0.6);
+        assert_eq!(c.report.with_history.fixes, 0.15);
+        assert_eq!(c.discover.test_dirs, vec!["qa"]);
+        assert_eq!(c.discover.vendor_dirs, Discover::default().vendor_dirs);
+        // An explicit file layers on top of the root file.
+        let extra = dir.join("more.toml");
+        std::fs::write(&extra, "[clones]\nk = 40\n").unwrap();
+        let c2 = Config::load(&dir, Some(&extra)).unwrap();
+        assert_eq!((c2.clones.k, c2.clones.min_tokens), (40, 50));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn unknown_keys_are_errors() {
+        let dir = std::env::temp_dir().join(format!("scry-cfg-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(FILE_NAME), "[clones]\nmin_token = 50\n").unwrap();
+        let err = Config::load(&dir, None).unwrap_err();
+        assert!(format!("{err:#}").contains("min_token"), "{err:#}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

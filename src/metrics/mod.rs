@@ -7,6 +7,7 @@
 //! because it is what most people have an intuition for, but nesting-aware
 //! cognitive complexity is the one that predicts "hard to change safely".
 
+use crate::config::Metrics as Cfg;
 use crate::discover::SourceFile;
 use crate::lang::Language;
 use rayon::prelude::*;
@@ -37,8 +38,6 @@ pub struct FileMetrics {
     pub complex_functions: usize,
     pub parse_errors: bool,
 }
-
-pub const COGNITIVE_HARD: u32 = 15;
 
 /// Node-kind tables per grammar. One walker, three tables.
 struct Profile {
@@ -142,9 +141,9 @@ fn is_bound_callable(node: Node) -> bool {
     })
 }
 
-pub fn analyze_all(files: &[SourceFile]) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
+pub fn analyze_all(files: &[SourceFile], cfg: &Cfg) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
     let per_file: Vec<(FileMetrics, Vec<FunctionMetrics>)> =
-        files.par_iter().map(analyze_file).collect();
+        files.par_iter().map(|f| analyze_file(f, cfg)).collect();
     let mut file_metrics = Vec::with_capacity(per_file.len());
     let mut funcs = Vec::new();
     for (fm, fs) in per_file {
@@ -154,7 +153,7 @@ pub fn analyze_all(files: &[SourceFile]) -> (Vec<FileMetrics>, Vec<FunctionMetri
     (file_metrics, funcs)
 }
 
-pub fn analyze_file(file: &SourceFile) -> (FileMetrics, Vec<FunctionMetrics>) {
+pub fn analyze_file(file: &SourceFile, cfg: &Cfg) -> (FileMetrics, Vec<FunctionMetrics>) {
     let mut parser = file.lang.parser();
     let prof = profile(file.lang);
     let src = file.content.as_bytes();
@@ -171,7 +170,7 @@ pub fn analyze_file(file: &SourceFile) -> (FileMetrics, Vec<FunctionMetrics>) {
         total_cognitive: funcs.iter().map(|f| f.cognitive).sum(),
         max_cognitive: funcs.iter().map(|f| f.cognitive).max().unwrap_or(0),
         max_nesting: funcs.iter().map(|f| f.max_nesting).max().unwrap_or(0),
-        complex_functions: funcs.iter().filter(|f| f.cognitive > COGNITIVE_HARD).count(),
+        complex_functions: funcs.iter().filter(|f| f.cognitive > cfg.cognitive_hard).count(),
         parse_errors,
     };
     (fm, funcs)
@@ -407,7 +406,7 @@ def f(path):
 def kw(a, *, b, **kw):
     return a
 ";
-        let (_, fs) = analyze_file(&file("w.py", Language::Python, src));
+        let (_, fs) = analyze_file(&file("w.py", Language::Python, src), &Cfg::default());
         assert_eq!(fs[0].cognitive, 2, "{:?}", fs[0]); // except + for
         assert_eq!(fs[0].max_nesting, 1);
         assert_eq!(fs[1].params, 3);
@@ -424,7 +423,7 @@ export const Comp = React.forwardRef((props, ref) => { if (props.a) {} });
 describe('suite', () => { it('works', () => { if (1) {} }); });
 function sw(x: number) { switch (x) { case 1: return 1; case 2: return 2; default: return 0; } }
 ";
-        let (_, fs) = analyze_file(&file("r.ts", Language::TypeScript, src));
+        let (_, fs) = analyze_file(&file("r.ts", Language::TypeScript, src), &Cfg::default());
         let names: Vec<&str> = fs.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["app.post('/x')", "Comp", "describe('suite')", "sw"], "{fs:?}");
         assert_eq!(fs[0].cognitive, 5, "{:?}", fs[0]);
@@ -435,7 +434,7 @@ function sw(x: number) { switch (x) { case 1: return 1; case 2: return 2; defaul
     fn deep_expression_does_not_overflow() {
         let expr = std::iter::repeat_n("a", 60_000).collect::<Vec<_>>().join(" + ");
         let src = format!("export const s = {expr};\nfunction f() {{ return {expr}; }}\n");
-        let (fm, fs) = analyze_file(&file("deep.ts", Language::TypeScript, &src));
+        let (fm, fs) = analyze_file(&file("deep.ts", Language::TypeScript, &src), &Cfg::default());
         assert!(!fm.parse_errors);
         assert_eq!(fs.len(), 1);
     }
@@ -465,7 +464,7 @@ def f(a, b):
         pass
     return 1 if a else 2   # +1
 ";
-        let (_, fs) = analyze_file(&file("f.py", Language::Python, src));
+        let (_, fs) = analyze_file(&file("f.py", Language::Python, src), &Cfg::default());
         assert_eq!(fs.len(), 1);
         let f = &fs[0];
         assert_eq!(f.name, "f");
@@ -487,7 +486,7 @@ class K {
 }
 export const g = (x: number) => x && x;   // +1
 ";
-        let (_, fs) = analyze_file(&file("k.ts", Language::TypeScript, src));
+        let (_, fs) = analyze_file(&file("k.ts", Language::TypeScript, src), &Cfg::default());
         let names: Vec<&str> = fs.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["K.m", "cb", "g"], "{fs:?}");
         assert_eq!(fs[0].cognitive, 8, "{:?}", fs[0]);
@@ -509,7 +508,7 @@ fn f(a: Option<u8>) {
     for i in 0..3 { let c = |x| if x { 1 } else { 0 }; }  // for +1, closure nests: if +3, else +1
 }
 ";
-        let (_, fs) = analyze_file(&file("s.rs", Language::Rust, src));
+        let (_, fs) = analyze_file(&file("s.rs", Language::Rust, src), &Cfg::default());
         assert_eq!(fs[0].name, "S.m");
         assert_eq!(fs[0].cognitive, 5, "{:?}", fs[0]);
         assert_eq!(fs[0].params, 1);

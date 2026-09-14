@@ -13,3 +13,4 @@ code: [src/clones/**]
 - Per-file `clone_lines` is the union of all reported ranges touching the file; `clone_ratio` divides by total lines.
 - Pairs sort by tokens, then A file/line, then B file/line, so `--top` shows the same subset on every run.
 - Only Source files are compared. Tests and fixtures duplicate by design.
+- `k`, `w`, `min_tokens`, `max_files` and `max_locations` are `[clones]` settings in `scry.toml`.

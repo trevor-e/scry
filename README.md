@@ -30,6 +30,36 @@ and missing tests. Every ranked file carries the reasons it ranked, with
 function names and line ranges. Co-change pairs with no import between them
 ("hidden coupling") are called out separately: no static tool can see those.
 
+## Configuration
+
+Every threshold, weight and name list is a setting. Defaults are built in; a
+`scry.toml` at the scanned root overrides what it names; `--config <file>`
+layers on top of that; explicit flags such as `--since` win over both.
+
+```
+scry config <repo> > scry.toml   # dump the effective settings, edit what you need
+```
+
+Sections match the passes: `[discover]`, `[history]`, `[metrics]`, `[deps]`,
+`[clones]`, `[report]`. A file only has to name what it changes:
+
+```toml
+[discover]
+exclude = ["art/**", "scripts/*.py"]     # dropped from the walk entirely
+test_dirs = ["test", "tests", "qa"]      # replaces the default list
+
+[history]
+fix_words = ["fix", "fixes", "fixed", "bug", "regression"]
+
+[clones]
+min_tokens = 100
+
+[report.with_history]
+hotspot = 0.5                            # other weights keep their defaults
+```
+
+Unknown keys are errors, so a typo cannot silently fall back to a default.
+
 ## Build
 
 ```

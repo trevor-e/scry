@@ -5,9 +5,10 @@
 //! a 2,000-line map fixture is not a refactoring candidate, and generated API types
 //! churn on every schema change without anyone touching them by hand.
 
+use crate::config::Discover as Cfg;
 use crate::lang::Language;
 use anyhow::{Context, Result};
-use ignore::WalkBuilder;
+use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -48,24 +49,22 @@ impl SourceFile {
     }
 }
 
-const VENDOR_DIRS: &[&str] = &[
-    "node_modules", "vendor", "third_party", "thirdparty", "dist", "build", "target", ".venv",
-    "venv", "site-packages", "__pycache__", ".git",
-];
-pub const TEST_DIRS: &[&str] = &["test", "tests", "__tests__", "e2e", "spec", "specs", "testing"];
-const DATA_DIRS: &[&str] = &["fixtures", "fixture", "snapshots", "__snapshots__", "testdata"];
-const GENERATED_DIRS: &[&str] = &["migrations", "generated", "__generated__", "gen"];
-
 /// Keywords whose presence marks a line as control flow rather than data.
 const LOGIC_MARKERS: &[&str] = &[
     "if ", "if(", "for ", "for(", "while ", "while(", "return", "def ", "fn ", "function",
     "=>", "class ", "match ", "switch", "try", "elif ", "else", "yield", "await ", "impl ",
 ];
 
-pub fn walk(root: &Path) -> Result<Vec<SourceFile>> {
+pub fn walk(root: &Path, cfg: &Cfg) -> Result<Vec<SourceFile>> {
     let root = root.canonicalize().with_context(|| format!("cannot open {}", root.display()))?;
+    let mut overrides = OverrideBuilder::new(&root);
+    for glob in &cfg.exclude {
+        // Override globs are whitelist by default; a leading `!` makes them excludes.
+        overrides.add(&format!("!{glob}")).with_context(|| format!("bad exclude glob {glob:?}"))?;
+    }
+    let overrides = overrides.build().context("building exclude globs")?;
     let mut paths: Vec<PathBuf> = Vec::new();
-    for entry in WalkBuilder::new(&root).hidden(true).git_ignore(true).build() {
+    for entry in WalkBuilder::new(&root).hidden(true).git_ignore(true).overrides(overrides).build() {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
@@ -80,13 +79,13 @@ pub fn walk(root: &Path) -> Result<Vec<SourceFile>> {
 
     let mut files: Vec<SourceFile> = paths
         .par_iter()
-        .filter_map(|p| load(&root, p))
+        .filter_map(|p| load(&root, p, cfg))
         .collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
 }
 
-fn load(root: &Path, path: &Path) -> Option<SourceFile> {
+fn load(root: &Path, path: &Path, cfg: &Cfg) -> Option<SourceFile> {
     let lang = Language::from_path(path)?;
     let bytes = std::fs::read(path).ok()?;
     let content = String::from_utf8(bytes).ok()?; // binary or non-UTF8: skip
@@ -96,51 +95,44 @@ fn load(root: &Path, path: &Path) -> Option<SourceFile> {
         .to_string_lossy()
         .replace('\\', "/");
     let lines = content.lines().count();
-    let kind = classify(&rel, &content, lines);
+    let kind = classify(&rel, &content, lines, cfg);
     Some(SourceFile { path: rel, lang, kind, lines, bytes: content.len(), content })
 }
 
-pub fn classify(rel: &str, content: &str, lines: usize) -> FileKind {
+pub fn classify(rel: &str, content: &str, lines: usize, cfg: &Cfg) -> FileKind {
     let parts: Vec<&str> = rel.split('/').collect();
     let file = parts.last().copied().unwrap_or("");
     let dirs = &parts[..parts.len().saturating_sub(1)];
     let stem = file.rsplit_once('.').map(|(s, _)| s).unwrap_or(file);
     let lower = file.to_ascii_lowercase();
+    let in_dir = |names: &[String]| dirs.iter().any(|d| names.iter().any(|n| n == d));
 
-    if dirs.iter().any(|d| VENDOR_DIRS.contains(d)) || lower.ends_with(".min.js") {
+    if in_dir(&cfg.vendor_dirs) || lower.ends_with(".min.js") {
         return FileKind::Vendored;
     }
-    if lower.ends_with(".d.ts") || dirs.iter().any(|d| GENERATED_DIRS.contains(d)) || looks_generated(content) {
+    if lower.ends_with(".d.ts") || in_dir(&cfg.generated_dirs) || looks_generated(content, cfg) {
         return FileKind::Generated;
     }
-    if dirs.iter().any(|d| TEST_DIRS.contains(d))
-        || stem.starts_with("test_")
-        || stem.ends_with("_test")
-        || stem.ends_with(".test")
-        || stem.ends_with(".spec")
-        || stem == "conftest"
-        || stem.ends_with(".snapshots")
-        || stem.ends_with("Probes")
+    if in_dir(&cfg.test_dirs)
+        || cfg.test_stem_prefixes.iter().any(|p| stem.starts_with(p.as_str()))
+        || cfg.test_stem_suffixes.iter().any(|x| stem.ends_with(x.as_str()))
+        || cfg.test_stems.iter().any(|t| t == stem)
     {
         return FileKind::Test;
     }
-    if dirs.iter().any(|d| DATA_DIRS.contains(d)) || stem.contains("fixture") {
+    if in_dir(&cfg.data_dirs) || cfg.data_stem_contains.iter().any(|d| stem.contains(d.as_str())) {
         return FileKind::Data;
     }
-    if lines >= 150 && logic_density(content) < 0.04 {
+    if lines >= cfg.data_min_lines && logic_density(content) < cfg.data_max_logic_density {
         return FileKind::Data;
     }
     FileKind::Source
 }
 
-fn looks_generated(content: &str) -> bool {
-    content.lines().take(8).any(|l| {
+fn looks_generated(content: &str, cfg: &Cfg) -> bool {
+    content.lines().take(cfg.generated_marker_lines).any(|l| {
         let l = l.to_ascii_lowercase();
-        l.contains("@generated")
-            || l.contains("do not edit")
-            || l.contains("auto-generated")
-            || l.contains("automatically generated")
-            || l.contains("generated by")
+        cfg.generated_markers.iter().any(|m| l.contains(m.as_str()))
     })
 }
 
@@ -168,19 +160,50 @@ mod tests {
 
     #[test]
     fn classifies_by_path() {
-        assert_eq!(classify("backend/tests/test_x.py", "", 1), FileKind::Test);
-        assert_eq!(classify("frontend/src/a.test.tsx", "", 1), FileKind::Test);
-        assert_eq!(classify("node_modules/x/index.js", "", 1), FileKind::Vendored);
-        assert_eq!(classify("app/migrations/0001_init.py", "", 1), FileKind::Generated);
-        assert_eq!(classify("src/types/api.ts", "/* eslint-disable */\n// This file is auto-generated\n", 2), FileKind::Generated);
-        assert_eq!(classify("src/heroes/fixtures.ts", "", 1), FileKind::Data);
-        assert_eq!(classify("src/engine/combat.py", "def f():\n    return 1\n", 2), FileKind::Source);
+        let c = Cfg::default();
+        assert_eq!(classify("backend/tests/test_x.py", "", 1, &c), FileKind::Test);
+        assert_eq!(classify("frontend/src/a.test.tsx", "", 1, &c), FileKind::Test);
+        assert_eq!(classify("node_modules/x/index.js", "", 1, &c), FileKind::Vendored);
+        assert_eq!(classify("app/migrations/0001_init.py", "", 1, &c), FileKind::Generated);
+        assert_eq!(classify("src/types/api.ts", "/* eslint-disable */\n// This file is auto-generated\n", 2, &c), FileKind::Generated);
+        assert_eq!(classify("src/heroes/fixtures.ts", "", 1, &c), FileKind::Data);
+        assert_eq!(classify("src/engine/combat.py", "def f():\n    return 1\n", 2, &c), FileKind::Source);
+    }
+
+    #[test]
+    fn config_changes_classification() {
+        let mut c = Cfg::default();
+        c.test_dirs = vec!["qa".into()];
+        c.vendor_dirs.push("extern".into());
+        assert_eq!(classify("qa/x.py", "", 1, &c), FileKind::Test);
+        assert_eq!(classify("tests/x.py", "", 1, &c), FileKind::Source);
+        assert_eq!(classify("extern/x.py", "", 1, &c), FileKind::Vendored);
+        c.data_min_lines = 10;
+        c.data_max_logic_density = 0.5;
+        assert_eq!(classify("a.py", &"x = 1\n".repeat(12), 12, &c), FileKind::Data);
     }
 
     #[test]
     fn literal_tables_are_data() {
         let table: String = (0..300).map(|i| format!("  {{ x: {i}, y: {i}, tile: \"grass\" }},\n")).collect();
         let content = format!("export const MAP = [\n{table}];\n");
-        assert_eq!(classify("src/dev/bigMap.ts", &content, 302), FileKind::Data);
+        assert_eq!(classify("src/dev/bigMap.ts", &content, 302, &Cfg::default()), FileKind::Data);
+    }
+
+    #[test]
+    fn exclude_globs_drop_files_from_the_walk() {
+        let dir = std::env::temp_dir().join(format!("scry-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("art")).unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("art/gen.py"), "x = 1\n").unwrap();
+        std::fs::write(dir.join("src/a.py"), "x = 1\n").unwrap();
+        std::fs::write(dir.join("src/b_old.py"), "x = 1\n").unwrap();
+        let mut c = Cfg::default();
+        c.exclude = vec!["art/**".into(), "*_old.py".into()];
+        let files = walk(&dir, &c).unwrap();
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["src/a.py"]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

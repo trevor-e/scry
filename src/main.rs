@@ -1,4 +1,5 @@
 mod clones;
+mod config;
 mod deps;
 mod discover;
 mod history;
@@ -14,6 +15,9 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "scry", version, about = "Find the parts of a codebase most likely to need refactoring or to hide bugs")]
 struct Cli {
+    /// Extra config file, layered over <root>/scry.toml (see `scry config`)
+    #[arg(long, global = true, value_name = "FILE")]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -31,9 +35,9 @@ enum Cmd {
         /// Entries per section
         #[arg(long, default_value_t = 15)]
         top: usize,
-        /// Git --since window for churn
-        #[arg(long, default_value = "6 months ago")]
-        since: String,
+        /// Git --since window for churn (overrides [history].since)
+        #[arg(long)]
+        since: Option<String>,
         /// Skip git history (rank on static signals only)
         #[arg(long)]
         no_history: bool,
@@ -58,9 +62,9 @@ enum Cmd {
         json: bool,
         #[arg(long, default_value_t = 20)]
         top: usize,
-        /// Git --since window
-        #[arg(long, default_value = "6 months ago")]
-        since: String,
+        /// Git --since window (overrides [history].since)
+        #[arg(long)]
+        since: Option<String>,
     },
     /// Near-exact clone pairs across source files
     Clones {
@@ -89,6 +93,11 @@ enum Cmd {
         #[arg(long, default_value_t = 25)]
         top: usize,
     },
+    /// Print the effective configuration as TOML (defaults + <root>/scry.toml + --config)
+    Config {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Dump the tree-sitter S-expression of one file (debugging aid)
     Ast {
         path: PathBuf,
@@ -100,16 +109,28 @@ enum Cmd {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let root = match &cli.cmd {
+        Cmd::Scan { path, .. } | Cmd::Files { path, .. } | Cmd::History { path, .. } | Cmd::Clones { path, .. }
+        | Cmd::Deps { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
+        Cmd::Ast { .. } => PathBuf::from("."),
+    };
+    let mut cfg = config::Config::load(&root, cli.config.as_deref())?;
     match cli.cmd {
+        Cmd::Config { .. } => {
+            print!("{}", cfg.to_toml());
+        }
         Cmd::Scan { path, json, top, since, no_history } => {
-            let files = discover::walk(&path)?;
+            if let Some(s) = since {
+                cfg.history.since = s;
+            }
+            let files = discover::walk(&path, &cfg.discover)?;
             let source: Vec<discover::SourceFile> =
                 files.iter().filter(|f| f.kind == discover::FileKind::Source).cloned().collect();
             let tracked: std::collections::HashSet<String> = source.iter().map(|f| f.path.clone()).collect();
             let history = if no_history {
                 None
             } else {
-                match history::collect(&path, &since, &tracked) {
+                match history::collect(&path, &cfg.history, &tracked) {
                     Ok(h) => {
                         if h.commits_scanned > 0 && h.files.is_empty() {
                             eprintln!("warning: {} commits scanned but none touched a discovered source file; ranking on static signals", h.commits_scanned);
@@ -122,9 +143,9 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let (file_metrics, functions) = metrics::analyze_all(&source);
-            let graph = deps::build(&files);
-            let clone_report = clones::detect(&source);
+            let (file_metrics, functions) = metrics::analyze_all(&source, &cfg.metrics);
+            let graph = deps::build(&files, &cfg.deps);
+            let clone_report = clones::detect(&source, &cfg.clones);
             let report = report::build(
                 report::Inputs {
                     root: path.canonicalize()?.display().to_string(),
@@ -134,8 +155,11 @@ fn main() -> Result<()> {
                     functions: &functions,
                     deps: &graph,
                     clones: &clone_report,
+                    cognitive_hard: cfg.metrics.cognitive_hard,
                 },
                 top,
+                &cfg.report,
+                &cfg.discover.test_dirs,
             );
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -144,7 +168,7 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Files { path, json, top } => {
-            let files = discover::walk(&path)?;
+            let files = discover::walk(&path, &cfg.discover)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&files)?);
                 return Ok(());
@@ -168,13 +192,16 @@ fn main() -> Result<()> {
             }
         }
         Cmd::History { path, json, top, since } => {
-            let files = discover::walk(&path)?;
+            if let Some(s) = since {
+                cfg.history.since = s;
+            }
+            let files = discover::walk(&path, &cfg.discover)?;
             let tracked: std::collections::HashSet<String> = files
                 .iter()
                 .filter(|f| f.kind == discover::FileKind::Source)
                 .map(|f| f.path.clone())
                 .collect();
-            let hist = history::collect(&path, &since, &tracked)?;
+            let hist = history::collect(&path, &cfg.history, &tracked)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&hist)?);
                 return Ok(());
@@ -192,15 +219,15 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Clones { path, json, top } => {
-            let files = discover::walk(&path)?;
+            let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
                 files.into_iter().filter(|f| f.kind == discover::FileKind::Source).collect();
-            let r = clones::detect(&src);
+            let r = clones::detect(&src, &cfg.clones);
             if json {
                 println!("{}", serde_json::to_string_pretty(&r)?);
                 return Ok(());
             }
-            println!("{} clone pairs (>= {} tokens) across {} files\n", r.pairs.len(), clones::MIN_TOKENS, r.files.len());
+            println!("{} clone pairs (>= {} tokens) across {} files\n", r.pairs.len(), cfg.clones.min_tokens, r.files.len());
             for p in r.pairs.iter().take(top) {
                 println!("{:>5} tok  {}:{}-{}  <->  {}:{}-{}", p.tokens, p.a.file, p.a.start_line, p.a.end_line, p.b.file, p.b.start_line, p.b.end_line);
             }
@@ -212,8 +239,8 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Deps { path, json, top } => {
-            let files = discover::walk(&path)?;
-            let g = deps::build(&files);
+            let files = discover::walk(&path, &cfg.discover)?;
+            let g = deps::build(&files, &cfg.deps);
             if json {
                 println!("{}", serde_json::to_string_pretty(&g)?);
                 return Ok(());
@@ -235,10 +262,10 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Metrics { path, json, top } => {
-            let files = discover::walk(&path)?;
+            let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
                 files.into_iter().filter(|f| f.kind == discover::FileKind::Source).collect();
-            let (file_metrics, mut funcs) = metrics::analyze_all(&src);
+            let (file_metrics, mut funcs) = metrics::analyze_all(&src, &cfg.metrics);
             if json {
                 println!("{}", serde_json::to_string_pretty(&serde_json::json!({"files": file_metrics, "functions": funcs}))?);
                 return Ok(());
@@ -246,8 +273,8 @@ fn main() -> Result<()> {
             funcs.sort_by_key(|f| std::cmp::Reverse((f.cognitive, f.lines)));
             println!("{} functions in {} files; {} with cognitive > {}\n",
                 funcs.len(), file_metrics.len(),
-                funcs.iter().filter(|f| f.cognitive > metrics::COGNITIVE_HARD).count(),
-                metrics::COGNITIVE_HARD);
+                funcs.iter().filter(|f| f.cognitive > cfg.metrics.cognitive_hard).count(),
+                cfg.metrics.cognitive_hard);
             println!("{:>4} {:>4} {:>4} {:>5} {:>3}  location", "cog", "cyc", "nest", "lines", "par");
             for f in funcs.iter().take(top) {
                 println!("{:>4} {:>4} {:>4} {:>5} {:>3}  {}:{}  {}", f.cognitive, f.cyclomatic, f.max_nesting, f.lines, f.params, f.file, f.start_line, f.name);
