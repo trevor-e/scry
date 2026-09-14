@@ -134,7 +134,8 @@ pub struct History {
     pub since: String,
     /// Whole words that make a commit subject a fix.
     pub fix_words: Vec<String>,
-    /// Commits touching more files than this are mass edits: no co-change evidence.
+    /// Commits touching more files than this are mass edits: no co-change
+    /// evidence, and not counted as fix commits whatever their subject says.
     pub max_cochange_commit_size: usize,
     /// A co-change pair needs at least this many shared commits…
     pub min_cochange_together: usize,

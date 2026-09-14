@@ -290,7 +290,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 }
             }
             if !s.has_tests {
-                reasons.push("no test file references it".to_string());
+                // Import-based, not coverage: a parent's spec may still exercise it.
+                reasons.push("no test file imports it".to_string());
             }
             if s.authors == 1 && s.commits >= cfg.reason_bus_factor_min_commits {
                 reasons.push("single author over the window (bus factor 1)".to_string());
