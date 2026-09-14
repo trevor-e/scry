@@ -162,7 +162,6 @@ pub fn analyze_all(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg) -> (Vec<Fi
 
 pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetrics, Vec<FunctionMetrics>) {
     let mut parser = file.lang.parser();
-    let prof = profile(file.lang);
     let src = file.content.as_bytes();
     let mut funcs = Vec::new();
     let mut parse_errors = false;
@@ -173,7 +172,7 @@ pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetr
         if tests.inline_modules && file.lang == Language::Rust {
             test_regions = regions::test_regions(root, src);
         }
-        collect_units(root, prof, src, &file.path, &test_regions, &mut funcs);
+        collect_units(root, file.lang, src, &file.path, &test_regions, &mut funcs);
     }
     // File totals describe the production code only; tagged units stay in the list.
     let source = || funcs.iter().filter(|f| !f.in_test);
@@ -191,7 +190,12 @@ pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetr
     (fm, funcs)
 }
 
-fn collect_units(root: Node, prof: &Profile, src: &[u8], path: &str, test_regions: &[TestRegion], out: &mut Vec<FunctionMetrics>) {
+/// Every node reported as a unit, in document order: the grammar's unit kinds, with arrow
+/// functions and function expressions only when bound to a name or enclosed by no unit. The
+/// mentions pass uses the same rule to split a Test file into test units.
+pub fn unit_nodes(root: Node<'_>, lang: Language) -> Vec<Node<'_>> {
+    let prof = profile(lang);
+    let mut out = Vec::new();
     // Explicit stack: source files can nest expressions thousands deep.
     // (node, inside a reported unit already)
     let mut stack: Vec<(Node, bool)> = vec![(root, false)];
@@ -205,15 +209,23 @@ fn collect_units(root: Node, prof: &Profile, src: &[u8], path: &str, test_region
                 || is_bound_callable(node)
                 || !in_unit);
         if is_unit {
-            let mut m = measure(node, prof, src, path);
-            m.in_test = regions::contains(test_regions, node.start_byte());
-            out.push(m);
+            out.push(node);
         }
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
         for child in children.into_iter().rev() {
             stack.push((child, in_unit || is_unit));
         }
+    }
+    out
+}
+
+fn collect_units(root: Node, lang: Language, src: &[u8], path: &str, test_regions: &[TestRegion], out: &mut Vec<FunctionMetrics>) {
+    let prof = profile(lang);
+    for node in unit_nodes(root, lang) {
+        let mut m = measure(node, prof, src, path);
+        m.in_test = regions::contains(test_regions, node.start_byte());
+        out.push(m);
     }
 }
 
