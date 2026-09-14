@@ -207,11 +207,55 @@ pub struct Clones {
     pub max_files: usize,
     /// Hard cap on positions per fingerprint.
     pub max_locations: usize,
+    /// Drop a same-file run whose two ranges resolve to one smallest covering node (or nested
+    /// ones): the first half of a uniform `match` or array matching its second half.
+    pub drop_same_container_self_match: bool,
+    /// A run's range resolves to the smallest node spanning it, then down into a child spanning
+    /// at least this share of its bytes: a run that spills a few tokens past its own item still
+    /// resolves to that item, while the two halves of one container resolve to the container.
+    pub dominant_child_share: f64,
+    /// A run side is a table when its container has at least this many consecutive same-kind
+    /// named children under the run…
+    pub table_min_entries: usize,
+    /// …the dominant entry shape (names, paths and literals collapsed) covers at least this
+    /// share of them…
+    pub table_min_dominant_shape: f64,
+    /// …no entry has more named nodes than this (a loose safety cap)…
+    pub table_max_entry_nodes: usize,
+    /// …and no entry contains one of these node kinds, per grammar (`rust`, `typescript`,
+    /// `python`). Rust `try_expression` (`?`) must not be listed: it is in every dispatch arm.
+    pub table_control_kinds: BTreeMap<String, Vec<String>>,
+    /// Weight of table clone lines in `clone_ratio`: `(logic + table_weight x table) / lines`.
+    /// 1.0 ranks parallel maps that must drift together; 0.25 dampens them.
+    pub table_weight: f64,
+    /// Print table pairs under a TABLES sub-heading of CLONES instead of inline.
+    pub list_tables_separately: bool,
 }
 
 impl Default for Clones {
     fn default() -> Self {
-        Self { k: 30, w: 20, min_tokens: 70, max_files: 40, max_locations: 2000 }
+        Self {
+            k: 30,
+            w: 20,
+            min_tokens: 70,
+            max_files: 40,
+            max_locations: 2000,
+            drop_same_container_self_match: true,
+            dominant_child_share: 0.9,
+            table_min_entries: 6,
+            table_min_dominant_shape: 0.6,
+            table_max_entry_nodes: 40,
+            table_control_kinds: [
+                ("rust", strings(&["if_expression", "match_expression", "for_expression", "while_expression", "loop_expression", "closure_expression"])),
+                ("typescript", strings(&["if_statement", "switch_statement", "for_statement", "for_in_statement", "while_statement", "do_statement", "try_statement", "ternary_expression", "arrow_function", "function_expression"])),
+                ("python", strings(&["if_statement", "for_statement", "while_statement", "try_statement", "match_statement", "with_statement", "conditional_expression", "lambda", "list_comprehension", "dictionary_comprehension", "set_comprehension", "generator_expression"])),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+            table_weight: 1.0,
+            list_tables_separately: true,
+        }
     }
 }
 

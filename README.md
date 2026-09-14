@@ -21,7 +21,7 @@ language is one grammar crate plus a node-kind table.
 | history | churn, fix commits, authors, co-change pairs (from `git log`) | the strongest defect predictor is *how often a thing changes* |
 | metrics | cognitive + cyclomatic complexity, nesting, length, params per function | nesting-aware complexity predicts "hard to change safely" |
 | deps | import graph, SCC cycles (file and directory), fan-in/out, instability | tangles and hubs are where a change fans out |
-| clones | near-exact duplicates via normalised-token winnowing | two copies of a rule drift into two rules |
+| clones | near-exact duplicates via normalised-token winnowing; a uniform table (dispatch `match`, registry array, map literal) matching its own second half is dropped, and pairs whose both sides are runs of uniform entries are tagged `table` and listed under a TABLES sub-heading with the logic/table split in the file's reason | two copies of a rule drift into two rules; two parallel maps over one enum must drift together, but they are not duplicated logic |
 | regions | inline test regions in Rust source (`#[cfg(test)]` mods and items, `#[test]` fns) | a 2,300-line file that is half `mod tests` is a 1,300-line file; clones and complexity inside tests are not production findings |
 | report | percentile-normalised composite, reasons per file | one ranked list, no thresholds to tune per language |
 
@@ -54,6 +54,7 @@ fix_words = ["fix", "fixes", "fixed", "bug", "regression"]
 
 [clones]
 min_tokens = 100
+table_weight = 0.25                      # dampen table pairs in clone_ratio (default 1.0)
 
 [report.with_history]
 hotspot = 0.5                            # other weights keep their defaults

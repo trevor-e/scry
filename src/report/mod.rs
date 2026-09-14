@@ -5,7 +5,7 @@
 //! is percentile-normalised within the repo so no thresholds need tuning per
 //! language, and every ranked file carries the reasons it ranked, in words.
 
-use crate::clones::{CloneReport, ClonePair};
+use crate::clones::{CloneKind, CloneReport, ClonePair, TableRef};
 use crate::config::{Report as Cfg, Tests as TestsCfg, Weights};
 use crate::deps::{Cycle, DepGraph};
 use crate::discover::{FileKind, SourceFile};
@@ -31,7 +31,12 @@ pub struct Signals {
     pub fan_in: usize,
     pub fan_out: usize,
     pub in_cycle: bool,
+    /// `logic_clone_lines + table_clone_lines`.
     pub clone_lines: usize,
+    pub logic_clone_lines: usize,
+    /// Cloned lines covered only by table pairs (uniform sibling entries, not duplicated logic).
+    pub table_clone_lines: usize,
+    /// `(logic + [clones].table_weight x table) / (lines - inline_test_lines)`.
     pub clone_ratio: f64,
     pub has_tests: bool,
 }
@@ -87,7 +92,10 @@ pub struct Report {
     pub dir_cycles: Vec<Cycle>,
     pub file_cycles: Vec<Cycle>,
     pub hidden_coupling: Vec<HiddenCoupling>,
+    /// Top pairs; only the `logic` ones when tables are listed separately.
     pub clones: Vec<ClonePair>,
+    /// Top `table` pairs when `[clones].list_tables_separately`; empty otherwise (they sit in `clones`).
+    pub tables: Vec<ClonePair>,
     pub directories: Vec<DirSummary>,
 }
 
@@ -101,6 +109,49 @@ pub struct Inputs<'a> {
     pub clones: &'a CloneReport,
     pub cognitive_hard: u32,
     pub tests: &'a TestsCfg,
+    /// `[clones].list_tables_separately`.
+    pub list_tables_separately: bool,
+}
+
+/// The clone reason. Plain when every cloned line is logic; otherwise the split in whole
+/// percent, naming each table: `17% duplicated lines were 11% registry table (CHECKS, lines
+/// 91-174) and 6% logic`.
+fn clone_reason(s: &Signals, tables: &[TableRef]) -> String {
+    if s.table_clone_lines == 0 {
+        return format!("{:.0}% of its lines are duplicated elsewhere ({} lines)", s.clone_ratio * 100.0, s.clone_lines);
+    }
+    let denom = s.lines.saturating_sub(s.inline_test_lines).max(1) as f64;
+    let pct = |n: usize| (100.0 * n as f64 / denom).round() as usize;
+    let (t, l) = (pct(s.table_clone_lines), pct(s.logic_clone_lines));
+    let desc = match tables.first().map(|t| t.container_kind.as_str()) {
+        Some(k) if tables.iter().all(|t| t.container_kind == k) => table_desc(k),
+        _ => "table",
+    };
+    let named: Vec<String> = tables
+        .iter()
+        .map(|t| match &t.symbol {
+            Some(sym) => format!("{sym}, lines {}-{}", t.start_line, t.end_line),
+            None => format!("lines {}-{}", t.start_line, t.end_line),
+        })
+        .collect();
+    if l == 0 {
+        format!("{}% duplicated lines were all {desc} ({}), no logic", t + l, named.join("; "))
+    } else {
+        format!("{}% duplicated lines were {t}% {desc} ({}) and {l}% logic", t + l, named.join("; "))
+    }
+}
+
+/// What a table container reads as in a reason.
+fn table_desc(container_kind: &str) -> &'static str {
+    match container_kind {
+        "match_block" | "switch_body" => "dispatch table",
+        "array_expression" | "array" | "list" | "tuple" => "registry table",
+        "enum_variant_list" | "enum_body" => "enum table",
+        "object" | "dictionary" | "field_initializer_list" => "map table",
+        "field_declaration_list" | "interface_body" => "field table",
+        // Import/mod runs under a file root, method runs in an impl body, statement runs.
+        _ => "uniform run",
+    }
 }
 
 /// Percentile rank in [0,1]: share of other values strictly below this one.
@@ -219,6 +270,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 fan_out: d.map_or(0, |d| d.fan_out),
                 in_cycle: d.is_some_and(|d| d.in_cycle),
                 clone_lines: c.map_or(0, |c| c.clone_lines),
+                logic_clone_lines: c.map_or(0, |c| c.logic_clone_lines),
+                table_clone_lines: c.map_or(0, |c| c.table_clone_lines),
                 clone_ratio: c.map_or(0.0, |c| c.clone_ratio),
                 has_tests: d.is_some_and(|d| d.test_refs > 0) || stem_tested(&tstems, f) || m.is_some_and(|m| !m.test_regions.is_empty()),
             }
@@ -308,7 +361,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 reasons.push(format!("imported by {} files: a change here fans out", s.fan_in));
             }
             if s.clone_ratio >= cfg.reason_clone_ratio {
-                reasons.push(format!("{:.0}% of its lines are duplicated elsewhere ({} lines)", s.clone_ratio * 100.0, s.clone_lines));
+                reasons.push(clone_reason(s, inp.clones.files.get(&f.path).map_or(&[], |c| c.tables.as_slice())));
             }
             if let Some(hs) = hidden_by_file.get(f.path.as_str()) {
                 for h in hs.iter().take(cfg.reason_hidden_partners) {
@@ -375,8 +428,9 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
         hotspots,
         dir_cycles: inp.deps.dir_cycles.clone(),
         file_cycles: inp.deps.file_cycles.clone(),
+        tables: if inp.list_tables_separately { inp.clones.pairs.iter().filter(|p| p.kind == CloneKind::Table).take(top).cloned().collect() } else { Vec::new() },
         hidden_coupling: hidden,
-        clones: inp.clones.pairs.iter().take(top).cloned().collect(),
+        clones: inp.clones.pairs.iter().filter(|p| !inp.list_tables_separately || p.kind == CloneKind::Logic).take(top).cloned().collect(),
         directories: directories.into_iter().take(top).collect(),
     }
 }
@@ -426,7 +480,7 @@ mod tests {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 1.0 },
             ..Cfg::default()
         };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true }, 10, &size_only, &td());
         let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["b.rs", "a.rs"], "{r:?}");
         let a = &r.hotspots[1];
@@ -443,9 +497,41 @@ mod tests {
         assert!(text.contains("b.rs  (1500 lines)"), "{text}");
         // Below the ratio knob the note is absent; the region still counts as tests.
         let strict = TestsCfg { report_inline_ratio_above: 0.9, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &strict }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &strict, list_tables_separately: true }, 10, &size_only, &td());
         assert!(r.hotspots[1].inline_test_note.is_none());
         assert!(r.hotspots[1].signals.has_tests);
+    }
+
+    #[test]
+    fn table_pairs_list_under_tables_and_the_clone_reason_states_the_split() {
+        use crate::clones::{FileClones, Loc};
+        let sf = |p: &str| SourceFile { path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines: 500, bytes: 0, content: String::new() };
+        let loc = |file: &str, s: usize, e: usize, sym: &str| Loc { file: file.into(), start_line: s, end_line: e, symbol: Some(sym.into()) };
+        let table = ClonePair { a: loc("a.rs", 91, 134, "CHECKS"), b: loc("a.rs", 136, 174, "CHECKS"), tokens: 117, kind: CloneKind::Table, container_kind: Some("array_expression".into()), entry_count: Some(6) };
+        let logic = ClonePair { a: loc("a.rs", 200, 230, "run"), b: loc("b.rs", 10, 40, "go"), tokens: 150, kind: CloneKind::Logic, container_kind: None, entry_count: None };
+        let mut clones = CloneReport { pairs: vec![logic, table], files: HashMap::new() };
+        clones.files.insert("a.rs".into(), FileClones {
+            clone_lines: 115, logic_clone_lines: 31, table_clone_lines: 84, clone_ratio: 0.23, pairs: 3,
+            tables: vec![TableRef { symbol: Some("CHECKS".into()), container_kind: "array_expression".into(), start_line: 91, end_line: 174 }],
+        });
+        let files = vec![sf("a.rs"), sf("b.rs")];
+        let fm = vec![fmetrics("a.rs", 1, 1, 0), fmetrics("b.rs", 1, 1, 0)];
+        let deps = DepGraph::default();
+        let tests = TestsCfg::default();
+        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: sep };
+        let r = build(inputs(true), 10, &Cfg::default(), &td());
+        assert_eq!((r.clones.len(), r.tables.len()), (1, 1));
+        assert_eq!(r.clones[0].kind, CloneKind::Logic);
+        let text = render(&r, 10);
+        assert!(text.contains("  TABLES  (uniform entries on both sides, not duplicated logic)\n   117 tok  a.rs:91-134  <->  a.rs:136-174  (array_expression, 6 entries)\n"), "{text}");
+        let a = r.hotspots.iter().find(|h| h.path == "a.rs").unwrap();
+        assert_eq!((a.signals.logic_clone_lines, a.signals.table_clone_lines), (31, 84));
+        assert!(a.reasons.iter().any(|r| r == "23% duplicated lines were 17% registry table (CHECKS, lines 91-174) and 6% logic"), "{:?}", a.reasons);
+        // Inline: one list, the table pair annotated, no sub-heading.
+        let r = build(inputs(false), 10, &Cfg::default(), &td());
+        assert_eq!((r.clones.len(), r.tables.len()), (2, 0));
+        let text = render(&r, 10);
+        assert!(!text.contains("TABLES") && text.contains("a.rs:136-174  (array_expression, 6 entries)"), "{text}");
     }
 
     #[test]
@@ -470,7 +556,7 @@ mod tests {
         let deps = DepGraph::default();
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
-        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests };
+        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true };
         let by_default = build(inputs(), 10, &Cfg::default(), &td());
         assert_eq!(by_default.hotspots[0].path, "small.py");
         let size_only = Cfg {
@@ -496,6 +582,14 @@ mod tests {
         assert!(!stem_tested(&t, &files[0]));
         assert!(stem_tested(&t, &files[1]));
         assert!(stem_tested(&t, &files[2]));
+    }
+}
+
+/// `  (array_expression, 6 entries)` after a table pair.
+pub fn table_note(c: &ClonePair) -> String {
+    match (&c.container_kind, c.entry_count) {
+        (Some(k), Some(n)) => format!("  ({k}, {n} entries)"),
+        _ => String::new(),
     }
 }
 
@@ -547,7 +641,13 @@ pub fn render(r: &Report, top: usize) -> String {
         let _ = writeln!(o, "  none");
     }
     for c in r.clones.iter().take(top) {
-        let _ = writeln!(o, "  {:>4} tok  {}:{}-{}  <->  {}:{}-{}", c.tokens, c.a.file, c.a.start_line, c.a.end_line, c.b.file, c.b.start_line, c.b.end_line);
+        let _ = writeln!(o, "  {:>4} tok  {}:{}-{}  <->  {}:{}-{}{}", c.tokens, c.a.file, c.a.start_line, c.a.end_line, c.b.file, c.b.start_line, c.b.end_line, table_note(c));
+    }
+    if !r.tables.is_empty() {
+        let _ = writeln!(o, "  TABLES  (uniform entries on both sides, not duplicated logic)");
+        for c in r.tables.iter().take(top) {
+            let _ = writeln!(o, "  {:>4} tok  {}:{}-{}  <->  {}:{}-{}{}", c.tokens, c.a.file, c.a.start_line, c.a.end_line, c.b.file, c.b.start_line, c.b.end_line, table_note(c));
+        }
     }
 
     let _ = writeln!(o, "\nDIRECTORIES  (by source lines)");

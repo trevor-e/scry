@@ -158,6 +158,7 @@ fn main() -> Result<()> {
                     clones: &clone_report,
                     cognitive_hard: cfg.metrics.cognitive_hard,
                     tests: &cfg.tests,
+                    list_tables_separately: cfg.clones.list_tables_separately,
                 },
                 top,
                 &cfg.report,
@@ -229,15 +230,16 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&r)?);
                 return Ok(());
             }
-            println!("{} clone pairs (>= {} tokens) across {} files\n", r.pairs.len(), cfg.clones.min_tokens, r.files.len());
+            let tables = r.pairs.iter().filter(|p| p.kind == clones::CloneKind::Table).count();
+            println!("{} clone pairs (>= {} tokens, {} tables) across {} files\n", r.pairs.len(), cfg.clones.min_tokens, tables, r.files.len());
             for p in r.pairs.iter().take(top) {
-                println!("{:>5} tok  {}:{}-{}  <->  {}:{}-{}", p.tokens, p.a.file, p.a.start_line, p.a.end_line, p.b.file, p.b.start_line, p.b.end_line);
+                println!("{:>5} tok  {}:{}-{}  <->  {}:{}-{}{}", p.tokens, p.a.file, p.a.start_line, p.a.end_line, p.b.file, p.b.start_line, p.b.end_line, report::table_note(p));
             }
             let mut rows: Vec<(&String, &clones::FileClones)> = r.files.iter().collect();
             rows.sort_by(|x, y| y.1.clone_ratio.partial_cmp(&x.1.clone_ratio).unwrap());
-            println!("\nmost duplicated files (cloned lines / ratio):");
+            println!("\nmost duplicated files (cloned lines / ratio, table lines):");
             for (p, c) in rows.iter().take(top) {
-                println!("{:>5} {:>5.0}%  {}", c.clone_lines, c.clone_ratio * 100.0, p);
+                println!("{:>5} {:>5.0}%  {:>5}  {}", c.clone_lines, c.clone_ratio * 100.0, c.table_clone_lines, p);
             }
         }
         Cmd::Deps { path, json, top } => {
