@@ -486,7 +486,6 @@ pub fn symbol_names(names: &[String], glob: bool) -> String {
 }
 
 /// `1 symbol`, `3 symbols`, `>= 20 symbols` for a wildcard.
-/// `1 symbol`, `3 symbols`, `>= 20 symbols` for a wildcard.
 pub fn symbol_count(e: &Edge) -> String {
     match (e.glob, e.symbols) {
         (true, n) => format!(">= {n} symbols"),

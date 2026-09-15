@@ -323,13 +323,11 @@ fn inline_test_note(regions: &[TestRegion], inline_test_lines: usize) -> String 
     format!("{inline_test_lines} in {what} at {}-{}{more}", biggest.start_line, biggest.end_line)
 }
 
-/// Symbols listed in the unmentioned reason before `+N more`; `unmentioned[]` in `--json` has them all.
-const UNMENTIONED_LISTED: usize = 5;
-
-/// `4 of 6 public symbols are named by no test: router (lines 204-229), request_ctx (lines 243-257)`.
-fn unmentioned_reason(unmentioned: &[Symbol], public: usize) -> String {
-    let named: Vec<String> = unmentioned.iter().take(UNMENTIONED_LISTED).map(|s| format!("{} (lines {}-{})", s.name, s.start_line, s.end_line)).collect();
-    let more = match unmentioned.len().saturating_sub(UNMENTIONED_LISTED) {
+/// `4 of 6 public symbols are named by no test: router (lines 204-229), request_ctx (lines 243-257)`,
+/// the first `listed` symbols then `+N more`; `unmentioned[]` in `--json` has them all.
+fn unmentioned_reason(unmentioned: &[Symbol], public: usize, listed: usize) -> String {
+    let named: Vec<String> = unmentioned.iter().take(listed).map(|s| format!("{} (lines {}-{})", s.name, s.start_line, s.end_line)).collect();
+    let more = match unmentioned.len().saturating_sub(listed) {
         0 => String::new(),
         n => format!(", +{n} more"),
     };
@@ -511,7 +509,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             if s.public_symbols >= inp.tests.unmentioned_min_symbols
                 && unmentioned.len() as f64 / s.public_symbols as f64 >= inp.tests.unmentioned_share_reason
             {
-                reasons.push(unmentioned_reason(&unmentioned, s.public_symbols));
+                reasons.push(unmentioned_reason(&unmentioned, s.public_symbols, cfg.reason_unmentioned_listed));
             }
             if s.commits >= cfg.reason_bus_factor_min_commits {
                 match s.authors {
@@ -521,7 +519,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 }
             }
             let test_regions = fm.get(f.path.as_str()).map(|m| m.test_regions.clone()).unwrap_or_default();
-            let inline_test_note = (!test_regions.is_empty() && inline_ratio(f) >= inp.tests.report_inline_ratio_above)
+            // No note when the knob counts every line as source: regions are listed, but 0 lines are tests.
+            let inline_test_note = (s.inline_test_lines > 0 && inline_ratio(f) >= inp.tests.report_inline_ratio_above)
                 .then(|| inline_test_note(&test_regions, s.inline_test_lines));
             let (plan, plan_more) = plan::build(
                 &plan::Facts {
@@ -680,6 +679,14 @@ mod tests {
         let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
         let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &off, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg }, 10, &size_only, &td());
         assert_eq!(r.hotspots.iter().find(|h| h.path == "a.rs").unwrap().signals.test_units, 1);
+        // Knob off, the metrics pass lists the regions but counts 0 inline test lines: no note,
+        // even when the ratio threshold would always show one.
+        let mut fm_off = fm.clone();
+        fm_off.iter_mut().for_each(|m| m.inline_test_lines = 0);
+        let always = TestsCfg { inline_modules: false, report_inline_ratio_above: 0.0, ..TestsCfg::default() };
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm_off, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &always, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg }, 10, &size_only, &td());
+        let a = r.hotspots.iter().find(|h| h.path == "a.rs").unwrap();
+        assert!(a.inline_test_note.is_none() && a.test_regions.len() == 1, "{:?}", a.inline_test_note);
         // Many regions: the largest one's kind and range, the rest counted.
         let many = [region(RegionKind::CfgTestItem, 18, 20), region(RegionKind::CfgTestMod, 66, 210), region(RegionKind::CfgTestItem, 24, 26)];
         assert_eq!(inline_test_note(&many, 151), "151 in #[cfg(test)] mod at 66-210, +2 more");
@@ -780,8 +787,10 @@ mod tests {
         let r = build(inputs(&pcfg), 10, &Cfg::default(), &td());
         assert!(r.hotspots.iter().all(|h| h.path != "c.rs"));
         let a = r.hotspots.iter().find(|h| h.path == "a.rs").unwrap();
+        // alpha's duplicate lies in c.rs, a Test file for ranking: alpha's own side is source, so it keeps its step.
         assert_eq!(a.plan.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec![
             "fold 2 clone runs in #[cfg(test)] mod at 100-200 into shared test helpers",
+            "alpha (10-20) duplicates c.rs t_far (50-60), 90 tokens",
             "gamma (30-40) duplicates b.rs delta (5-15), 80 tokens",
         ], "{:?}", a.plan);
         assert_eq!((a.plan[0].kind, a.plan_more), (StepKind::FoldTestClones, 0));
@@ -791,7 +800,7 @@ mod tests {
         let no_fold = PlanCfg { fold_test_clones: false, ..PlanCfg::default() };
         let r = build(inputs(&no_fold), 10, &Cfg::default(), &td());
         let a = r.hotspots.iter().find(|h| h.path == "a.rs").unwrap();
-        assert_eq!(a.plan.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec!["gamma (30-40) duplicates b.rs delta (5-15), 80 tokens"]);
+        assert_eq!(a.plan.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec!["alpha (10-20) duplicates c.rs t_far (50-60), 90 tokens", "gamma (30-40) duplicates b.rs delta (5-15), 80 tokens"]);
     }
 
     #[test]
@@ -1082,18 +1091,15 @@ pub fn pair_line(c: &ClonePair) -> String {
 
 /// The `PLAN` block under a hotspot, or nothing when the plan is empty.
 fn render_plan(h: &Hotspot) -> String {
-    if h.plan.is_empty() {
+    if h.plan.is_empty() && h.plan_more == 0 {
         return String::new();
     }
-    let mut o = "        PLAN
-".to_string();
+    let mut o = "        PLAN\n".to_string();
     for s in &h.plan {
-        o.push_str(&format!("          {}) {}
-", s.n, s.text));
+        o.push_str(&format!("          {}) {}\n", s.n, s.text));
     }
     if h.plan_more > 0 {
-        o.push_str(&format!("          (+{} more)
-", h.plan_more));
+        o.push_str(&format!("          (+{} more)\n", h.plan_more));
     }
     o
 }

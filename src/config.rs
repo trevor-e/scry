@@ -464,6 +464,9 @@ pub struct Report {
     pub reason_clone_ratio: f64,
     pub reason_hidden_partners: usize,
     pub reason_bus_factor_min_commits: usize,
+    /// Symbols the `named by no test` reason lists before `+N more`; `unmentioned[]` in `--json`
+    /// is never cut.
+    pub reason_unmentioned_listed: usize,
 }
 
 impl Default for Report {
@@ -481,6 +484,7 @@ impl Default for Report {
             reason_clone_ratio: 0.15,
             reason_hidden_partners: 2,
             reason_bus_factor_min_commits: 5,
+            reason_unmentioned_listed: 5,
         }
     }
 }

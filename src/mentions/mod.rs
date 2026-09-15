@@ -2,8 +2,8 @@
 //!
 //! "A test file imports it" is the wrong test for CLI-style suites: kanspec's tests drive the
 //! binary and import nothing, yet dozens of test functions name the symbols of
-//! `src/cmd/status.rs`. This pass indexes every test unit (a function in a Test file, a
-//! function inside an inline `#[cfg(test)]` region) by the identifier tokens in its body,
+//! `src/cmd/status.rs`. This pass indexes every test unit (a function or item-level macro call
+//! in a Test file, one inside an inline `#[cfg(test)]` region) by the identifier tokens in its body,
 //! collects the top-level symbols each Source file defines, and counts the units naming at
 //! least one of them. No string scan: a symbol has to appear as an identifier token, so a
 //! subcommand name inside a string literal is never a mention.
@@ -15,7 +15,7 @@ use crate::metrics::unit_nodes;
 use crate::regions::{self, TestRegion};
 use rayon::prelude::*;
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tree_sitter::Node;
 
 /// A top-level symbol of a Source file: a function or method (metrics unit), a type, or a const.
@@ -51,8 +51,8 @@ pub struct FileMentions {
 
 #[derive(Debug, Default, Serialize)]
 pub struct MentionIndex {
-    /// Per Source file, keyed by relative path.
-    pub files: HashMap<String, FileMentions>,
+    /// Per Source file, keyed by relative path (ordered, so `--json` is stable across runs).
+    pub files: BTreeMap<String, FileMentions>,
     /// Units indexed from Test files (a Test file with no unit is one unit).
     pub test_file_units: usize,
     /// Units indexed from inline test regions of Source files (a region with no unit is one unit).
@@ -77,13 +77,12 @@ pub fn source_side<'a>(root: Option<Node>, file: &'a SourceFile, test_regions: &
     side.symbols = symbols(root, &units, file, src, test_regions, cfg.min_name_len);
     if cfg.count_inline_tests_as_refs && !test_regions.is_empty() {
         let idents = identifiers(root, file.lang, src, cfg.min_name_len);
+        let all = unit_ranges(root, &units, file.lang);
         for r in test_regions {
-            let inside: Vec<(usize, usize)> = units
-                .iter()
-                .filter(|n| n.start_byte() >= r.start_byte && n.start_byte() < r.end_byte)
-                .map(|n| (n.start_byte(), n.end_byte()))
-                .collect();
-            // A region with no unit (`#[cfg(test)] use …`, a mod of macro-made tests) is one unit.
+            // Anchored on the unit's own start: a `#[cfg(test)] #[test] fn` region begins at the
+            // fn, below the attributes its range was widened to.
+            let inside: Vec<(usize, usize)> = all.iter().filter(|(at, _)| *at >= r.start_byte && *at < r.end_byte).map(|(_, range)| *range).collect();
+            // A region with no unit (`#[cfg(test)] use …`) is one unit.
             let ranges = if inside.is_empty() { vec![(r.start_byte, r.end_byte)] } else { inside };
             side.inline_units.extend(ranges.into_iter().map(|r| idents_in(&idents, r)));
         }
@@ -103,20 +102,68 @@ fn parse_source<'a>(file: &'a SourceFile, cfg: &Cfg) -> SourceSide<'a> {
     source_side(root, file, &test_regions, cfg)
 }
 
-/// The test units of a Test file: its outermost metrics units, or the whole file when it has
-/// none (a file of `rgtest!` macro calls).
+/// The test units of a Test file: its outermost metrics units and top-level macro calls, or
+/// the whole file when it has neither.
 fn test_units<'a>(file: &'a SourceFile, cfg: &Cfg) -> Vec<HashSet<&'a str>> {
     let src = file.content.as_bytes();
     let Some(tree) = file.lang.parser().parse(src, None) else { return Vec::new() };
     let root = tree.root_node();
     let idents = identifiers(root, file.lang, src, cfg.min_name_len);
     let units = outermost_units(root, file.lang);
-    let ranges: Vec<(usize, usize)> = if units.is_empty() {
-        vec![(root.start_byte(), root.end_byte())]
-    } else {
-        units.iter().map(|n| (n.start_byte(), n.end_byte())).collect()
-    };
+    let mut ranges: Vec<(usize, usize)> = unit_ranges(root, &units, file.lang).into_iter().map(|(_, range)| range).collect();
+    if ranges.is_empty() {
+        ranges.push((root.start_byte(), root.end_byte()));
+    }
     ranges.into_iter().map(|r| idents_in(&idents, r)).collect()
+}
+
+/// The test units as `(own start byte, byte range)`: each outermost unit, its range widened to
+/// the decorators or outer attributes above it (`@pytest.mark.parametrize("cls", [Widget])`,
+/// `#[case(Foo::Bar)]` name symbols the test is about), plus every Rust macro call outside any
+/// unit (`rgtest!(name, …)` next to a helper fn is a test of its own), in document order.
+fn unit_ranges(root: Node<'_>, units: &[Node<'_>], lang: Language) -> Vec<(usize, (usize, usize))> {
+    let mut out: Vec<(usize, (usize, usize))> = units.iter().map(|n| (n.start_byte(), (attributed_start(*n), n.end_byte()))).collect();
+    if lang == Language::Rust {
+        out.extend(macro_calls(root).into_iter().filter(|m| !units.iter().any(|u| u.start_byte() <= m.start_byte() && m.start_byte() < u.end_byte())).map(|m| (m.start_byte(), (m.start_byte(), m.end_byte()))));
+        out.sort_unstable();
+    }
+    out
+}
+
+/// Where a unit starts once its decorators and outer attributes are counted as its own: the
+/// Python `decorated_definition` around it, or the first `attribute_item` sibling above it.
+fn attributed_start(n: Node) -> usize {
+    if let Some(p) = n.parent().filter(|p| p.kind() == "decorated_definition") {
+        return p.start_byte();
+    }
+    let mut start = n.start_byte();
+    let mut prev = n.prev_named_sibling();
+    while let Some(a) = prev.filter(|a| a.kind() == "attribute_item") {
+        start = a.start_byte();
+        prev = a.prev_named_sibling();
+    }
+    start
+}
+
+/// Rust `macro_invocation` nodes at item level (under the root, a module or an impl body, with
+/// or without the `expression_statement` a trailing `;` wraps them in), never inside a function body.
+fn macro_calls(root: Node<'_>) -> Vec<Node<'_>> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "macro_invocation" => out.push(node),
+            "source_file" | "mod_item" | "declaration_list" | "impl_item" | "trait_item" | "expression_statement" => {
+                let mut cursor = node.walk();
+                let children: Vec<Node> = node.children(&mut cursor).collect();
+                for child in children.into_iter().rev() {
+                    stack.push(child);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Index the Source sides (from `metrics::analyze_all_with`) against every Test file in `files`.
@@ -529,11 +576,13 @@ app.post('/x', (req, res) => {})
             file("tests/cli.rs", FileKind::Test, "#[test]\nfn a() { render_status(); }\n#[test]\nfn b() { let r: StatusRow = todo!(); }\n#[test]\nfn c() { run(\"render_status quiet_thing\"); }\n"),
             // No unit at all: the whole file is one unit.
             file("tests/macros.rs", FileKind::Test, "rgtest!(x, |d| { print_status_line() });\n"),
+            // A helper fn beside macro-made tests: each macro call is a unit of its own.
+            file("tests/mixed.rs", FileKind::Test, "fn helper_x() {}\nrgtest!(a, |x| { let _ = StatusRow; });\nrgtest!(b, |x| { helper_x(); });\n"),
         ];
         let idx = index_all(&files, &Cfg::default());
-        assert_eq!((idx.test_file_units, idx.inline_units), (4, 1));
+        assert_eq!((idx.test_file_units, idx.inline_units), (7, 1));
         let s = &idx.files["src/status.rs"];
-        assert_eq!((s.test_units, s.test_file_units, s.inline_units, s.symbols, s.public_symbols), (4, 3, 1, 3, 3), "{s:?}");
+        assert_eq!((s.test_units, s.test_file_units, s.inline_units, s.symbols, s.public_symbols), (5, 4, 1, 3, 3), "{s:?}");
         assert!(s.unmentioned.is_empty(), "{:?}", s.unmentioned);
         let q = &idx.files["src/quiet.rs"];
         assert_eq!((q.test_units, q.public_symbols), (0, 3));
@@ -545,6 +594,39 @@ app.post('/x', (req, res) => {})
         let idx = index_all(&files, &strict);
         let s = &idx.files["src/status.rs"];
         assert_eq!((s.test_units, s.symbols), (1, 1), "{s:?}"); // only print_status_line (17) is left, named by the macro file
+    }
+
+    #[test]
+    fn macro_calls_in_an_inline_region_and_attributes_above_a_test_are_units() {
+        let src = "\
+pub fn target_fn() {}
+pub struct Target_x;
+#[cfg(test)]
+mod tests {
+    fn helper_y() {}
+    t!(one, target_fn());
+    #[rstest]
+    #[case(Target_x)]
+    fn cased() {}
+}
+";
+        let f = file("src/a.rs", FileKind::Source, src);
+        let p = parse_source(&f, &Cfg::default());
+        let sets: Vec<Vec<&str>> = p.inline_units.iter().map(|u| { let mut v: Vec<&str> = u.iter().copied().collect(); v.sort(); v }).collect();
+        assert_eq!(sets, vec![vec!["helper_y"], vec!["target_fn"], vec!["Target_x", "cased", "rstest"]], "{sets:?}");
+    }
+
+    #[test]
+    fn python_decorators_belong_to_the_test() {
+        let files = vec![
+            file("src/mod_x.py", FileKind::Source, "class Widget_x:\n    pass\ndef other_fn(): pass\n"),
+            file("tests/test_mod_x.py", FileKind::Test, "import pytest\n@pytest.mark.parametrize(\"cls\", [Widget_x])\ndef test_a(cls):\n    pass\n"),
+        ];
+        let idx = index_all(&files, &Cfg::default());
+        assert_eq!(idx.test_file_units, 1);
+        let m = &idx.files["src/mod_x.py"];
+        assert_eq!((m.test_units, m.public_symbols), (1, 2), "{m:?}");
+        assert_eq!(m.unmentioned.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["other_fn"]);
     }
 
     #[test]

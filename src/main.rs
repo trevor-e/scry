@@ -145,6 +145,10 @@ fn main() -> Result<()> {
         Cmd::Ast { .. } => PathBuf::from("."),
     };
     let mut cfg = config::Config::load(&root, cli.config.as_deref())?;
+    // A misspelt kind would silently drop every step of that kind from the plan.
+    for k in cfg.plan.kind_priority.iter().filter(|k| !plan::KINDS.iter().any(|s| s.name() == k.as_str())) {
+        eprintln!("warning: [plan].kind_priority names no step kind `{k}` (kinds: {})", plan::KINDS.iter().map(|s| s.name()).collect::<Vec<_>>().join(", "));
+    }
     match cli.cmd {
         Cmd::Config { .. } => {
             print!("{}", cfg.to_toml());
@@ -312,7 +316,7 @@ fn main() -> Result<()> {
             }
             let test_files = files.iter().filter(|f| f.kind == discover::FileKind::Test).count();
             let unnamed = idx.files.values().filter(|m| m.test_units == 0).count();
-            println!("{} test units ({} in {test_files} test files, {} inline) name symbols of {} of {} source files; {unnamed} named by no test unit\n",
+            println!("{} test units indexed ({} in {test_files} test files, {} inline); symbols of {} of {} source files are named by at least one; {unnamed} named by none\n",
                 idx.test_file_units + idx.inline_units, idx.test_file_units, idx.inline_units, idx.files.len() - unnamed, idx.files.len());
             let mut rows: Vec<(&String, &mentions::FileMentions)> = idx.files.iter().collect();
             // Fewest test units first: the files the suite never names are the finding.

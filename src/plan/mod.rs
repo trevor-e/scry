@@ -21,6 +21,9 @@ pub enum StepKind {
     CutCycleEdge,
 }
 
+/// Every step kind, for validating `[plan].kind_priority`.
+pub const KINDS: [StepKind; 4] = [StepKind::FoldTestClones, StepKind::CanonicaliseClone, StepKind::Extract, StepKind::CutCycleEdge];
+
 impl StepKind {
     /// The spelling `[plan].kind_priority` uses.
     pub fn name(self) -> &'static str {
@@ -52,7 +55,9 @@ pub struct Step {
 /// What the plan for one file is built from; every field is data another pass produced.
 pub struct Facts<'a> {
     pub path: &'a str,
-    /// Clone pairs with at least one side in the file.
+    /// Clone pairs with at least one side in the file. Each side of this file is planned on its
+    /// own: a side in test code folds, a source side is a canonicalise step even when its
+    /// duplicate lies in test code elsewhere.
     pub pairs: &'a [&'a ClonePair],
     /// Whether a run side starts inside an inline test region or a Test-classified file.
     pub in_tests: &'a dyn Fn(&Loc) -> bool,
@@ -81,19 +86,20 @@ pub fn build(f: &Facts, cfg: &Cfg) -> (Vec<Step>, usize) {
         Step { n: 0, kind, symbol, lines, target, text }
     };
 
-    // Clone runs: the file's side of each pair, test sides folded, the rest one step per pair.
+    // Clone runs, decided per side of this file: a side in test code folds, any other side is
+    // a canonicalise step (once per pair) naming the duplicate, wherever that lies.
     let mut fold: Vec<Option<usize>> = Vec::new(); // region index per folded run
-    let mut canon: Vec<&ClonePair> = Vec::new();
+    let mut canon: Vec<(&ClonePair, &Loc, &Loc)> = Vec::new(); // (pair, this file's side, the other)
     for p in f.pairs {
-        let sides = [&p.a, &p.b];
-        let mine: Vec<&Loc> = sides.iter().copied().filter(|l| l.file == f.path).collect();
-        let test = sides.iter().any(|l| (f.in_tests)(l));
-        if !test {
-            canon.push(p);
-            continue;
-        }
-        for l in mine.iter().filter(|l| (f.in_tests)(l)) {
-            fold.push(f.regions.iter().position(|r| r.start_line <= l.start_line && l.start_line <= r.end_line));
+        for (mine, other) in [(&p.a, &p.b), (&p.b, &p.a)] {
+            if mine.file != f.path {
+                continue;
+            }
+            if (f.in_tests)(mine) {
+                fold.push(f.regions.iter().position(|r| r.start_line <= mine.start_line && mine.start_line <= r.end_line));
+            } else if !canon.last().is_some_and(|(q, _, _)| std::ptr::eq(*q, *p)) {
+                canon.push((p, mine, other));
+            }
         }
     }
     if cfg.fold_test_clones && !fold.is_empty() && let Some(r) = rank(StepKind::FoldTestClones) {
@@ -120,10 +126,9 @@ pub fn build(f: &Facts, cfg: &Cfg) -> (Vec<Step>, usize) {
         steps.push((r, step(StepKind::FoldTestClones, None, lines, None, text)));
     }
     if let Some(r) = rank(StepKind::CanonicaliseClone) {
-        // Largest first; a same-file pair once, from its earlier side.
-        canon.sort_by(|p, q| q.tokens.cmp(&p.tokens).then_with(|| p.a.start_line.cmp(&q.a.start_line)).then_with(|| p.b.start_line.cmp(&q.b.start_line)));
-        for p in canon {
-            let (mine, other) = if p.a.file == f.path { (&p.a, &p.b) } else { (&p.b, &p.a) };
+        // Largest first; a same-file pair once, from its earlier side outside test code.
+        canon.sort_by(|(p, _, _), (q, _, _)| q.tokens.cmp(&p.tokens).then_with(|| p.a.start_line.cmp(&q.a.start_line)).then_with(|| p.b.start_line.cmp(&q.b.start_line)));
+        for (p, mine, other) in canon {
             let table = p.kind == CloneKind::Table;
             let target = side_text(other, f.path, table);
             let keep = if other.file == f.path { ": keep one" } else { "" };
@@ -169,7 +174,7 @@ fn region_desc(kind: RegionKind) -> &'static str {
 
 /// `plan for src/cmd/flow.rs:` then one line per step and `(+N more)`; `no plan` when empty.
 pub fn render(path: &str, steps: &[Step], more: usize) -> String {
-    if steps.is_empty() {
+    if steps.is_empty() && more == 0 {
         return "no plan\n".to_string();
     }
     let mut o = format!("plan for {path}:\n");
@@ -282,13 +287,25 @@ mod tests {
         let pairs = [
             pair(loc(this, 20, 30, "t1"), loc(this, 40, 50, "t2"), 100, CloneKind::Logic),
             pair(loc(this, 120, 130, "u1"), loc("b.rs", 1, 10, "x"), 90, CloneKind::Logic),
+            // This file's side is source; the duplicate sits in a Test-classified file (b.rs) and
+            // in this file's own test module: each source side still gets its step.
+            pair(loc(this, 70, 80, "alpha"), loc("c.rs", 1, 10, "t_far"), 85, CloneKind::Logic),
+            pair(loc(this, 110, 118, "t3"), loc(this, 82, 90, "beta"), 75, CloneKind::Logic),
         ];
         let refs: Vec<&ClonePair> = pairs.iter().collect();
         let regions = vec![region(10, 60), region(100, 140)];
-        let in_tests = |l: &Loc| l.file == this && ((10..=60).contains(&l.start_line) || (100..=140).contains(&l.start_line));
+        let in_tests = |l: &Loc| l.file == "c.rs" || l.file == this && ((10..=60).contains(&l.start_line) || (100..=140).contains(&l.start_line));
         let facts = Facts { path: this, pairs: &refs, in_tests: &in_tests, regions: &regions, functions: &[], cycle: None, cognitive_hard: 15 };
         let (steps, _) = build(&facts, &Cfg::default());
-        assert_eq!(steps.len(), 1);
-        assert_eq!(steps[0].text, "fold 2 clone runs in #[cfg(test)] mod at 10-60 into shared test helpers, +1 in other test regions");
+        assert_eq!(steps.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec![
+            "fold 2 clone runs in #[cfg(test)] mod at 10-60 into shared test helpers, +2 in other test regions",
+            "alpha (70-80) duplicates c.rs t_far (1-10), 85 tokens",
+            "beta (82-90) duplicates t3 (110-118), 75 tokens: keep one",
+        ], "{steps:?}");
+        // A cap that leaves no step still says how many were cut, as `--json` does.
+        let none = Cfg { max_steps: 0, ..Cfg::default() };
+        let (steps, more) = build(&facts, &none);
+        assert!(steps.is_empty() && more == 3);
+        assert_eq!(render(this, &steps, more), "plan for a.rs:\n  (+3 more)\n");
     }
 }

@@ -278,8 +278,12 @@ pub fn detect(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg, fallback: Symbo
     let mut per_file = HashMap::new();
     for (fi, f) in files.iter().enumerate() {
         let Some(rs) = ranges.get(f.path.as_str()) else { continue };
-        let clone_lines = covered_lines(rs.iter().map(|r| (r.0, r.1)));
-        let logic = covered_lines(rs.iter().filter(|r| r.2 == CloneKind::Logic).map(|r| (r.0, r.1)));
+        // A run can start or end on a line a one-line region shares (`} #[cfg(test)] fn t() {} fn
+        // next() {`): its tokens are outside the region, but the line is an inline test line and
+        // is already off the denominator, so it never counts as cloned either.
+        let region_lines: Vec<(usize, usize)> = toks[fi].test_regions.iter().map(|r| (r.start_line, r.end_line)).collect();
+        let clone_lines = covered_lines(rs.iter().map(|r| (r.0, r.1)), &region_lines);
+        let logic = covered_lines(rs.iter().filter(|r| r.2 == CloneKind::Logic).map(|r| (r.0, r.1)), &region_lines);
         let table = clone_lines - logic;
         let mut refs = tables.remove(f.path.as_str()).unwrap_or_default();
         refs.sort_by_key(|t| (t.start_line, t.end_line));
@@ -302,20 +306,33 @@ pub fn detect(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg, fallback: Symbo
     CloneReport { pairs, files: per_file }
 }
 
-/// Size of the union of inclusive line ranges.
-fn covered_lines(ranges: impl Iterator<Item = (usize, usize)>) -> usize {
-    let mut rs: Vec<(usize, usize)> = ranges.collect();
-    rs.sort_unstable();
-    let mut covered = 0usize;
-    let mut end = 0usize;
-    for (s, e) in rs {
-        let s = s.max(end + 1);
-        if e >= s {
-            covered += e - s + 1;
-            end = e;
+/// Size of the union of inclusive line ranges, less the lines any of `minus` covers.
+fn covered_lines(ranges: impl Iterator<Item = (usize, usize)>, minus: &[(usize, usize)]) -> usize {
+    let covered = line_union(ranges.collect());
+    let minus = line_union(minus.to_vec());
+    let mut total: usize = covered.iter().map(|(s, e)| e - s + 1).sum();
+    for (s, e) in &covered {
+        for (ms, me) in &minus {
+            let (lo, hi) = ((*s).max(*ms), (*e).min(*me));
+            if hi >= lo {
+                total -= hi - lo + 1;
+            }
         }
     }
-    covered
+    total
+}
+
+/// Inclusive line ranges merged into disjoint, sorted spans.
+fn line_union(mut rs: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    rs.sort_unstable();
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in rs {
+        match out.last_mut() {
+            Some(last) if s <= last.1 + 1 => last.1 = last.1.max(e),
+            _ => out.push((s, e)),
+        }
+    }
+    out
 }
 
 fn overlaps(s1: usize, l1: usize, s2: usize, l2: usize) -> bool {
@@ -1098,6 +1115,29 @@ mod tests {
         }
         let fc = &r.files["a.rs"];
         assert!(fc.clone_ratio <= 1.0 && fc.clone_lines <= src.lines().count() - regions::inline_lines(&regions), "{fc:?}");
+    }
+
+    #[test]
+    fn a_line_shared_with_a_one_line_region_is_never_a_clone_line() {
+        // Rustfmt'd code puts the next item's start on a one-line `#[cfg(test)]` item's line
+        // (`} #[cfg(test)] fn t() {} fn after() {`), so a run's first token lands on a region
+        // line that the denominator already excludes: the line must not count as cloned either.
+        let unit = |p: &str| format!("        let {p}_a = compute({p}, 1) + other[2];\n        if {p}_a > 0 && !{p} {{ panic!(\"{{}}\", {p}_a); }}\n        for {p}_i in 0..3 {{ {p}_a += {p}_i * 2; }}\n        while {p}_a > 10 {{ {p}_a -= 1; }}\n        let {p}_b: Vec<u8> = {p}.iter().filter(|x| **x > 0).cloned().collect();\n        match {p}_b.first() {{ Some(v) => {p}_a += *v as i32, None => {p}_a = 0 }}\n");
+        let mut src = "#[cfg(test)] use a::b;\n".to_string();
+        for (i, p) in ["aa", "bb", "cc"].iter().enumerate() {
+            src.push_str(&format!("impl S{i} {{\n    fn run(&self, {p}: &[u8]) -> i32 {{\n{}        {p}_a\n    }}\n}} #[cfg(test)] fn t_{i}() {{ assert!(S{i}.run(&[]) == 0); }} fn after_{i}() -> i32 {{ 1 }}\n", unit(p)));
+        }
+        src.push_str("#[cfg(test)]\nmod tests {\n    #[test] fn t() {}\n}\n");
+        let f = rs("a.rs", src.clone());
+        let regions = regions::test_regions(Language::Rust.parser().parse(&src, None).unwrap().root_node(), src.as_bytes());
+        assert_eq!(regions.len(), 5);
+        let r = detect(&[f], &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
+        // The shape is exercised: a run starts on the line of a one-line region.
+        assert!(r.pairs.iter().any(|p| regions.iter().any(|t| t.start_line == t.end_line && p.a.start_line == t.start_line)), "{:?}", r.pairs);
+        let fc = &r.files["a.rs"];
+        let countable = src.lines().count() - regions::inline_lines(&regions);
+        assert!(fc.clone_lines <= countable && fc.clone_ratio <= 1.0, "{fc:?} against {countable} countable lines");
+        assert_eq!(fc.clone_lines, fc.logic_clone_lines + fc.table_clone_lines);
     }
 
     /// Twelve structurally different lines, so the body does not repeat itself.
