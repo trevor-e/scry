@@ -2,6 +2,18 @@
 
 *Brainstorm and verification, 2026-09-14. Companion: `docs/analyzer-brainstorm-appendix.md` carries a per-proposal chapter with detection details, knobs and implementation Rules for everything ranked below.*
 
+## Implementation status (2026-09-15)
+
+Everything in the three waves below is built on this branch, each item reviewed by an adversarial agent, fixed, and verified against the corpora; the tree runs 166 unit tests (28 before) with no new clippy warnings. Kanspec tickets exist for every item; the "worth a ticket, not first" items are ticketed and not built.
+
+| wave | items | commits |
+|---|---|---|
+| 1, fix the existing report | regions (P54), clone self-match and tables (P59), co-change sweeps and lift (P60), cycle cuts (P61), bots and fix cap, graded has_tests (P55), clone symbols and PLAN (P62) | 59dc3cb, b06fba6, 0d6e397, a563183, 8140a6f, b295048, 44201db; findings c4def05, b70c807 |
+| 2, new cross-file passes | dead (P01-03), helpers (P07-08), strings (P10), clumps (P46-47), declared (P64-66), env seams (P67) | a83e014, e200561, 3d74124, 89e2d40, 5847a64, 6e663fb; findings 144618b |
+| 3, richer reasons | comments (P17-18), short names (P48), locals (P44), parse defaults (P28) | df4392c, bf60a08, 938b8cd, 1c8814b; findings 9141c30 |
+
+Three headline numbers in this document only reproduce with looser knobs than the briefs' shipped defaults, and are filed as decisions rather than tuned: the inlined-helper share (plural's body is 11 tokens, under the 12-token floor), the literal families (kanspec's hint strings are shorter than min_len 20 and live in its own `fix!` macro), and the (a, f, s) clump (only one slot agrees on type). Scan time is 1.7x the pre-wave baseline and still under a second on every corpus; about half of the growth is per-symbol git lookups, ticketed. Several other prototype numbers drifted because the corpora themselves changed (scry grew from 3.1k to 16k lines while being built).
+
 ## TL;DR
 
 Ten brainstorming lenses produced 87 raw analyzer ideas. They were merged into 75 canonical proposals, and every one was prototyped on two LLM-written repos (scry, kanspec) and four human-written baselines (ripgrep, fd, click, hono), then attacked by an independent skeptic. 15 survived as clear wins, 21 as worth a ticket with a narrower design, and 39 were rejected with numbers.
