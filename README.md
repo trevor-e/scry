@@ -113,7 +113,7 @@ ignore_patterns = ["^kanspec show"]      # regexes; a hint printed from ten comm
 [clumps]
 min_functions = 5                        # a one-file clump needs this many members (default 4; cross-file needs min_files = 2)
 min_typed_slots = 1                      # slots that must agree on type (default 2; a tuple nobody annotates needs min_functions + 1 members)
-protocol_tuples = [["c", "next"], ["ctx", "param", "value"], ["self", "request"]]   # callback shapes never analysed
+protocol_tuples = [["c", "next"], ["ctx", "param", "value"], ["event", "context"]]   # callback shapes never analysed (receivers such as self never enter a tuple)
 weight = 0.02                            # rank on clump membership too (default 0.0: section and reasons only)
 
 [declared]

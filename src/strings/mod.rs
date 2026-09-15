@@ -16,6 +16,7 @@ use rayon::prelude::*;
 use regex::Regex;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
 use tree_sitter::Node;
 
 // ---------- literals ----------
@@ -108,9 +109,93 @@ fn inner_text<'a>(node: Node, src: &'a [u8], lang: Language) -> &'a str {
             &body[..close]
         }
         _ => {
-            if t.len() >= 2 { &t[1..t.len() - 1] } else { t }
+            // Char-safe: a MISSING closing quote leaves the text ending mid-literal, possibly on
+            // a multi-byte char (`foo("héllö` parses as a string node).
+            let Some(d) = t.chars().next() else { return t };
+            let body = t.strip_prefix(d).unwrap_or(t);
+            body.strip_suffix(d).unwrap_or(body)
         }
     }
+}
+
+/// A call's callee, memoised per call node: its text when short (a gettext callee is a bare
+/// `_` / `t` / `i18n.t`, `require`, `import`) and its name pieces, read off the tree: the field /
+/// member / attribute names down the callee, the innermost name's segments, and before them
+/// the pieces of the receiver call's own callee (`expect(a).toBe` -> [expect, toBe], the
+/// method last). In a builder chain the k-th callee spans the whole chain, so the receiver's
+/// pieces are carried as a set and the text is never taken: a literal deep in the chain costs
+/// its distinct names, not the chain's length.
+#[derive(Clone)]
+struct Callee<'s> {
+    short: &'s str,
+    pieces: Rc<Vec<&'s str>>,
+}
+type Callees<'s> = HashMap<usize, Callee<'s>>;
+
+fn callee_node(call: Node<'_>) -> Option<Node<'_>> {
+    call.child_by_field_name("function").or_else(|| call.child_by_field_name("constructor"))
+}
+
+/// A callee's own names, innermost first, and the receiver call it bottoms out at, if any.
+fn own_pieces<'s, 't>(callee: Node<'t>, src: &'s [u8]) -> (Vec<&'s str>, Option<Node<'t>>) {
+    let mut names: Vec<&'s str> = Vec::new();
+    let mut cur = callee;
+    let (pieces, recv) = loop {
+        match cur.kind() {
+            "field_expression" | "member_expression" | "attribute" => {
+                let (name, obj) = match cur.kind() {
+                    "field_expression" => ("field", "value"),
+                    "member_expression" => ("property", "object"),
+                    _ => ("attribute", "object"),
+                };
+                if let Some(f) = cur.child_by_field_name(name) {
+                    names.push(text(f, src));
+                }
+                match cur.child_by_field_name(obj) {
+                    Some(o) => cur = o,
+                    None => break (Vec::new(), None),
+                }
+            }
+            "generic_function" | "parenthesized_expression" | "non_null_expression" => match cur.child_by_field_name("function").or_else(|| cur.named_child(0)) {
+                Some(o) => cur = o,
+                None => break (Vec::new(), None),
+            },
+            "call_expression" | "call" | "new_expression" => break (Vec::new(), Some(cur)),
+            _ => break (if cur.end_byte() - cur.start_byte() <= 200 { segments(text(cur, src)) } else { Vec::new() }, None),
+        }
+    };
+    names.reverse();
+    let mut out = pieces;
+    out.extend(names);
+    (out, recv)
+}
+
+/// The memoised callee of `call`, building the receiver chain bottom-up without recursion.
+fn callee_facts<'s, 't>(callees: &mut Callees<'s>, call: Node<'t>, src: &'s [u8]) -> Callee<'s> {
+    // (call, its callee, the callee's own pieces, the receiver call), outermost first.
+    type Link<'s, 't> = (Node<'t>, Option<Node<'t>>, Vec<&'s str>, Option<Node<'t>>);
+    let mut chain: Vec<Link<'s, 't>> = Vec::new();
+    let mut cur = Some(call);
+    while let Some(c) = cur {
+        if callees.contains_key(&c.id()) {
+            break;
+        }
+        let callee = callee_node(c);
+        let (own, recv) = callee.map_or((Vec::new(), None), |n| own_pieces(n, src));
+        chain.push((c, callee, own, recv));
+        cur = recv;
+    }
+    for (c, callee, own, recv) in chain.into_iter().rev() {
+        let mut pieces: Vec<&'s str> = recv.and_then(|r| callees.get(&r.id())).map(|r| r.pieces.as_ref().clone()).unwrap_or_default();
+        for p in own {
+            if !pieces.contains(&p) {
+                pieces.push(p);
+            }
+        }
+        let short = callee.filter(|n| n.end_byte() - n.start_byte() <= 64).map(|n| text(n, src)).unwrap_or("");
+        callees.insert(c.id(), Callee { short, pieces: Rc::new(pieces) });
+    }
+    callees[&call.id()].clone()
 }
 
 /// Interpolation holes (`{..}`, `${..}`), `%s`-style specifiers and digit runs become one
@@ -291,46 +376,49 @@ impl Walker {
         let Some(root) = root else { return side };
         let src = file.content.as_bytes();
         let lang = file.lang;
-        let mut stack: Vec<Node> = vec![root];
-        while let Some(n) = stack.pop() {
+        let mut callees: Callees = HashMap::new();
+        // One cursor, pre-order, with the ancestors of the current node on a stack: the role
+        // and exclusion walks read them instead of `Node::parent()`, which starts from the
+        // root each call and made a literal deep in a builder chain cost its depth squared.
+        let mut cursor = root.walk();
+        let mut anc: Vec<Node> = Vec::new();
+        loop {
+            let n = cursor.node();
             let kind = n.kind();
-            if is_comment(kind) {
-                continue;
-            }
             // Subtrees nothing inside can rescue: skipped whole.
-            let skip = match lang {
-                Language::Rust => kind == "use_declaration" || (self.cfg.exclude_attributes && matches!(kind, "attribute_item" | "inner_attribute_item")) || regions::contains(regions, n.start_byte()),
-                Language::Python => matches!(kind, "import_statement" | "import_from_statement" | "future_import_statement") || (self.cfg.exclude_assert_calls && kind == "assert_statement"),
-                _ => kind == "import_statement" || (self.cfg.exclude_jsx_attributes && kind == "jsx_attribute") || (self.cfg.exclude_attributes && kind == "decorator"),
-            };
-            if skip {
-                continue;
-            }
+            let skip = is_comment(kind)
+                || match lang {
+                    Language::Rust => kind == "use_declaration" || (self.cfg.exclude_attributes && matches!(kind, "attribute_item" | "inner_attribute_item")) || regions::contains(regions, n.start_byte()),
+                    Language::Python => matches!(kind, "import_statement" | "import_from_statement" | "future_import_statement") || (self.cfg.exclude_assert_calls && kind == "assert_statement"),
+                    _ => kind == "import_statement" || (self.cfg.exclude_jsx_attributes && kind == "jsx_attribute") || (self.cfg.exclude_attributes && kind == "decorator"),
+                };
             let (is_string, is_number) = match lang {
                 Language::Rust => (kind == "string_literal" || (self.cfg.include_raw && kind == "raw_string_literal"), matches!(kind, "integer_literal" | "float_literal")),
                 Language::Python => (matches!(kind, "string" | "concatenated_string"), matches!(kind, "integer" | "float")),
                 _ => (matches!(kind, "string" | "template_string"), kind == "number"),
             };
-            if is_string {
-                let (lit, prose_shaped) = self.string_lit(n, src, lang);
+            if !skip && is_string {
+                let (lit, prose_shaped) = self.string_lit(n, &anc, src, lang, &mut callees);
                 side.prose_shaped += usize::from(prose_shaped);
                 side.literals.extend(lit);
+            } else if !skip && is_number && let Some(l) = self.number_lit(n, &anc, src, lang, &mut callees) {
+                side.literals.push(l);
+            }
+            if !skip && !is_string && !is_number && cursor.goto_first_child() {
+                anc.push(n);
                 continue;
             }
-            if is_number {
-                if let Some(l) = self.number_lit(n, src, lang) {
-                    side.literals.push(l);
+            loop {
+                if cursor.goto_next_sibling() {
+                    break;
                 }
-                continue;
-            }
-            let mut c = n.walk();
-            let children: Vec<Node> = n.children(&mut c).collect();
-            for ch in children.into_iter().rev() {
-                stack.push(ch);
+                if !cursor.goto_parent() {
+                    side.literals.sort_by_key(|l| l.line);
+                    return side;
+                }
+                anc.pop();
             }
         }
-        side.literals.sort_by_key(|l| l.line);
-        side
     }
 
     /// One parse per file, for `scry strings`.
@@ -345,14 +433,15 @@ impl Walker {
         self.file_side(root, file, &regions)
     }
 
-    /// Exclusions and the message role, from the ancestors of `lit`.
-    fn facts(&self, lit: Node, src: &[u8], lang: Language) -> Facts {
+    /// Exclusions and the message role, from the ancestors of `lit` (`anc`: root first).
+    fn facts<'s>(&self, lit: Node, anc: &[Node], src: &'s [u8], lang: Language, callees: &mut Callees<'s>) -> Facts {
         let mut f = Facts::default();
         let cfg = &self.cfg;
         let is_assert = |s: &str| s.starts_with("assert") || s.starts_with("debug_assert");
         // Python docstring: the first statement of a module, class or function body.
-        if lang == Language::Python && cfg.exclude_docstrings && let Some(es) = lit.parent() && es.kind() == "expression_statement" && let Some(body) = es.parent() {
-            let container = body.kind() == "module" || (body.kind() == "block" && body.parent().is_some_and(|p| matches!(p.kind(), "function_definition" | "class_definition")));
+        let up = |i: usize| anc.len().checked_sub(i).and_then(|j| anc.get(j)).copied();
+        if lang == Language::Python && cfg.exclude_docstrings && let Some(es) = up(1) && es.kind() == "expression_statement" && let Some(body) = up(2) {
+            let container = body.kind() == "module" || (body.kind() == "block" && up(3).is_some_and(|p| matches!(p.kind(), "function_definition" | "class_definition")));
             if container {
                 let mut c = body.walk();
                 let first = body.named_children(&mut c).find(|ch| !is_comment(ch.kind()));
@@ -364,7 +453,8 @@ impl Walker {
         }
         let mut in_function = false;
         let mut child = lit;
-        while let Some(p) = child.parent() {
+        let parent = up(1).unwrap_or(lit);
+        for &p in anc.iter().rev() {
             let k = p.kind();
             match lang {
                 Language::Rust => match k {
@@ -381,9 +471,9 @@ impl Walker {
                     }
                     "return_expression" if !in_function => f.message = true,
                     "call_expression" => {
-                        let callee = p.child_by_field_name("function").map(|c| text(c, src)).unwrap_or("");
-                        let segs = segments(callee);
-                        if child.kind() == "arguments" && child == lit.parent().unwrap_or(child) && self.gettext.contains(callee) {
+                        let c = callee_facts(callees, p, src);
+                        let (callee, segs) = (c.short, c.pieces.as_slice());
+                        if child.kind() == "arguments" && child == parent && self.gettext.contains(callee) {
                             f.excluded = true;
                         }
                         if !in_function && (segs.last() == Some(&"Err") || segs.iter().any(|s| self.calls.contains(*s))) {
@@ -398,12 +488,12 @@ impl Walker {
                     "raise_statement" if !in_function && self.calls.contains("raise") => f.message = true,
                     "return_statement" if !in_function => f.message = true,
                     "call" => {
-                        let callee = p.child_by_field_name("function").map(|c| text(c, src)).unwrap_or("");
-                        let segs = segments(callee);
+                        let c = callee_facts(callees, p, src);
+                        let (callee, segs) = (c.short, c.pieces.as_slice());
                         if cfg.exclude_assert_calls && segs.last().is_some_and(|s| is_assert(s)) {
                             f.excluded = true;
                         }
-                        if child.kind() == "argument_list" && child == lit.parent().unwrap_or(child) && self.gettext.contains(callee) {
+                        if child.kind() == "argument_list" && child == parent && self.gettext.contains(callee) {
                             f.excluded = true;
                         }
                         if !in_function && segs.iter().any(|s| self.calls.contains(*s)) {
@@ -415,14 +505,16 @@ impl Walker {
                 _ => match k {
                     "import_statement" => f.excluded = true,
                     "export_statement" if child == lit && p.child_by_field_name("source") == Some(lit) => f.excluded = true,
+                    // `declare module '../..' {`: an ambient module name is a module specifier.
+                    "module" | "internal_module" if child == lit && p.child_by_field_name("name") == Some(lit) => f.excluded = true,
                     "jsx_attribute" if cfg.exclude_jsx_attributes => f.excluded = true,
                     "decorator" if cfg.exclude_attributes => f.excluded = true,
                     "throw_statement" if !in_function && self.calls.contains("throw") => f.message = true,
                     "return_statement" if !in_function => f.message = true,
                     "call_expression" | "new_expression" => {
-                        let callee = p.child_by_field_name("function").or_else(|| p.child_by_field_name("constructor")).map(|c| text(c, src)).unwrap_or("");
-                        let segs = segments(callee);
-                        if child.kind() == "arguments" && child == lit.parent().unwrap_or(child) {
+                        let c = callee_facts(callees, p, src);
+                        let (callee, segs) = (c.short, c.pieces.as_slice());
+                        if child.kind() == "arguments" && child == parent {
                             if matches!(callee, "require" | "import") || self.gettext.contains(callee) {
                                 f.excluded = true;
                             }
@@ -459,10 +551,15 @@ impl Walker {
     /// The config role a value sits in: `(role name, named const)`. `skip_calls` lets a number
     /// look through `Duration::from_secs(300)` to the field it initialises; a builder call
     /// (`.timeout(300)`) is the role itself.
-    fn role_of(v: Node, src: &[u8], lang: Language, skip_calls: bool) -> (Option<String>, Option<String>) {
+    fn role_of(v: Node, anc: &[Node], src: &[u8], lang: Language, skip_calls: bool) -> (Option<String>, Option<String>) {
         let mut v = v;
+        let mut i = anc.len();
         loop {
-            let Some(p) = v.parent() else { return (None, None) };
+            if i == 0 {
+                return (None, None);
+            }
+            i -= 1;
+            let p = anc[i];
             let k = p.kind();
             let is_value = |field: &str| p.child_by_field_name(field) == Some(v);
             let name = |field: &str| p.child_by_field_name(field).map(|n| text(n, src).to_string());
@@ -471,33 +568,47 @@ impl Walker {
                 (Language::Rust, "field_initializer") if is_value("value") => return (name("field"), None),
                 (Language::Python, "keyword_argument" | "default_parameter" | "typed_default_parameter") if is_value("value") => return (name("name"), None),
                 (Language::Python, "assignment") if is_value("right") => {
+                    // Only a module-level assignment is a config role; a local is not.
+                    let module_level = i >= 2 && anc[i - 2].kind() == "module";
+                    if !module_level {
+                        return (None, None);
+                    }
                     let left = p.child_by_field_name("left").filter(|l| l.kind() == "identifier").map(|l| text(l, src).to_string());
-                    let module_level = p.parent().and_then(|es| es.parent()).is_some_and(|m| m.kind() == "module");
-                    let named = left.clone().filter(|l| module_level && is_all_caps(l));
+                    let named = left.clone().filter(|l| is_all_caps(l));
                     return (left, named);
                 }
                 (Language::Rust | Language::Python, _) if matches!(k, "arguments" | "argument_list") => {}
                 (Language::Rust | Language::Python, _) => return (None, None),
                 (_, "pair") if is_value("value") => return (name("key").map(|n| n.trim_matches(['"', '\'']).to_string()), None),
                 (_, "variable_declarator") if is_value("value") => {
-                    let decl = p.parent();
+                    // Only a top-level `const` is a config role; a local or a `let` is not.
+                    let decl = (i >= 1).then(|| anc[i - 1]);
                     let is_const = decl.and_then(|d| d.child_by_field_name("kind")).is_some_and(|kk| text(kk, src) == "const");
-                    let top = decl.and_then(|d| d.parent()).is_some_and(|g| matches!(g.kind(), "program" | "export_statement"));
+                    let top = i >= 2 && matches!(anc[i - 2].kind(), "program" | "export_statement");
+                    if !(is_const && top) {
+                        return (None, None);
+                    }
                     let n = name("name");
-                    return (n.clone(), if is_const && top { n } else { None });
+                    return (n.clone(), n);
                 }
                 (_, "arguments") => {}
                 _ => return (None, None),
             }
             // `v` is inside the arguments of a call: a builder method names the role; a plain
             // call is looked through for numbers only.
-            let Some(call) = p.parent() else { return (None, None) };
+            if i == 0 {
+                return (None, None);
+            }
+            let call = anc[i - 1];
             let callee = call.child_by_field_name("function").or_else(|| call.child_by_field_name("constructor"));
             match callee.map(|c| c.kind()) {
                 Some("field_expression") => return (callee.and_then(|c| c.child_by_field_name("field")).map(|n| text(n, src).to_string()), None),
                 Some("member_expression") => return (callee.and_then(|c| c.child_by_field_name("property")).map(|n| text(n, src).to_string()), None),
                 Some("attribute") => return (callee.and_then(|c| c.child_by_field_name("attribute")).map(|n| text(n, src).to_string()), None),
-                _ if skip_calls => v = call,
+                _ if skip_calls => {
+                    v = call;
+                    i -= 1;
+                }
                 _ => return (None, None),
             }
         }
@@ -509,7 +620,7 @@ impl Walker {
 
     /// The literal, if kept, and whether it was prose-shaped (length, words, whitespace, not
     /// `nonprose_regex`) whatever its role.
-    fn string_lit(&self, n: Node, src: &[u8], lang: Language) -> (Option<Lit>, bool) {
+    fn string_lit<'s>(&self, n: Node, anc: &[Node], src: &'s [u8], lang: Language, callees: &mut Callees<'s>) -> (Option<Lit>, bool) {
         // Python's adjacent-string concatenation is one literal.
         let raw: String = if n.kind() == "concatenated_string" {
             let mut c = n.walk();
@@ -521,7 +632,7 @@ impl Walker {
         if raw.trim().is_empty() {
             return (None, false);
         }
-        let f = self.facts(n, src, lang);
+        let f = self.facts(n, anc, src, lang, callees);
         if f.excluded {
             return (None, false);
         }
@@ -537,7 +648,7 @@ impl Walker {
             && masked.contains(' ')
             && !self.nonprose.as_ref().is_some_and(|r| r.is_match(raw));
         let prose = shaped && (!cfg.require_message_role || f.message);
-        let (role, named_const) = Self::role_of(n, src, lang, false);
+        let (role, named_const) = Self::role_of(n, anc, src, lang, false);
         if prose {
             return (Some(Lit { line, text: raw.to_string(), key: masked, class: Class::Prose, config_class: None, role: role.map(|r| fold(&r)), named_const, words }), true);
         }
@@ -545,14 +656,16 @@ impl Walker {
         (Some(Lit { line, text: raw.to_string(), key: raw.to_string(), class: Class::Config, config_class: Some(class), role: role.map(|r| fold(&r)), named_const, words }), shaped)
     }
 
-    fn number_lit(&self, n: Node, src: &[u8], lang: Language) -> Option<Lit> {
+    fn number_lit<'s>(&self, n: Node, anc: &[Node], src: &'s [u8], lang: Language, callees: &mut Callees<'s>) -> Option<Lit> {
         if !self.number_class {
             return None;
         }
         let mut v = n;
+        let mut anc = anc;
         let mut t = text(n, src).to_string();
-        if let Some(p) = n.parent() && matches!(p.kind(), "unary_expression" | "unary_operator") && text(p, src).starts_with('-') {
-            v = p;
+        if let Some(p) = anc.last() && matches!(p.kind(), "unary_expression" | "unary_operator") && text(*p, src).starts_with('-') {
+            v = *p;
+            anc = &anc[..anc.len() - 1];
             t = format!("-{t}");
         }
         let (key, value, is_float) = number_value(&t)?;
@@ -565,9 +678,9 @@ impl Walker {
         if self.ignored(&t, &key) {
             return None;
         }
-        let (role, named_const) = Self::role_of(v, src, lang, true);
+        let (role, named_const) = Self::role_of(v, anc, src, lang, true);
         let role = role?;
-        if self.facts(n, src, lang).excluded {
+        if self.facts(v, anc, src, lang, callees).excluded {
             return None;
         }
         Some(Lit { line: n.start_position().row + 1, text: t, key, class: Class::Config, config_class: Some("number".into()), role: Some(fold(&role)), named_const, words: 1 })
@@ -916,7 +1029,7 @@ pub fn analyze(sides: &[FileSide], cfg: &Cfg) -> StringsReport {
         let total = reasons.len();
         if total > cfg.max_reported_per_file {
             reasons.truncate(cfg.max_reported_per_file);
-            reasons.push(format!("(+{} more repeated literals in repeated_literals)", total - cfg.max_reported_per_file));
+            reasons.push(format!("(+{} more repeated-literal families in repeated_literals)", total - cfg.max_reported_per_file));
         }
         fs.reasons = reasons;
     }
@@ -1039,13 +1152,28 @@ mod tests {
         let py = "\"\"\"module docstring here\"\"\"\nfrom x import y\ndef f():\n    \"\"\"function docstring here\"\"\"\n    assert a, \"assert message here\"\n    self.assertEqual(a, \"unittest message here\")\n    gettext(\"gettext id here\")\nclass C:\n    'class docstring here'\n    def g(self):\n        return \"kept return text\"\n";
         let l = lits("b.py", py, &cfg);
         assert_eq!(l.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), vec!["kept return text"]);
-        let ts = "import { x } from 'some/module here';\nexport { y } from 'other/module here';\nconst m = require('required module here');\nexpect(a).toBe('expected value here');\nassert.equal(a, 'assert value here');\nconst el = <div title=\"jsx attribute text\">kept</div>;\n@Component({ text: 'decorator text here' })\nclass C {}\nfunction f() { return 'kept ts text here'; }\n";
+        let ts = "import { x } from 'some/module here';\nexport { y } from 'other/module here';\nconst m = require('required module here');\nexpect(a).toBe('expected value here');\nassert.equal(a, 'assert value here');\nconst el = <div title=\"jsx attribute text\">kept</div>;\n@Component({ text: 'decorator text here' })\nclass C {}\ndeclare module 'ambient/module here' { interface X {} }\nfunction f() { return 'kept ts text here'; }\n";
         let l = lits("c.tsx", ts, &cfg);
         assert_eq!(l.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), vec!["kept ts text here"]);
         // Knobs turn the exclusions off.
         let on = Cfg { exclude_assert_calls: false, exclude_docstrings: false, exclude_attributes: false, exclude_jsx_attributes: false, ..cfg.clone() };
         assert_eq!(lits("b.py", py, &on).len(), 6);
         assert!(lits("c.tsx", ts, &on).iter().any(|l| l.text == "jsx attribute text"));
+        assert!(!lits("c.tsx", ts, &on).iter().any(|l| l.text.contains("ambient")));
+        // An unterminated TS string ending on a multi-byte char (a MISSING quote) is no panic.
+        let broken = lits("d.ts", "foo(\"héllö wörld text hére\n)\n", &on);
+        assert_eq!(broken.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), vec!["héllö wörld text hére"]);
+        // A literal deep in a builder chain costs one ancestor walk, not the chain's text at
+        // every level: 300 `.arg(Arg::new("...").help("..."))` calls stay well under a second.
+        let mut chain = String::from("fn cli() -> Cmd {\n    Cmd::new(\"x\")\n");
+        for i in 0..300 {
+            chain.push_str(&format!("        .arg(Arg::new(\"flag{i}\").help(\"help text for flag number {i}\"))\n"));
+        }
+        chain.push_str("}\n");
+        let started = std::time::Instant::now();
+        let l = lits("e.rs", &chain, &Cfg { require_message_role: false, ..loose() });
+        assert_eq!(l.len(), 300);
+        assert!(started.elapsed().as_secs_f64() < 5.0, "{:?}", started.elapsed());
         assert!(lits("a.rs", rs, &on).iter().any(|l| l.text == "attribute string here"));
         // Test regions stay excluded either way; an ignore pattern drops what it matches.
         assert!(!lits("a.rs", rs, &on).iter().any(|l| l.text.contains("inline test")));
@@ -1118,6 +1246,15 @@ mod tests {
         ], "{heads:?}");
         // 240 sits in two files under different roles: no family. 0.5 twice in one file: no family.
         assert!(!heads.iter().any(|h| h.contains("240") || h.contains("0.5")));
+        // A local variable is not a config role: Python function-local assignments and TS
+        // `let` / function-local declarators never form a number family.
+        let locals = [
+            src("src/l1.py", "def f():\n    timeout = 300\n    return timeout\n"), src("src/l2.py", "def g():\n    timeout = 300\n    return timeout\n"),
+            src("src/l1.ts", "function f() { let retries = 300; const inner = 300; return retries + inner }\n"), src("src/l2.ts", "function g() { let retries = 300; const inner = 300; return retries + inner }\n"),
+            src("src/l3.py", "TIMEOUT = 300\n"), src("src/l4.py", "TIMEOUT = 300\n"),
+        ];
+        let heads: Vec<String> = run(&locals, &cfg).config.iter().map(|f| family_head(f, 80)).collect();
+        assert_eq!(heads, vec!["number 300 as timeout"], "{heads:?}");
         let ts = r.config.iter().find(|f| f.config_class.as_deref() == Some("strftime")).unwrap();
         assert_eq!(ts.named_const.as_ref().map(|n| (n.name.as_str(), n.file.as_str(), n.line)), Some(("TS_FMT", "src/a.rs", 1)));
         assert_eq!(ts.line, " 2 files   2x  timestamp pattern \"%Y-%m-%dT%H:%MZ\"  src/a.rs:1, src/b.rs:1; const TS_FMT at src/a.rs:1");
@@ -1129,7 +1266,7 @@ mod tests {
         // The per-file cap, then the remainder line.
         let capped = run(&files, &Cfg { max_reported_per_file: 2, ..cfg.clone() });
         assert_eq!(capped.files["src/d.ts"].reasons.len(), 3);
-        assert_eq!(capped.files["src/d.ts"].reasons[2], "(+2 more repeated literals in repeated_literals)");
+        assert_eq!(capped.files["src/d.ts"].reasons[2], "(+2 more repeated-literal families in repeated_literals)");
         // ignore_numbers and the class list are knobs.
         let no_num = run(&files, &Cfg { config_classes: vec!["strftime".into(), "env_name".into()], ..cfg.clone() });
         assert_eq!(no_num.config.len(), 2);

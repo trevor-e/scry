@@ -661,8 +661,8 @@ pub struct Helpers {
     /// Drop a family when two defining files share a basename in different directories
     /// (`jsx/base.ts` vs `jsx/dom/base.ts`): a server / DOM or enabled / disabled pair.
     pub suppress_path_suffix_twins: bool,
-    /// Drop a family when one defining file imports the family's name (or everything) from
-    /// another: a re-export wrapper, not a copy.
+    /// Drop a family when its defining files are linked by an import edge either way (a
+    /// re-export wrapper, or a deliberate twin beside the module it imports), not a copy.
     pub suppress_import_linked: bool,
     /// Score weight of the percentile of `helper_copies + inlined_idioms` (0: the section and
     /// reasons print, the ranking ignores them).
@@ -673,8 +673,9 @@ pub struct Helpers {
     pub max_helper_tokens: usize,
     /// Inline copies (outside any definition of the same name) needed to report a helper…
     pub min_occurrences: usize,
-    /// …with at least this many distinct normalized tokens in its body, one keyword or operator
-    /// among them and one kept name or literal.
+    /// …with at least this many distinct token kinds in its body (bound name, kept name,
+    /// number, string, keyword / punctuation), one keyword or operator among them and one kept
+    /// name or literal.
     pub min_distinct_kinds: usize,
     /// One bound-name (`ID`) slot of the helper may match any single expression node at the
     /// hit (`n == 1` matching `e.rules == 1`); off, hits are exact token sequences.
@@ -867,7 +868,8 @@ pub struct Clumps {
     /// callback arrows passed as arguments.
     pub skip_trait_impls: bool,
     /// Parameter name sets of callback protocols; a function whose parameters cover one is
-    /// never analysed.
+    /// never analysed. Receivers (`self`, `cls`, `this`) are dropped before the check, so a
+    /// tuple naming one never matches.
     pub protocol_tuples: Vec<Vec<String>>,
     /// Leave out Python `__dunder__` functions.
     pub skip_dunder: bool,
@@ -964,8 +966,9 @@ pub struct Declared {
     /// toml::from_str(…)`) are config wherever they live; JSON and YAML targets are usually
     /// payloads and frontmatter, so they need the file or name rule unless listed here.
     pub config_formats: Vec<String>,
-    /// Methods of an `impl` block named like the write side of a config (`render`, `to_toml`,
-    /// `serialize`, …): their field reads are the Serialize path, never a read.
+    /// Methods named like the write side of a config (`render`, `to_toml`, `serialize`, …) in
+    /// an `impl` block for a config struct itself: their field reads are the Serialize path,
+    /// never a read. The same names on any other type read normally.
     pub serialize_fn_regex: String,
     /// The config structs are public API: check lib-only crates too.
     pub config_is_public_api: bool,
@@ -1128,10 +1131,12 @@ mod tests {
     fn partial_file_overrides_only_what_it_names() {
         let dir = std::env::temp_dir().join(format!("scry-cfg-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(FILE_NAME), "[clones]\nmin_tokens = 50\n\n[report.with_history]\nhotspot = 0.6\n\n[discover]\ntest_dirs = [\"qa\"]\n").unwrap();
+        std::fs::write(dir.join(FILE_NAME), "[clones]\nmin_tokens = 50\n\n[report.with_history]\nhotspot = 0.6\n\n[discover]\ntest_dirs = [\"qa\"]\n\n[clumps]\nmin_typed_slots = 1\nprotocol_tuples = [[\"a\", \"b\"]]\n").unwrap();
         let c = Config::load(&dir, None).unwrap();
         assert_eq!(c.clones.min_tokens, 50);
         assert_eq!(c.clones.k, 30);
+        assert_eq!((c.clumps.min_typed_slots, c.clumps.max_group), (1, 4));
+        assert_eq!(c.clumps.protocol_tuples, vec![vec!["a".to_string(), "b".to_string()]]);
         assert_eq!(c.report.with_history.hotspot, 0.6);
         assert_eq!(c.report.with_history.fixes, 0.15);
         assert_eq!(c.discover.test_dirs, vec!["qa"]);

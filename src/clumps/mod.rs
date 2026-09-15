@@ -53,6 +53,11 @@ pub struct FileSide {
     pub skipped_protocol: usize,
     pub skipped_other: usize,
     pub skipped_duplicates: usize,
+    /// Identifiers referenced outside the analysed functions: the bodies of skipped units and
+    /// the file's statements outside any unit (a dispatch table, a module-level call), imports
+    /// and test regions apart. A member named here has a caller the single-caller note cannot
+    /// name, so the note is withheld.
+    pub other_refs: HashSet<String>,
 }
 
 fn text<'a>(node: Node, src: &'a [u8]) -> &'a str {
@@ -240,8 +245,16 @@ fn skip_reason(node: Node, body: Node, name: &str, src: &[u8], lang: Language, c
             if !cfg.skip_trait_impls {
                 return None;
             }
-            if node.kind() == "arrow_function" && node.parent().is_some_and(|p| p.kind() == "arguments") {
-                return Some(Skip::TraitImpl);
+            // A callback passed as an argument: an arrow directly in `arguments`, or a method /
+            // function inside an object literal that is itself an argument (Node's
+            // `new Writable({ write(chunk, encoding, callback) {} })` protocol).
+            let mut cur = node.parent();
+            while let Some(p) = cur {
+                match p.kind() {
+                    "arguments" => return Some(Skip::TraitImpl),
+                    "object" | "pair" | "method_definition" | "parenthesized_expression" | "as_expression" | "satisfies_expression" | "type_assertion" => cur = p.parent(),
+                    _ => break,
+                }
             }
             if node.kind() == "method_definition"
                 && let Some(body) = node.parent().filter(|p| p.kind() == "class_body")
@@ -276,7 +289,9 @@ impl Walker {
         let src = file.content.as_bytes();
         let lang = file.lang;
         let mut seen: HashSet<String> = HashSet::new();
+        let mut units: HashSet<usize> = HashSet::new();
         for node in metrics::unit_nodes(root, lang) {
+            units.insert(node.id());
             if lang == Language::Rust && regions::contains(regions, node.start_byte()) {
                 continue;
             }
@@ -285,21 +300,25 @@ impl Walker {
             match skip_reason(node, body, name.rsplit('.').next().unwrap_or(&name), src, lang, &self.cfg) {
                 Some(Skip::TraitImpl) => {
                     side.skipped_trait_impls += 1;
+                    side.other_refs.extend(body_refs(body, src, lang));
                     continue;
                 }
                 Some(Skip::Other) => {
                     side.skipped_other += 1;
+                    side.other_refs.extend(body_refs(body, src, lang));
                     continue;
                 }
                 None => {}
             }
             if self.cfg.dedupe_same_name_in_file && !seen.insert(name.clone()) {
                 side.skipped_duplicates += 1;
+                side.other_refs.extend(body_refs(body, src, lang));
                 continue;
             }
             let params = params_of(node, src, lang, self.cfg.max_params);
             if self.protocols.iter().any(|p| p.iter().all(|n| params.iter().any(|(pn, _)| pn == n))) {
                 side.skipped_protocol += 1;
+                side.other_refs.extend(body_refs(body, src, lang));
                 continue;
             }
             let refs = body_refs(body, src, lang);
@@ -311,6 +330,28 @@ impl Walker {
                 })
                 .collect();
             side.functions.push(FnSite { name, line: node.start_position().row + 1, params, refs });
+        }
+        // Statements outside every unit (a dispatch table, a module-level call), imports,
+        // comments and test regions left out.
+        let mut stack: Vec<Node> = vec![root];
+        while let Some(n) = stack.pop() {
+            let kind = n.kind();
+            if units.contains(&n.id()) {
+                continue;
+            }
+            if matches!(kind, "comment" | "line_comment" | "block_comment" | "use_declaration" | "extern_crate_declaration" | "import_statement" | "import_from_statement" | "future_import_statement") {
+                continue;
+            }
+            if lang == Language::Rust && regions::contains(regions, n.start_byte()) {
+                continue;
+            }
+            if matches!(kind, "identifier" | "shorthand_field_identifier" | "shorthand_property_identifier") {
+                side.other_refs.insert(text(n, src).to_string());
+                continue;
+            }
+            let mut c = n.walk();
+            let children: Vec<Node> = n.children(&mut c).collect();
+            stack.extend(children.into_iter().rev());
         }
         side
     }
@@ -405,15 +446,16 @@ fn bare(name: &str) -> &str {
 }
 
 /// `plan_repair src/cmd/repair.rs:79, plan_start src/cmd/flow.rs:300, plan_ship :853`: the path
-/// is elided when it repeats the previous site's; at most `listed`, then `+N more`.
+/// is elided when it repeats the previous site's; at most `listed`, then `+N more`. Names are
+/// as metrics reports them (`ReadByLine.new`), so two types' constructors read apart.
 fn sites_text(members: &[Member], listed: usize) -> String {
     let mut parts = Vec::new();
     let mut prev = "";
     for m in members.iter().take(listed) {
         if m.file == prev {
-            parts.push(format!("{} :{}", bare(&m.name), m.line));
+            parts.push(format!("{} :{}", m.name, m.line));
         } else {
-            parts.push(format!("{} {}:{}", bare(&m.name), m.file, m.line));
+            parts.push(format!("{} {}:{}", m.name, m.file, m.line));
         }
         prev = &m.file;
     }
@@ -569,6 +611,12 @@ pub fn analyze(sides: &[FileSide], cfg: &Cfg) -> ClumpsReport {
             let mut ok = true;
             for s in &sites {
                 let me = bare(&sides[s.0].functions[s.1].name);
+                // A reference from outside the analysed functions (a skipped trait method, a
+                // dispatch table) is a caller the note cannot name.
+                if sides.iter().any(|side| side.other_refs.contains(me)) {
+                    ok = false;
+                    break;
+                }
                 let callers: Vec<Site> = sides
                     .iter()
                     .enumerate()
@@ -661,7 +709,11 @@ pub fn totals_line(r: &ClumpsReport, prefix: &str) -> String {
 pub fn render(r: &ClumpsReport, top: usize, prefix: &str) -> String {
     use std::fmt::Write;
     let mut o = String::new();
-    let _ = writeln!(o, "{}", totals_line(r, prefix));
+    if r.totals.functions == 0 {
+        let _ = writeln!(o, "none");
+    } else {
+        let _ = writeln!(o, "{}", totals_line(r, prefix));
+    }
     for n in &r.notes {
         let _ = writeln!(o, "note  {n}");
     }
@@ -794,10 +846,14 @@ function f(a: number, b: number, c: number): void;
 function f(a: number, b: number, c: number) { return a; }
 arr.map((a: number, b: number, c: number) => a);
 const g = (a: number, b: number, c: number) => a;
+const w = new Writable({ write(chunk: Buffer, _encoding: string, callback: () => void) { callback() }, final: function (a: number, b: number, c: number) { return a } });
+run(({ a, b }) => a, { handle: (a: number, b: number, c: number) => a } as Opts);
 ";
         let s = side("c.ts", ts, &cfg);
+        // Methods and functions inside an object literal passed as an argument (`new Writable({
+        // write(...) {} })`) are protocol callbacks too.
         assert_eq!(s.functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), vec!["L.m", "f", "g"]);
-        assert_eq!(s.skipped_trait_impls, 2);
+        assert_eq!(s.skipped_trait_impls, 6);
     }
 
     #[test]
@@ -843,6 +899,14 @@ const g = (a: number, b: number, c: number) => a;
         // Two callers, or none, drop the note; the knob turns it off.
         let flow2 = format!("{FLOW}pub fn run2() {{ plan_start(); }}\n");
         assert_eq!(run(&[src("src/cmd/flow.rs", &flow2), src("src/cmd/repair.rs", REPAIR)], &cfg).clumps[0].single_caller, None);
+        // A caller the pass does not analyse (a trait method, a dispatch table) is a caller too.
+        let trait_caller = format!("{FLOW}impl Command for X {{ fn execute(&self) {{ plan_ship(); }} }}\n");
+        assert_eq!(run(&[src("src/cmd/flow.rs", &trait_caller), src("src/cmd/repair.rs", REPAIR)], &cfg).clumps[0].single_caller, None);
+        let table = format!("{FLOW}static TABLE: &[fn()] = &[plan_park];\n");
+        assert_eq!(run(&[src("src/cmd/flow.rs", &table), src("src/cmd/repair.rs", REPAIR)], &cfg).clumps[0].single_caller, None);
+        // An import of the name, or a test, is not.
+        let imported = format!("use crate::cmd::flow::plan_start;\n{FLOW}#[cfg(test)]\nmod tests {{ fn t() {{ plan_drop(); }} }}\n");
+        assert_eq!(run(&[src("src/cmd/flow.rs", &imported), src("src/cmd/repair.rs", REPAIR)], &cfg).clumps[0].single_caller.as_deref(), Some("run"));
         assert_eq!(run(&[src("src/cmd/flow.rs", FLOW), src("src/cmd/repair.rs", REPAIR)], &Cfg { note_single_caller: false, ..cfg.clone() }).clumps[0].single_caller, None);
     }
 

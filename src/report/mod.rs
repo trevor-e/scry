@@ -1058,7 +1058,7 @@ mod tests {
         let mut d = DeclaredReport { totals: Totals { manifests: 1, deps: 24, checked_deps: 21, orphans: 1, features: 1, config_structs: 8, knobs: 33, unread_knobs: 4, ..Totals::default() }, notes: vec!["2 dev-dependencies not checked (check_dev_dependencies)".into()], ..DeclaredReport::default() };
         d.orphans.push(Orphan { manifest: "Cargo.toml".into(), name: "pulldown-cmark".into(), ident: "pulldown_cmark".into(), line: 39, section: "dependencies".into(), optional: false, gated_by: vec![], birth: Some(("988d9b5".into(), "2026-08-31".into())), age_days: Some(13), commits_since: Some(101), ever_imported: None, doc_mention: Some(("DESIGN.md".into(), 632)), lint_silenced: None, line_text: orphan.into() });
         d.unread_knobs.push(UnreadKnob { section: "[ci.homerunner]".into(), struct_name: "HomerunnerCfg".into(), file: "src/config.rs".into(), start_line: 182, end_line: 204, knobs: vec!["homerunner".into(), "bin".into(), "db".into(), "api".into()], unread: vec!["homerunner".into()], source: "TOML".into(), doc: Some(("docs/config.md".into(), 91, 94)), test_only: false, rollup: true, line_text: knob.into() });
-        d.files.insert("src/config.rs".into(), FileDeclared { unread_knobs: vec![("ci.homerunner.homerunner".into(), 182)], test_seams: Vec::new(), reasons: vec![knob.into()] });
+        d.files.insert("src/config.rs".into(), FileDeclared { unread_knobs: vec![("ci.homerunner".into(), 182)], test_seams: Vec::new(), reasons: vec![knob.into()] });
         let none = Cfg {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 0.0, dead: 0.0, strings: 0.0 },
             ..Cfg::default()
@@ -1066,7 +1066,7 @@ mod tests {
         let inputs = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: &d, declared_weight: w };
         let r = build(inputs(1.0), 10, &none, &td());
         let a = r.hotspots.iter().find(|h| h.path == "src/config.rs").unwrap();
-        assert_eq!((a.signals.unread_knobs, a.unread_knobs.clone()), (1, vec![("ci.homerunner.homerunner".to_string(), 182)]));
+        assert_eq!((a.signals.unread_knobs, a.unread_knobs.clone()), (1, vec![("ci.homerunner".to_string(), 182)]));
         assert_eq!(a.reasons.last().unwrap(), knob);
         let b = r.hotspots.iter().find(|h| h.path == "src/main.rs").unwrap();
         assert!(a.score > 0.0 && b.score == 0.0 && b.signals.unread_knobs == 0);

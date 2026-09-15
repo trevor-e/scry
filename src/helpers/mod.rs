@@ -318,6 +318,9 @@ pub struct HelperDef {
 impl HelperDef {
     /// `plural(n, noun) -> String`.
     pub fn signature(&self) -> String {
+        if self.kind == "const" {
+            return self.qualified.clone();
+        }
         let ret = if self.ret.is_empty() { String::new() } else { format!(" -> {}", self.ret) };
         format!("{}({}){ret}", self.qualified, self.param_names.join(", "))
     }
@@ -554,7 +557,8 @@ impl Walker {
         let after = src.get(name.end_byte()..name.end_byte() + 1).and_then(|b| std::str::from_utf8(b).ok()).unwrap_or("");
         let after = if matches!(after, "(" | "<" | ":" | " " | "=") { after } else { "" };
         out.push(HelperDef {
-            needle: format!("{keyword} {nm}{after}"),
+            // A Python module-level const has no keyword: `DEFAULT_TIMEOUT =`, at column 0.
+            needle: if keyword.is_empty() { format!("{nm}{after}") } else { format!("{keyword} {nm}{after}") },
             name: nm,
             lang: lang_family(file.lang),
             qualified,
@@ -566,7 +570,8 @@ impl Walker {
             in_test,
             params: n,
             param_names: names,
-            ret: ret.map_or(String::new(), |r| norm_ws(text(r, src))),
+            // A TS `return_type` is the `type_annotation` with its leading colon.
+            ret: ret.map_or(String::new(), |r| norm_ws(text(r, src).trim_start().trim_start_matches(':'))),
             first_param_type: first_param_type(params, src),
             match_over_strings: kind == "fn" && body.is_some_and(|b| match_over_strings(b, file.lang)),
             body: body_toks,
@@ -975,7 +980,10 @@ fn match_at(seq: &[Tok], stream: &[STok], i: usize, wildcard: bool) -> Option<us
                     }
                 }
                 q += 1;
-                if depth == 0 && q > p + 1 && let Some(end) = exact(j + 1, q) {
+                // A run of tokens, or one name / literal on its own (`COUNT == 1`, `2 == 1`);
+                // a lone punctuation token is no expression.
+                let single_ok = q == p + 1 && matches!(tk.class, Class::Id | Class::Name | Class::Num | Class::Str);
+                if depth == 0 && (q > p + 1 || single_ok) && let Some(end) = exact(j + 1, q) {
                     return Some(end);
                 }
             }
@@ -1023,11 +1031,11 @@ pub fn analyze(sides: &[FileSide], index: &SymbolIndex, deps: &DepGraph, git: Op
                 if cfg.suppress_path_suffix_twins && basename(a) == basename(b) {
                     suppressed = true;
                 }
-                if cfg.suppress_import_linked {
-                    let linked = |from: &str, to: &str| deps.edge(from, to).is_some_and(|e| e.glob || e.names.iter().any(|n| n == name || n.rsplit("::").next() == Some(name)));
-                    if linked(a, b) || linked(b, a) {
-                        suppressed = true;
-                    }
+                // Any import edge between the two files, either way (a re-export wrapper, or a
+                // deliberate twin next to the base it imports: jsx/dom/render.ts imports
+                // ../base and redefines getNameSpaceContext).
+                if cfg.suppress_import_linked && deps.connected(a, b) {
+                    suppressed = true;
                 }
             }
         }
@@ -1037,30 +1045,50 @@ pub fn analyze(sides: &[FileSide], index: &SymbolIndex, deps: &DepGraph, git: Op
         }
         let mut copies: Vec<&HelperDef> = copies;
         copies.sort_by(|a, b| a.file.cmp(&b.file).then(a.start_line.cmp(&b.start_line)));
-        let mut pairs: Vec<PairClass> = Vec::new();
-        let mut best = 0.0f64;
-        for i in 0..copies.len() {
-            for j in i + 1..copies.len() {
-                if copies[i].file == copies[j].file {
-                    continue;
+        let classify = |copies: &[&HelperDef]| -> (Vec<PairClass>, f64) {
+            let mut pairs: Vec<PairClass> = Vec::new();
+            let mut best = 0.0f64;
+            for i in 0..copies.len() {
+                for j in i + 1..copies.len() {
+                    if copies[i].file == copies[j].file {
+                        continue;
+                    }
+                    let sig = copies[i].params == copies[j].params && copies[i].ret == copies[j].ret;
+                    let jac = jaccard(&copies[i].body, &copies[j].body);
+                    let identical = copies[i].body == copies[j].body;
+                    let class = if !sig {
+                        FamilyClass::DifferentContract
+                    } else if identical {
+                        FamilyClass::Verbatim
+                    } else if jac >= cfg.min_body_jaccard {
+                        FamilyClass::Similar
+                    } else {
+                        FamilyClass::Divergent
+                    };
+                    best = best.max(jac);
+                    pairs.push(PairClass { a: i, b: j, class, jaccard: jac });
                 }
-                let sig = copies[i].params == copies[j].params && copies[i].ret == copies[j].ret;
-                let jac = jaccard(&copies[i].body, &copies[j].body);
-                let identical = copies[i].body == copies[j].body;
-                let class = if !sig {
-                    FamilyClass::DifferentContract
-                } else if identical {
-                    FamilyClass::Verbatim
-                } else if jac >= cfg.min_body_jaccard {
-                    FamilyClass::Similar
-                } else {
-                    FamilyClass::Divergent
-                };
-                best = best.max(jac);
-                pairs.push(PairClass { a: i, b: j, class, jaccard: jac });
+            }
+            (pairs, best)
+        };
+        let (mut pairs, mut best) = classify(&copies);
+        let mut class = pairs.iter().map(|p| p.class).max().unwrap_or(FamilyClass::Divergent);
+        // Without `report_divergent`, a copy that only shares its name and signature with the
+        // rest of a verbatim / similar family is not one of its copies.
+        if !cfg.report_divergent && matches!(class, FamilyClass::Verbatim | FamilyClass::Similar) {
+            let keep: Vec<bool> = (0..copies.len()).map(|i| {
+                let mine: Vec<&PairClass> = pairs.iter().filter(|p| p.a == i || p.b == i).collect();
+                mine.is_empty() || mine.iter().any(|p| p.class != FamilyClass::Divergent)
+            }).collect();
+            if keep.iter().any(|k| !k) {
+                copies = copies.iter().zip(&keep).filter(|(_, k)| **k).map(|(c, _)| *c).collect();
+                (pairs, best) = classify(&copies);
+                class = pairs.iter().map(|p| p.class).max().unwrap_or(FamilyClass::Divergent);
             }
         }
-        let class = pairs.iter().map(|p| p.class).max().unwrap_or(FamilyClass::Divergent);
+        let mut files: Vec<&str> = copies.iter().map(|d| d.file.as_str()).collect();
+        files.sort_unstable();
+        files.dedup();
         match class {
             FamilyClass::Verbatim => report.totals.verbatim += 1,
             FamilyClass::Similar => report.totals.similar += 1,
@@ -1151,7 +1179,7 @@ pub fn analyze(sides: &[FileSide], index: &SymbolIndex, deps: &DepGraph, git: Op
             d.kind == "fn"
                 && !cfg.inline_ignore_names.iter().any(|n| n == &d.name)
                 && (cfg.min_tokens..=cfg.max_helper_tokens).contains(&d.body.len())
-                && d.body.iter().collect::<HashSet<_>>().len() >= cfg.min_distinct_kinds
+                && d.body.iter().map(|t| t.class).collect::<HashSet<_>>().len() >= cfg.min_distinct_kinds
                 && d.body.iter().any(|t| t.class == Class::Other)
                 && d.body.iter().any(|t| matches!(t.class, Class::Name | Class::Str | Class::Num))
         })
@@ -1294,7 +1322,21 @@ pub fn analyze(sides: &[FileSide], index: &SymbolIndex, deps: &DepGraph, git: Op
             if !has_partner {
                 continue;
             }
-            let others: Vec<String> = f.copies.iter().enumerate().filter(|(j, _)| *j != i && f.copies[*j].file != c.file).map(|(j, o)| {
+            // Partners first (verbatim, similar, different contract, divergent), then path.
+            let mut others: Vec<(u8, usize)> = f.copies.iter().enumerate().filter(|(j, _)| *j != i && f.copies[*j].file != c.file).map(|(j, _)| {
+                let (lo, hi) = (i.min(j), i.max(j));
+                let rank = match f.pairs.iter().find(|p| p.a == lo && p.b == hi).map(|p| p.class) {
+                    Some(FamilyClass::Verbatim) => 0,
+                    Some(FamilyClass::Similar) => 1,
+                    Some(FamilyClass::DifferentContract) => 2,
+                    Some(FamilyClass::Divergent) => 3,
+                    None => 4,
+                };
+                (rank, j)
+            }).collect();
+            others.sort_unstable();
+            let others: Vec<String> = others.into_iter().map(|(_, j)| {
+                let o = &f.copies[j];
                 let (lo, hi) = (i.min(j), i.max(j));
                 let p = f.pairs.iter().find(|p| p.a == lo && p.b == hi);
                 let loc = format!("{}:{}", o.file, o.start_line);
@@ -1469,6 +1511,11 @@ mod tests {
         let ts = "export const toArray = (children: Child): Child[] => Array.isArray(children) ? children : [children]\n";
         let ts2 = "export function toArray(x: Child): Child[] { return Array.isArray(x) ? x : [x] }\n";
         assert_eq!(toks("s/a.ts", ts, "toArray"), toks("s/b.ts", ts2, "toArray"));
+        // A TS return type prints without the annotation colon; a const has no parameter list.
+        let side = Walker::new(&Cfg::default()).parse_side(&src("s/a.ts", ts));
+        assert_eq!(side.defs[0].signature(), "toArray(children) -> Child[]");
+        let side = Walker::new(&Cfg::default()).parse_side(&src("p/a.py", "DEFAULT_TIMEOUT = 30\n"));
+        assert_eq!((side.defs[0].signature(), side.defs[0].needle.as_str()), ("DEFAULT_TIMEOUT".to_string(), "DEFAULT_TIMEOUT "));
     }
 
     #[test]
@@ -1518,9 +1565,11 @@ mod tests { fn test_helper() {} }
         let setup = "fn render(root: &Map<String, Value>) -> Result<String> {\n    let mut s = serde_json::to_string_pretty(root).map_err(KsError::internal)?;\n    s.push('\\n');\n    Ok(s)\n}\n";
         let scan = "fn repo_relative(ctx: &Ctx, p: &Path) -> Option<String> {\n    p.strip_prefix(&ctx.root).ok().map(|r| r.display().to_string())\n}\n";
         let quirk = "fn repo_relative(ctx: &Ctx, p: &Path) -> String {\n    match p.strip_prefix(&ctx.root) { Ok(r) => r.display().to_string(), Err(_) => p.display().to_string() }\n}\n";
+        // Same name and signature as `render`, a body sharing nothing: not one of its copies.
+        let instructions = "fn render(topic: &Topic) -> Result<String> {\n    let body = topic.sections.iter().map(|s| s.text.trim()).collect::<Vec<_>>().join(\"\\n\\n\");\n    Ok(body)\n}\n";
         let files = [
             src("src/cmd/flow.rs", &flow), src("src/cmd/status.rs", &status), src("src/cmd/proposal.rs", proposal),
-            src("src/cache.rs", cache), src("src/setup.rs", setup), src("src/scan.rs", scan), src("src/cmd/quirk.rs", quirk),
+            src("src/cache.rs", cache), src("src/setup.rs", setup), src("src/instructions.rs", instructions), src("src/scan.rs", scan), src("src/cmd/quirk.rs", quirk),
             src("src/short.rs", "fn go() {}\n"), src("src/other.rs", "fn go() {}\n"),
         ];
         let r = run(&files, &Cfg::default());
@@ -1530,14 +1579,21 @@ mod tests { fn test_helper() {} }
         let plural = &r.families[0];
         assert_eq!(plural.copies.iter().map(|c| c.relation.as_str()).collect::<Vec<_>>(), vec!["", "different contract", "verbatim"]);
         assert_eq!(plural.pairs.iter().map(|p| p.class).collect::<Vec<_>>(), vec![FamilyClass::DifferentContract, FamilyClass::Verbatim, FamilyClass::DifferentContract]);
-        assert_eq!(r.files["src/cmd/flow.rs"].reasons, vec!["defines plural (lines 2-8), also defined as plural(n, noun) in src/cmd/proposal.rs:1 and verbatim in src/cmd/status.rs:3 - 3 copies; hoist one"]);
+        // The verbatim partner leads, then the other relations.
+        assert_eq!(r.files["src/cmd/flow.rs"].reasons, vec!["defines plural (lines 2-8), also defined verbatim in src/cmd/status.rs:3 and as plural(n, noun) in src/cmd/proposal.rs:1 - 3 copies; hoist one"]);
         assert_eq!(r.files["src/cmd/status.rs"].reasons, vec!["defines plural (lines 3-9), also defined verbatim in src/cmd/flow.rs:2 and as plural(n, noun) in src/cmd/proposal.rs:1 - 3 copies; hoist one"]);
         // The different-contract copy has no verbatim partner: section info, no reason.
         assert!(!r.files.contains_key("src/cmd/proposal.rs"));
         assert!(!r.files.contains_key("src/scan.rs"));
         assert!(r.families[2].line.starts_with("repo_relative: src/cmd/quirk.rs:1 repo_relative(ctx, p) -> String, src/scan.rs:1 repo_relative(ctx, p) -> Option<String> (Jaccard 0."), "{}", r.families[2].line);
         assert_eq!(r.families[0].line, "plural  3 copies in 3 files, verbatim (Jaccard 1.00): src/cmd/flow.rs:2-8, src/cmd/proposal.rs:1-3 (different contract), src/cmd/status.rs:3-9 (verbatim)");
+        assert_eq!(r.families[1].line, "render  2 copies in 2 files, verbatim (Jaccard 1.00): src/cache.rs:1-5, src/setup.rs:1-5 (verbatim)");
+        assert_eq!(r.files["src/cache.rs"].reasons, vec!["defines render (lines 1-5), also defined verbatim in src/setup.rs:1 - 2 copies; hoist one"]);
+        assert!(!r.files.contains_key("src/instructions.rs"));
         assert_eq!(r.files["src/cache.rs"].helper_copies, 1);
+        // With report_divergent the divergent copy stays in the family.
+        let r_div = run(&files, &Cfg { report_divergent: true, ..Cfg::default() });
+        assert_eq!(r_div.families[1].copies.len(), 3, "{:?}", r_div.families[1].line);
         // A same-named function in another language never joins a family.
         let mixed = [src("src/cache.rs", cache), src("src/setup.rs", setup), src("assets/app.js", "function render() { return 1 }\n")];
         assert_eq!(run(&mixed, &Cfg::default()).families[0].copies.len(), 2);
@@ -1598,9 +1654,13 @@ mod tests { fn test_helper() {} }
         let root = src("src/main.rs", "mod util;\nmod wrap;\nfn main() {}\n");
         let r = run(&[src("src/util.rs", body), src("src/wrap.rs", wrapper), root.clone()], &Cfg::default());
         assert!(r.families.is_empty() && r.totals.suppressed_twins == 1, "{r:?}");
-        // An unrelated import between the files is not a link.
+        // Any import between the two files links them (the deliberate twin beside its base:
+        // jsx/dom/render.ts imports ../base and redefines getNameSpaceContext).
         let other = "use crate::util::Other;\npub fn twin_fn(x: u8) -> u8 { x + 1 }\n";
-        assert_eq!(run(&[src("src/util.rs", body), src("src/wrap.rs", other), root.clone()], &Cfg::default()).families.len(), 1);
+        let r = run(&[src("src/util.rs", body), src("src/wrap.rs", other), root.clone()], &Cfg::default());
+        assert!(r.families.is_empty() && r.totals.suppressed_twins == 1, "{r:?}");
+        // Files with no edge between them stay a family.
+        assert_eq!(run(&[src("src/util.rs", body), src("src/lone.rs", body), root.clone()], &Cfg::default()).families.len(), 1);
         cfg.suppress_import_linked = false;
         assert_eq!(run(&[src("src/util.rs", body), src("src/wrap.rs", wrapper), root], &cfg).families.len(), 1);
         // Sibling directory globs.
@@ -1675,6 +1735,18 @@ mod tests { fn test_helper() {} }
         assert_eq!(r.inlined[0].hits.iter().map(|h| format!("{}:{}", h.file, h.line)).collect::<Vec<_>>(), vec!["src/cmd/done.rs:2", "src/cmd/init.rs:2", "src/triage.rs:2", "src/triage.rs:2"], "{:?}", r.inlined);
         assert_eq!(r.inlined[0].files, 3);
         assert_eq!(r.files["src/triage.rs"].inlined_idioms, 2);
+        // The slot also covers one free name or literal on its own (`COUNT == 1`, `2 == 1`).
+        let free = "fn free() -> String {\n    format!(\"{}{}\", if COUNT == 1 { \"\" } else { \"s\" }, if 2 == 1 { \"\" } else { \"s\" })\n}\n";
+        let r = run(&[src("src/cmd/flow.rs", &flow), src("src/free.rs", free), src("src/cmd/done.rs", done)], &cfg);
+        assert_eq!(r.inlined[0].hits.iter().map(|h| format!("{}:{}", h.file, h.line)).collect::<Vec<_>>(), vec!["src/cmd/done.rs:2", "src/free.rs:2", "src/free.rs:2"], "{:?}", r.inlined);
+        // min_distinct_kinds counts token kinds: a body of calls and punctuation alone has two.
+        let calls = "fn cwd_str() -> String {\n    std::env::current_dir().unwrap_or_default().display().to_string()\n}\n";
+        let use1 = "fn a() -> String { std::env::current_dir().unwrap_or_default().display().to_string() }\n";
+        let use2 = "fn b() -> String { std::env::current_dir().unwrap_or_default().display().to_string() }\n";
+        let kinds = [src("src/cwd.rs", calls), src("src/u1.rs", use1), src("src/u2.rs", use2)];
+        assert!(run(&kinds, &Cfg::default()).inlined.is_empty());
+        let r = run(&kinds, &Cfg { min_distinct_kinds: 2, ..Cfg::default() });
+        assert!(r.inlined.iter().any(|i| i.name == "cwd_str" && i.files == 2), "{:?}", r.inlined);
     }
 
     #[test]
@@ -1694,24 +1766,31 @@ mod tests { fn test_helper() {} }
         git(&["add", "."]);
         git(&["commit", "-q", "-m", "b\n\nClaude-Session: https://claude.ai/code/session_BBB"]);
         std::fs::write(dir.join("src/a.rs"), format!("pub(crate) {PLURAL}")).unwrap();
+        std::fs::create_dir_all(dir.join("p")).unwrap();
+        std::fs::write(dir.join("p/a.py"), "DEFAULT_TIMEOUT = 30\n").unwrap();
+        std::fs::write(dir.join("p/b.py"), "DEFAULT_TIMEOUT = 30\n").unwrap();
         git(&["add", "."]);
         git(&["commit", "-q", "-m", "visibility"]);
-        let files = [src("src/a.rs", &format!("pub(crate) {PLURAL}")), src("src/b.rs", &format!("pub fn other() {{}}\n{PLURAL}"))];
+        let files = [src("src/a.rs", &format!("pub(crate) {PLURAL}")), src("src/b.rs", &format!("pub fn other() {{}}\n{PLURAL}")), src("p/a.py", "DEFAULT_TIMEOUT = 30\n"), src("p/b.py", "DEFAULT_TIMEOUT = 30\n")];
         let cfg = Cfg::default();
         let (sides, index) = index_all(&files, &cfg, &DeadCfg::default());
         let deps = crate::deps::build(&files, &crate::config::Deps::default());
         let r = analyze(&sides, &index, &deps, Some(&dir), &cfg);
-        let f = &r.families[0];
+        let plural_of = |r: &HelpersReport| r.families.iter().position(|f| f.name == "plural").unwrap();
+        let f = &r.families[plural_of(&r)];
         assert_eq!((f.commits, f.sessions), (2, 2), "{f:?}");
         assert_eq!(f.copies.iter().map(|c| c.session.as_deref()).collect::<Vec<_>>(), vec![Some("session_AAA"), Some("session_BBB")]);
         assert!(r.files["src/a.rs"].reasons[0].ends_with(" - 2 copies from 2 commits / 2 sessions; hoist one"), "{:?}", r.files["src/a.rs"].reasons);
-        assert_eq!(r.notes, vec!["attribution: 2 git lookups"]);
+        // A Python module-level const (no keyword, column 0) is attributed too.
+        let py = r.families.iter().find(|f| f.name == "DEFAULT_TIMEOUT").unwrap();
+        assert!(py.copies.iter().all(|c| c.commit.is_some()) && py.commits == 1, "{py:?}");
+        assert_eq!(r.notes, vec!["attribution: 4 git lookups"]);
         let capped = Cfg { max_git_lookups: 1, ..Cfg::default() };
         let r = analyze(&sides, &index, &deps, Some(&dir), &capped);
-        assert_eq!((r.families[0].commits, r.totals.git_lookups_capped), (1, true));
+        assert_eq!((r.families.iter().map(|f| f.commits).sum::<usize>(), r.totals.git_lookups_capped), (1, true));
         let off = Cfg { attribute_commits: false, ..Cfg::default() };
         let r = analyze(&sides, &index, &deps, Some(&dir), &off);
-        assert_eq!(r.families[0].commits, 0);
+        assert_eq!(r.families[plural_of(&r)].commits, 0);
         assert!(r.files["src/a.rs"].reasons[0].ends_with(" - 2 copies; hoist one"));
         std::fs::remove_dir_all(&dir).unwrap();
     }

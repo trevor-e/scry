@@ -116,6 +116,9 @@ pub struct FileSide {
     /// Field name -> reads (`.field`, `Struct { field, .. }`, `v["field"]`), excluding `impl
     /// Default` / `Serialize` / `Deserialize` bodies; test context counted apart.
     pub field_reads: HashMap<String, RefCount>,
+    /// Field reads inside a `serialize_fn_regex` method, by the impl's type: they count as reads
+    /// unless that type is a config struct (its own write side).
+    pub serializer_reads: HashMap<String, HashMap<String, RefCount>>,
     /// String literals that look like a config file name (`scry.toml`), in order.
     pub config_literals: Vec<String>,
     /// Environment variables read outside test context, by literal name.
@@ -177,9 +180,13 @@ struct Ctx {
     in_tt: bool,
     /// Inside an `impl` block (any).
     in_impl: bool,
-    /// Inside `impl Default` / `impl Serialize` / `impl Deserialize`, or a method named like
-    /// the write side (`serialize_fn_regex`): no field read counts.
+    /// Inside `impl Default` / `impl Serialize` / `impl Deserialize`: no field read counts.
     excluded_impl: bool,
+    /// The `type` text range of the enclosing `impl` block.
+    impl_type: Option<(usize, usize)>,
+    /// Inside a method named like the write side (`serialize_fn_regex`): reads are recorded
+    /// under the impl's type, and count only when that type is not a config struct itself.
+    serializer: Option<(usize, usize)>,
     /// This node is the `function:` of a `call_expression`: `.method()` is not a field read.
     call_fn: bool,
 }
@@ -204,7 +211,14 @@ impl State<'_> {
         }
     }
 
-    fn field_read(&mut self, name: &str, test: bool) {
+    fn field_read(&mut self, name: &str, test: bool, ctx: Ctx) {
+        if let Some((a, b)) = ctx.serializer {
+            let ty = std::str::from_utf8(&self.src[a..b]).unwrap_or("");
+            let ty = ty.split('<').next().unwrap_or(ty).trim();
+            let ty = ty.rsplit("::").next().unwrap_or(ty).to_string();
+            self.out.serializer_reads.entry(ty).or_default().entry(name.to_string()).or_default().bump(test);
+            return;
+        }
         self.out.field_reads.entry(name.to_string()).or_default().bump(test);
     }
 
@@ -630,7 +644,7 @@ impl State<'_> {
                     // `x.name(…)` is a call.
                     if !ctx.excluded_impl && prev.is_some_and(|p| p.kind() == ".") && next.is_none_or(|s| s.kind() != "token_tree") {
                         let test = self.in_test(n);
-                        self.field_read(t, test);
+                        self.field_read(t, test, ctx);
                     }
                     if t == "feature"
                         && next.is_some_and(|s| s.kind() == "=")
@@ -672,11 +686,15 @@ impl State<'_> {
                 "struct_item" => self.struct_decl(n),
                 "function_item" if ctx.in_impl => {
                     if n.child_by_field_name("name").is_some_and(|f| self.serialize_fn.is_match(text(f, self.src))) {
-                        child_ctx.excluded_impl = true;
+                        match ctx.impl_type {
+                            Some(r) => child_ctx.serializer = Some(r),
+                            None => child_ctx.excluded_impl = true,
+                        }
                     }
                 }
                 "impl_item" => {
                     child_ctx.in_impl = true;
+                    child_ctx.impl_type = n.child_by_field_name("type").map(|t| (t.start_byte(), t.end_byte()));
                     if let Some(tr) = n.child_by_field_name("trait") {
                         let t = text(tr, self.src);
                         let t = t.split('<').next().unwrap_or(t);
@@ -690,25 +708,26 @@ impl State<'_> {
                     if let Some(f) = n.child_by_field_name("field").filter(|f| f.kind() == "field_identifier") {
                         let test = self.in_test(n);
                         let t = text(f, self.src);
-                        self.field_read(t, test);
+                        self.field_read(t, test, ctx);
                     }
                 }
                 "field_pattern" if !ctx.excluded_impl => {
                     if let Some(f) = n.child_by_field_name("name") {
                         let test = self.in_test(n);
                         let t = text(f, self.src);
-                        self.field_read(t, test);
+                        self.field_read(t, test, ctx);
                     }
                 }
                 "index_expression" if !ctx.excluded_impl => {
                     if let Some(lit) = n.named_child(1).filter(|l| l.kind() == "string_literal") {
                         let test = self.in_test(n);
                         let t = text(lit, self.src).trim_matches('"').to_string();
-                        self.field_read(&t, test);
+                        self.field_read(&t, test, ctx);
                     }
                 }
                 "let_declaration" => {
-                    if let Some(ty) = n.child_by_field_name("type").filter(|t| t.kind() == "type_identifier")
+                    // `let c: Config = …` or `let c: config::Config = …`.
+                    if let Some(ty) = n.child_by_field_name("type").and_then(|t| match t.kind() { "type_identifier" => Some(t), "scoped_type_identifier" => t.child_by_field_name("name"), _ => None })
                         && let Some(v) = n.child_by_field_name("value")
                     {
                         let vt = text(v, self.src);
@@ -753,7 +772,8 @@ fn deserialise_format(expr: &str) -> Option<String> {
             && (expr.len() == i + call.len() || expr[i + call.len()..].starts_with(['(', ':']))
         {
             let before = expr[..i].trim_end_matches("::");
-            let start = before.rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map_or(0, |p| p + 1);
+            // The separator found may be multi-byte (a non-ASCII identifier before the call).
+            let start = before.rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map_or(0, |p| p + before[p..].chars().next().map_or(1, char::len_utf8));
             let krate = &before[start..];
             return Some(if krate.is_empty() { "a config file".to_string() } else { krate.to_string() });
         }
@@ -790,8 +810,9 @@ impl Walker {
         let build_script = file.path == "build.rs" || file.path.ends_with("/build.rs");
         let mut st = State { src, out: &mut out, regions, build_script, config_literal: &self.config_literal, serialize_fn: &self.serialize_fn };
         match file.lang {
-            Language::Rust if self.rust => st.walk(root),
-            Language::Rust => {}
+            // The manifest legs read a Rust side only when `languages` names rust (`out.rust`);
+            // the env-seam leg reads every grammar regardless, so the walk always runs.
+            Language::Rust => st.walk(root),
             Language::Python => {
                 if file.content.contains("environ") || file.content.contains("getenv") {
                     st.walk_py(root);
@@ -1048,12 +1069,13 @@ fn parse_cargo(rel: &str, text: &str) -> Option<Manifest> {
         }
     }
     if let Some(meta) = t.get("package").and_then(|p| p.get("metadata")) {
-        for key in ["docs.rs", "cargo-all-features"] {
-            if let Some(m) = meta.get(key) {
-                let mut s = Vec::new();
-                all_strings(m, &mut s);
-                consumers.extend(s);
-            }
+        // `[package.metadata.docs.rs]` is the nested table `docs` -> `rs`; only the quoted
+        // header `[package.metadata."docs.rs"]` yields a `docs.rs` key. Both spellings count.
+        let tables = [meta.get("docs.rs"), meta.get("docs").and_then(|d| d.get("rs")), meta.get("cargo-all-features"), meta.get("cargo_all_features")];
+        for m in tables.into_iter().flatten() {
+            let mut s = Vec::new();
+            all_strings(m, &mut s);
+            consumers.extend(s);
         }
     }
     let workspace_deps = t.get("workspace").and_then(|w| w.get("dependencies")).and_then(|d| d.as_table()).cloned().unwrap_or_default().into_iter().collect();
@@ -1370,16 +1392,19 @@ fn doc_mention(docs: &[(String, String)], key: &str, ident: &str) -> Option<(Str
 
 /// Fenced code blocks of a doc naming `[section]` or one of `knobs` as a key: the file and
 /// the line range from the header (or first knob) to the last knob line in that fence.
-fn doc_fence(docs: &[(String, String)], section: &str, knobs: &[String]) -> Option<(String, usize, usize)> {
+/// The first fenced block of a doc naming `[section]` or one of `knobs`: `(path, first, last)`
+/// lines. With `require_knob` a fence must name at least one of the knobs (the header alone
+/// documents the section, not a field listed under it).
+fn doc_fence(docs: &[(String, String)], section: &str, knobs: &[String], require_knob: bool) -> Option<(String, usize, usize)> {
     let header = section.trim_start_matches('[').trim_end_matches(']');
     let mut fallback = None;
     for (path, text) in docs {
         let mut in_fence = false;
-        let (mut first, mut last, mut has_header) = (0usize, 0usize, false);
+        let (mut first, mut last, mut has_header, mut has_knob) = (0usize, 0usize, false, false);
         for (i, l) in text.lines().enumerate() {
             let t = l.trim();
             if t.starts_with("```") || t.starts_with("~~~") {
-                if in_fence && first > 0 {
+                if in_fence && first > 0 && (has_knob || !require_knob) {
                     if has_header {
                         return Some((path.clone(), first, last));
                     }
@@ -1389,6 +1414,7 @@ fn doc_fence(docs: &[(String, String)], section: &str, knobs: &[String]) -> Opti
                 first = 0;
                 last = 0;
                 has_header = false;
+                has_knob = false;
                 continue;
             }
             if !in_fence {
@@ -1406,6 +1432,7 @@ fn doc_fence(docs: &[(String, String)], section: &str, knobs: &[String]) -> Opti
                     first = i + 1;
                 }
                 last = i + 1;
+                has_knob = true;
             }
         }
     }
@@ -1484,6 +1511,12 @@ pub fn analyze(sides: &[FileSide], root: &Path, use_git: bool, cfg: &Cfg, skip_d
         }
     }
     product_names.extend(manifests.iter().flat_map(|m| m.names.iter().cloned()));
+    // `languages` without rust turns the manifest legs off (the product names above still feed
+    // the env-seam leg, which reads every grammar).
+    if !walker.rust && !manifests.is_empty() {
+        report.notes.push(format!("{} not checked: \"rust\" is not in [declared].languages", plural(manifests.len(), "Cargo.toml manifest", "Cargo.toml manifests")));
+        manifests.clear();
+    }
     // Docs, CI files, public docs and setter files are read on first use: a repo with no
     // manifest and no env read never reads them.
     let lazy = |globs: &GlobSet| -> Vec<String> { aux.iter().filter(|r| !manifest_globs.is_match(r) && globs.is_match(r)).cloned().collect() };
@@ -1931,7 +1964,8 @@ fn env_seams<'d>(sides: &[FileSide], product_names: &[String], root: &Path, use_
         }
     }
     for sm in &mut seams {
-        let sites: Vec<String> = sm.reads.iter().map(|r| if r.symbol.is_empty() { format!("{}:{}", r.file, r.line) } else { format!("{}:{} {}", r.file, r.line, r.symbol) }).collect();
+        let mut sites: Vec<String> = sm.reads.iter().map(|r| if r.symbol.is_empty() { format!("{}:{}", r.file, r.line) } else { format!("{}:{} {}", r.file, r.line, r.symbol) }).collect();
+        sites.dedup();
         let born = match (&sm.born_read, &sm.born_test) {
             (Some((a, _)), Some((b, _))) if a == b => format!("; born {a} together with its first test setter"),
             (Some((a, _)), Some((b, _))) => format!("; read born {a}, first test setter {b}"),
@@ -1950,7 +1984,9 @@ fn attach_seams(seams: Vec<TestSeam>, report: &mut DeclaredReport) {
         let mut seen: HashSet<&str> = HashSet::new();
         for r in &sm.reads {
             let e = report.files.entry(r.file.clone()).or_default();
-            e.test_seams.push((sm.name.clone(), r.line));
+            if !e.test_seams.contains(&(sm.name.clone(), r.line)) {
+                e.test_seams.push((sm.name.clone(), r.line));
+            }
             if seen.insert(r.file.as_str()) {
                 e.reasons.push(sm.line_text.clone());
             }
@@ -1976,8 +2012,6 @@ fn knobs(sides: &[FileSide], manifests: &[Manifest], scope: &[Vec<usize>], walke
         }
     }
     let config_target = |name: &str| consumed.get(name).is_some_and(|fmt| cfg.config_formats.iter().any(|f| f == fmt));
-    {
-    }
     let mut skipped_lib_crates = 0usize;
     let mut suppressed = 0usize;
     // Candidates: (side index, struct index), per crate scope.
@@ -2009,6 +2043,17 @@ fn knobs(sides: &[FileSide], manifests: &[Manifest], scope: &[Vec<usize>], walke
                     cand_by_name.entry(decl.name.as_str()).or_insert(cands.len());
                     cands.push(Cand { si, st, parent: None });
                 }
+            }
+        }
+    }
+    // Reads inside a serializer-named method count unless the impl is for a config struct (that
+    // struct's own write side): `App::save(&self, c: &Config) { c.knob }` reads `knob`.
+    for s in sides.iter().filter(|s| s.rust) {
+        let test = is_test_side(s);
+        for (_, m) in s.serializer_reads.iter().filter(|(ty, _)| !cand_by_name.contains_key(ty.as_str())) {
+            for (name, rc) in m {
+                let e = reads.entry(name.as_str()).or_default();
+                if test { e.test += rc.total() } else { e.add(*rc) }
             }
         }
     }
@@ -2139,7 +2184,7 @@ fn knobs(sides: &[FileSide], manifests: &[Manifest], scope: &[Vec<usize>], walke
                     let mut path = keys.clone();
                     path.push(f.key.clone());
                     let section = format!("[{}]", path.join("."));
-                    let doc = doc_fence(public_docs, &section, &all_keys);
+                    let doc = doc_fence(public_docs, &section, &all_keys, false);
                     if cfg.require_sibling_read_or_doc && !sibling_read && doc.is_none() {
                         suppressed += 1;
                         continue;
@@ -2159,7 +2204,9 @@ fn knobs(sides: &[FileSide], manifests: &[Manifest], scope: &[Vec<usize>], walke
         if !unread_here.is_empty() {
             let section = if keys.is_empty() { decl.name.clone() } else { format!("[{}]", keys.join(".")) };
             let names: Vec<String> = unread_here.iter().map(|f| f.key.clone()).collect();
-            let doc = doc_fence(public_docs, if keys.is_empty() { "" } else { &section }, &names);
+            // The doc must name one of the unread knobs: the bare `[section]` header documents
+            // the section, not these fields.
+            let doc = doc_fence(public_docs, if keys.is_empty() { "" } else { &section }, &names, true);
             if cfg.require_sibling_read_or_doc && !sibling_read && doc.is_none() {
                 suppressed += 1;
                 continue;
@@ -2187,11 +2234,15 @@ fn knobs(sides: &[FileSide], manifests: &[Manifest], scope: &[Vec<usize>], walke
     for k in &findings {
         let e = report.files.entry(k.file.clone()).or_default();
         e.reasons.push(k.line_text.clone());
+        let path = k.section.trim_start_matches('[').trim_end_matches(']');
         if k.test_only {
             e.unread_knobs.push((k.section.clone(), k.start_line));
+        } else if k.rollup {
+            // The unread knob is the section itself (`ci.homerunner`), not a field under it.
+            e.unread_knobs.push((path.to_string(), k.start_line));
         } else {
             for u in &k.unread {
-                e.unread_knobs.push((format!("{}.{u}", k.section.trim_start_matches('[').trim_end_matches(']')), k.start_line));
+                e.unread_knobs.push((format!("{path}.{u}"), k.start_line));
             }
         }
     }
@@ -2566,7 +2617,7 @@ pub fn load(t: &str) -> Config { let c: Config = toml::from_str(t).unwrap(); c }
             "Config.unused (src/config.rs:4) is read only by tests",
             "[ci.homerunner] (src/config.rs:7-10, 4 knobs: homerunner, bin, db, api) is deserialised from TOML under deny_unknown_fields and documented at docs/config.md:7-9, but no code reads any of them - the program accepts the section and ignores it",
         ]);
-        assert_eq!(r.files["src/config.rs"].unread_knobs, vec![("Config.unused".to_string(), 4), ("ci.homerunner.homerunner".to_string(), 7)]);
+        assert_eq!(r.files["src/config.rs"].unread_knobs, vec![("Config.unused".to_string(), 4), ("ci.homerunner".to_string(), 7)]);
         // A source literal in the config file names the source; with no read sibling and no doc the line is suppressed.
         let root2 = repo(&[
             ("Cargo.toml", "[package]\nname = \"k\"\n[[bin]]\nname = \"k\"\npath = \"src/main.rs\"\n"),
@@ -2635,10 +2686,81 @@ pub fn load(t: &str) -> Config { let c: Config = toml::from_str(t).unwrap(); c }
         // The first drop commit deleted the only `cfg(feature = "ci")`; the killing commit is that one, not HEAD.
         assert_eq!(f.removed_in.as_ref().map(|(h, _)| h.as_str()), Some(first_drop.lines().next().unwrap()));
         assert_ne!(f.removed_in.as_ref().unwrap().0, killed);
+        // The lookup cap: one enrichment, the note says so.
+        let capped = analyze(&sides, &root, true, &Cfg { max_git_lookups: 1, ..Cfg::default() }, &[]);
+        assert!(capped.totals.git_lookups_capped && capped.notes.iter().any(|n| n.contains("capped at 1 lookups")), "{:?}", capped.notes);
         // Younger than min_age_commits: skipped.
         let r = analyze(&sides, &root, true, &Cfg { min_age_commits: 10, ..Cfg::default() }, &[]);
         assert!(r.orphans.iter().all(|o| o.optional) && r.dead_features.is_empty() && r.notes.iter().any(|n| n.contains("min_age_commits")), "{:?} {:?}", r.orphans, r.notes);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn docs_rs_metadata_ci_only_consumers_config_formats_the_knob_cap_and_serializer_scope() {
+        let bin = "[package]\nname = \"k\"\n[[bin]]\nname = \"k\"\npath = \"src/main.rs\"\n";
+        // `[package.metadata.docs.rs] features` (the standard nested spelling) is a consumer; a
+        // feature named only in CI is dead with the clause, never suppressed.
+        let root = repo(&[
+            ("Cargo.toml", &format!("{bin}\n[features]\nextra = [\"dep:oldcrate\"]\nci-only = [\"dep:othercrate\"]\n\n[dependencies]\noldcrate = {{ version = \"1\", optional = true }}\nothercrate = {{ version = \"1\", optional = true }}\n\n[package.metadata.docs.rs]\nfeatures = [\"extra\"]\n")),
+            ("src/main.rs", "fn main() {}\n"),
+            (".github/workflows/ci.yml", "run: cargo test --features ci-only\n"),
+        ]);
+        let r = run(&root, &Cfg::default());
+        let state = |n: &str| r.features.iter().find(|f| f.name == n).map(|f| (f.state, f.consumers)).unwrap();
+        assert_eq!(state("extra"), (FeatureState::Alive, 1));
+        assert_eq!(state("ci-only"), (FeatureState::Dead, 0));
+        assert_eq!(r.dead_features.len(), 1);
+        assert!(r.dead_features[0].line_text.ends_with("never consumed; consumed only by CI: .github/workflows/ci.yml"), "{}", r.dead_features[0].line_text);
+        // config_formats: a serde_json target is a candidate only when the format is listed.
+        let root2 = repo(&[
+            ("Cargo.toml", bin),
+            ("src/net.rs", "#[derive(Deserialize)]\npub struct Payload { pub knob_x: u8, pub knob_y: u8 }\n"),
+            ("src/main.rs", "fn main() { let p: Payload = serde_json::from_str(\"\").unwrap(); p.knob_x; }\n"),
+        ]);
+        assert_eq!(run(&root2, &Cfg::default()).totals.config_structs, 0);
+        let r = run(&root2, &Cfg { config_formats: strings(&["toml", "serde_json"]), ..Cfg::default() });
+        assert_eq!((r.totals.config_structs, r.unread_knobs.len()), (1, 1));
+        assert_eq!(r.unread_knobs[0].line_text, "Payload (src/net.rs:1-2, 2 knobs) is deserialised from JSON, but no code reads knob_y (line 2) - the program accepts it and ignores it");
+        // max_knobs_listed names that many knobs, then `+N more`.
+        let fields: String = (0..10).map(|i| format!("pub knob_{i:02}: u8, ")).collect();
+        let config = format!("#[derive(Deserialize)]\npub struct Config {{ {fields}}}\n");
+        let root3 = repo(&[("Cargo.toml", bin), ("src/config.rs", &config), ("src/main.rs", "fn main() {}\n")]);
+        let r = run(&root3, &Cfg { require_sibling_read_or_doc: false, ..Cfg::default() });
+        assert!(r.unread_knobs[0].line_text.contains("10 knobs: knob_00, knob_01, knob_02, knob_03, knob_04, knob_05, knob_06, knob_07, +2 more) is deserialised"), "{}", r.unread_knobs[0].line_text);
+        let r = run(&root3, &Cfg { require_sibling_read_or_doc: false, max_knobs_listed: 3, ..Cfg::default() });
+        assert!(r.unread_knobs[0].line_text.contains("knob_02, +7 more)"), "{}", r.unread_knobs[0].line_text);
+        // A doc fence holding only the `[section]` header does not document a scalar knob.
+        let root3b = repo(&[
+            ("Cargo.toml", bin),
+            ("src/config.rs", "#[derive(Deserialize)]\npub struct Config { pub app: AppCfg }\n#[derive(Deserialize)]\npub struct AppCfg { pub knob_a: u8, pub knob_b: u8 }\n"),
+            ("src/main.rs", "fn main() { let c: Config = toml::from_str(\"\").unwrap(); c.app.knob_a; }\n"),
+            ("README.md", "```toml\n[app]\n```\n"),
+        ]);
+        let r = run(&root3b, &Cfg::default());
+        assert_eq!(r.unread_knobs[0].line_text, "[app] (src/config.rs:3-4, 2 knobs) is deserialised from TOML, but no code reads knob_b (line 4) - the program accepts it and ignores it");
+        assert!(r.unread_knobs[0].doc.is_none());
+        // `languages = []` turns the manifest legs off; the env-seam leg reads every grammar.
+        let root4 = repo(&[
+            ("Cargo.toml", "[package]\nname = \"k\"\n[dependencies]\nanyhow = \"1\"\nunused = \"1\"\n"),
+            ("src/main.rs", "fn main() { anyhow::bail!(); std::env::var(\"K_TEST_NOW\"); }\n"),
+            ("tests/t.rs", "fn t() { std::env::set_var(\"K_TEST_NOW\", \"1\"); }\n"),
+        ]);
+        let r = run(&root4, &Cfg::default());
+        assert_eq!((r.totals.orphans, r.totals.test_seams), (1, 1));
+        let r = run(&root4, &Cfg { languages: vec![], ..Cfg::default() });
+        assert_eq!((r.totals.orphans, r.totals.test_seams), (0, 1), "{:?}", r.notes);
+        // A serializer-named method on another type reads the knob; on the config struct
+        // itself it is the write side.
+        let root5 = repo(&[
+            ("Cargo.toml", bin),
+            ("src/config.rs", "#[derive(Deserialize)]\npub struct Config { pub alpha_knob: u8, pub beta_knob: u8, pub gamma_knob: u8 }\nimpl Config { pub fn save(&self) -> u8 { self.alpha_knob } }\nstruct App;\nimpl App { fn save(&self, c: &Config) -> u8 { c.beta_knob } }\n"),
+            ("src/main.rs", "fn main() { let c = crate::config::load(); c.gamma_knob; }\n"),
+        ]);
+        let r = run(&root5, &Cfg::default());
+        assert_eq!(r.unread_knobs.iter().map(|k| k.unread.clone()).collect::<Vec<_>>(), vec![vec!["alpha_knob".to_string()]]);
+        for d in [root, root2, root3, root3b, root4, root5] {
+            std::fs::remove_dir_all(&d).unwrap();
+        }
     }
 
     #[test]

@@ -490,8 +490,8 @@ impl<'a> State<'a> {
         let name = text(name_node, self.src).to_string();
         self.skip.insert(name_node.start_byte());
         let qualified = match ctx.owner {
+            Some(o) if kind == "method" && self.lang == Language::Python => format!("{o}.{name}"),
             Some(o) if kind == "method" => format!("{o}::{name}"),
-            Some(o) if self.lang == Language::Python && kind == "method" => format!("{o}.{name}"),
             _ => name.clone(),
         };
         let display = if vis_text.is_empty() { format!("{keyword} {qualified}") } else { format!("{vis_text} {keyword} {qualified}") };
@@ -735,7 +735,13 @@ impl<'a> State<'a> {
         }
         let top = ctx.parent.is_some_and(|p| p.kind() == "program") || ctx.exported;
         let vis = |exported: bool| if exported { (Visibility::Public, "export") } else { (Visibility::Private, "") };
-        let framework = |name: &str| self.cfg.symbols.ts_framework_exports.iter().any(|f| f == name).then(|| "framework export".to_string());
+        // `export default function X`: the export name is `default`, whatever X is called (a
+        // default import binds any local name, so no reference can match X).
+        let default_export = ctx.exported && ctx.parent.is_some_and(|p| { let mut c = p.walk(); p.children(&mut c).any(|ch| ch.kind() == "default") });
+        let framework = |name: &str| {
+            let listed = |x: &str| self.cfg.symbols.ts_framework_exports.iter().any(|f| f == x);
+            (listed(name) || (default_export && listed("default"))).then(|| "framework export".to_string())
+        };
         match kind {
             "function_declaration" | "generator_function_declaration" => {
                 if let Some(n) = node.child_by_field_name("name") {
@@ -824,7 +830,9 @@ impl<'a> State<'a> {
             "function_definition" | "class_definition" => {
                 if let Some(n) = node.child_by_field_name("name") {
                     let name = text(n, src);
-                    let is_method = kind == "function_definition" && ctx.owner.is_some() && node.parent().and_then(|b| b.parent().map(|p| p.kind() == "class_definition" || p.kind() == "decorated_definition")).unwrap_or(false);
+                    // `def` -> block -> class, or `def` -> decorated_definition -> block -> class.
+                    let holder = node.parent().filter(|p| p.kind() == "decorated_definition").unwrap_or(node);
+                    let is_method = kind == "function_definition" && ctx.owner.is_some() && holder.parent().and_then(|b| b.parent().map(|p| p.kind() == "class_definition")).unwrap_or(false);
                     let top = module_level(node) || is_method;
                     let (v, vt) = public(name, top);
                     let decorators = node.parent().filter(|p| p.kind() == "decorated_definition").map(|p| {
@@ -1260,7 +1268,11 @@ pub fn analyze(index: &SymbolIndex, root: &Path, cfg: &Cfg) -> DeadReport {
                 DeadMode::Library => d.visibility == Visibility::Restricted,
                 _ => true,
             };
-            if !checked_vis || is_entry || (mode == DeadMode::Library && is_api) {
+            // Rust api roots (lib.rs) are exempt in library mode only: an application's lib.rs
+            // items are checked. A TS / Python api root (`**/index.ts`, a package.json export
+            // target, `__init__.py`) is the package surface whatever the mode.
+            let api_exempt = is_api && (mode == DeadMode::Library || fam != "rust");
+            if !checked_vis || is_entry || api_exempt {
                 continue;
             }
             if !sym.kinds.iter().any(|k| k == kind_class(d.kind)) || d.lines() < sym.min_lines {
@@ -1302,7 +1314,7 @@ pub fn analyze(index: &SymbolIndex, root: &Path, cfg: &Cfg) -> DeadReport {
         fd.overexported_count = fd.symbols.iter().filter(|s| s.category == Category::Overexported).count();
         fd.ambiguous_count = fd.symbols.iter().filter(|s| s.category == Category::Ambiguous).count();
         fd.own_file_only_share = if fd.pub_items == 0 { 0.0 } else { fd.overexported_count as f64 / fd.pub_items as f64 };
-        fd.dead_lines = union_lines(fd.symbols.iter().filter(|s| s.external_prod_refs == 0).map(|s| (s.start_line, s.end_line)).collect());
+        fd.dead_lines = union_lines(fd.symbols.iter().filter(|s| s.category != Category::Reachable).map(|s| (s.start_line, s.end_line)).collect());
         fd.dead_ratio = fd.dead_lines as f64 / f.lines.saturating_sub(f.inline_test_lines).max(1) as f64;
         // Per-symbol reasons: dead before test-only, longest first, then ambiguous.
         let mut listed: Vec<&SymbolReport> = fd.symbols.iter().filter(|s| matches!(s.category, Category::Dead | Category::TestOnly | Category::Ambiguous)).collect();
@@ -1316,7 +1328,7 @@ pub fn analyze(index: &SymbolIndex, root: &Path, cfg: &Cfg) -> DeadReport {
             let mut kept: Vec<&str> = fd.symbols.iter().flat_map(|s| s.test_files.iter().map(String::as_str)).collect();
             kept.sort_unstable();
             kept.dedup();
-            reasons.push(format!("all {} exported symbols in {} are test-only (lines {lo}-{hi}), kept alive by {}", fd.pub_items, basename(&f.path), name_files(&kept, &f.path, f.lang)));
+            reasons.push(format!("all {} exported symbols in {} are test-only (lines {lo}-{hi}), kept alive by {}", fd.pub_items, basename(&f.path), name_files(&kept, &f.path, f.lang, index)));
         }
         let mut shown = 0;
         let mut test_only_shown = 0;
@@ -1342,13 +1354,15 @@ pub fn analyze(index: &SymbolIndex, root: &Path, cfg: &Cfg) -> DeadReport {
                     test_only_shown += 1;
                     let files: Vec<&str> = s.test_files.iter().map(String::as_str).collect();
                     let uses = s.own_test_refs + s.external_test_refs;
-                    let inline_only = files.iter().all(|p| *p == f.path);
+                    // Every referencing test is inline (this file's or another Source file's
+                    // `#[cfg(test)]`): a `#[cfg(test)]` item would still reach it.
+                    let inline_only = files.iter().all(|p| index.file(p).is_some_and(|x| !x.test_context));
                     let advice = match (f.lang, inline_only) {
                         (Language::Rust, true) => "move under #[cfg(test)] or delete",
                         (Language::Rust, false) => "move into the test crate or delete",
                         _ => "move next to the tests or delete",
                     };
-                    format!("{} {loc} has no production {}: {uses} uses, all in {}; {advice}", s.display, if is_fn { "caller" } else { "use" }, name_files(&files, &f.path, f.lang))
+                    format!("{} {loc} has no production {}: {uses} uses, all in {}; {advice}", s.display, if is_fn { "caller" } else { "use" }, name_files(&files, &f.path, f.lang, index))
                 }
                 _ => format!("{} {loc} shares its name with {} other definitions; reachability not assessed", s.display, s.samename.saturating_sub(1)),
             });
@@ -1405,12 +1419,17 @@ pub fn analyze(index: &SymbolIndex, root: &Path, cfg: &Cfg) -> DeadReport {
     report
 }
 
-/// `tests/git_real.rs, tests/lock.rs`; the file's own inline tests are named as such.
-fn name_files(files: &[&str], own: &str, lang: Language) -> String {
+/// `tests/git_real.rs, tests/lock.rs`; the file's own inline tests are named as such, and
+/// another Source file whose only references sit in its inline tests is marked
+/// (`src/board.rs (#[cfg(test)])`) so it does not read as a production caller.
+fn name_files(files: &[&str], own: &str, lang: Language, index: &SymbolIndex) -> String {
+    let inline = if lang == Language::Rust { "#[cfg(test)]" } else { "tests" };
     let mut out: Vec<String> = Vec::new();
     for f in files {
         if *f == own {
             out.push(if lang == Language::Rust { "its own #[cfg(test)] tests".to_string() } else { "its own tests".to_string() });
+        } else if index.file(f).is_some_and(|x| !x.test_context) {
+            out.push(format!("{f} ({inline})"));
         } else {
             out.push(f.to_string());
         }
@@ -1653,16 +1672,16 @@ mod tests {
     #[test]
     fn test_context_is_test_files_extra_globs_cfg_test_and_test_fns() {
         let files = [
-            src("src/a.rs", "pub fn seam_a() {}\npub fn seam_b() {}\npub fn seam_c() {}\npub fn seam_d() {}\npub fn live_fn() {}\n#[test]\nfn bare() { seam_c(); seam_c(); }\n"),
+            src("src/a.rs", "pub fn seam_a() {}\npub fn seam_b() {}\npub fn seam_c() {}\npub fn seam_d() {}\npub fn live_fn() {}\npub fn seam_e() {}\n#[test]\nfn bare() { seam_c(); seam_c(); }\n"),
             file("tests/t.rs", FileKind::Test, "fn t() { seam_a(); seam_a(); }\n"),
             src("src/testutil.rs", "pub fn util() { seam_b(); seam_b(); }\n"),
             src("benches/b.rs", "fn main() { seam_d(); seam_d(); }\n"),
-            src("src/c.rs", "fn go() { live_fn(); }\n"),
+            src("src/c.rs", "fn go() { live_fn(); }\n#[cfg(test)]\nmod tests { fn t() { seam_e(); seam_e(); } }\n"),
         ];
         let mut cfg = Cfg::default();
         cfg.symbols.min_lines = 1;
         let r = run(&files, &cfg);
-        for n in ["seam_a", "seam_b", "seam_c", "seam_d"] {
+        for n in ["seam_a", "seam_b", "seam_c", "seam_d", "seam_e"] {
             assert_eq!(cat(&r, "src/a.rs", n), Some(Category::TestOnly), "{n}");
         }
         // testutil.rs is test context: its own pub fn is never a candidate.
@@ -1671,7 +1690,9 @@ mod tests {
         let reasons = &r.files["src/a.rs"].reasons;
         assert_eq!(reasons[0], "pub fn seam_a (a.rs 1) has no production caller: 2 uses, all in tests/t.rs; move into the test crate or delete", "{reasons:?}");
         assert_eq!(reasons[2], "pub fn seam_c (a.rs 3) has no production caller: 2 uses, all in its own #[cfg(test)] tests; move under #[cfg(test)] or delete");
-        assert_eq!(reasons.len(), 4);
+        // Another Source file's inline tests are marked as such, and still count as inline.
+        assert_eq!(reasons[4], "pub fn seam_e (a.rs 6) has no production caller: 2 uses, all in src/c.rs (#[cfg(test)]); move under #[cfg(test)] or delete");
+        assert_eq!(reasons.len(), 5);
         // Every exported symbol test-only: one rollup line, no per-symbol lines.
         let two = [src("src/a.rs", "pub fn seam_a() {}\npub fn seam_b() {}\n"), file("tests/t.rs", FileKind::Test, "fn t() { seam_a(); seam_a(); seam_b(); seam_b(); }\n")];
         let r = run(&two, &cfg);
@@ -1827,6 +1848,20 @@ fn go() {
         assert_eq!(cat(&r, "pkg/m.py", "a_py"), Some(Category::Overexported));
         assert!(r.files["pkg/m.py"].reasons.iter().all(|x| !x.contains("referenced only inside")), "{:?}", r.files["pkg/m.py"].reasons);
         assert!(r.notes.is_empty());
+        // `export default function X` / `class X` is the `default` framework export, whatever
+        // X is called; `**/index.ts` is an api root in application mode too; a Python method
+        // is displayed `Cls.m`.
+        let more = [
+            src("src/page.ts", "export default function HomePage() {\n  return 1\n}\nexport default class Other {\n}\n"),
+            src("src/lib/index.ts", "export function barrel_fn() {\n  return 1\n}\n"),
+            src("pkg/c.py", "class Thing:\n    def plain_method(self):\n        pass\n    @property\n    def prop_method(self):\n        pass\n"),
+        ];
+        let r = run(&more, &cfg);
+        assert!(!r.files.contains_key("src/page.ts") && !r.files.contains_key("src/lib/index.ts"), "{:?}", r.files);
+        assert_eq!(r.totals.exempt_items, 3);
+        let reasons = &r.files["pkg/c.py"].reasons;
+        assert_eq!(reasons[1], "def Thing.plain_method (c.py 2-3) is called nowhere in 1 files", "{reasons:?}");
+        assert!(reasons.iter().any(|x| x.starts_with("def Thing.prop_method (c.py 5-6)")), "{reasons:?}");
         // Library mode (the auto default for a package.json with exports) prints the knip line.
         cfg.symbols.mode = DeadMode::Library;
         let r = run(&files, &cfg);

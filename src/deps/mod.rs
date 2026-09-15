@@ -136,6 +136,7 @@ impl DepGraph {
     }
 
     /// The edge `from -> to`, if any.
+    #[cfg(test)]
     pub(crate) fn edge(&self, from: &str, to: &str) -> Option<&Edge> {
         self.edge_map.get(&(from.to_string(), to.to_string()))
     }
