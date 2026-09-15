@@ -1127,10 +1127,10 @@ pub struct Phases {
     pub patterns: Vec<String>,
     /// Skip units inside a Rust `#[cfg(test)]` region.
     pub skip_test_modules: bool,
-    /// Units at or above this cognitive are checked; unset, the units over
-    /// `[metrics].cognitive_hard` are (the report's own test, so a unit exactly at the
+    /// Units at or above this cognitive are checked; 0 (the default) means the units over
+    /// `[metrics].cognitive_hard` (the report's own test, so a unit exactly at the
     /// threshold gets no phases: it has no "over cognitive" reason to ride on).
-    pub cross_with_cognitive_min: Option<u32>,
+    pub cross_with_cognitive_min: u32,
     /// Estimate each phase's cognitive as a helper: the walker re-run over its statements
     /// with nesting re-based to 0.
     pub estimate_cognitive: bool,
@@ -1147,7 +1147,7 @@ impl Default for Phases {
             max_depth: 1,
             patterns: strings(&[r"^\s*[─═━]{2,}\s*\S", r"^\s*(step|pass|phase|stage)\s*\d", r"^\s*\d+[.):]\s"]),
             skip_test_modules: true,
-            cross_with_cognitive_min: None,
+            cross_with_cognitive_min: 0,
             estimate_cognitive: true,
             max_shared_locals_named: 4,
         }

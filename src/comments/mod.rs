@@ -140,7 +140,7 @@ impl<'c> Walker<'c> {
         let phase = cfg.phases.patterns.iter().filter_map(|p| RegexBuilder::new(p).case_insensitive(true).build().ok()).collect();
         Walker {
             cfg,
-            cognitive_min: cfg.phases.cross_with_cognitive_min.unwrap_or(metrics.cognitive_hard.saturating_add(1)),
+            cognitive_min: if cfg.phases.cross_with_cognitive_min == 0 { metrics.cognitive_hard.saturating_add(1) } else { cfg.phases.cross_with_cognitive_min },
             inline_modules: tests.inline_modules,
             rule,
             short: Regex::new(r"^\s*(──|--|==)\s*(\S.*)$").expect("static regex"),
@@ -345,6 +345,19 @@ impl<'c> Walker<'c> {
             phases.push((Phase { label, start, end, lines: lines.non_blank(src, start, end), est_cognitive: None, shared_locals: Vec::new() }, *parent));
         }
         phases.sort_by_key(|(ph, _)| ph.start);
+        // A phase comment in a deeper block that sits inside an enclosing block's phase
+        // narrates that phase; it is not a sibling seam. Keep the outer span only.
+        let mut kept: Vec<(Phase, Node)> = Vec::new();
+        for (ph, parent) in phases {
+            if kept.iter().any(|(k, _)| k.start <= ph.start && ph.end <= k.end) {
+                continue;
+            }
+            kept.push((ph, parent));
+        }
+        let mut phases = kept;
+        if phases.len() < p.min_phases {
+            return None;
+        }
         if phases.iter().any(|(ph, _)| ph.lines < p.min_phase_lines) {
             return None;
         }
@@ -886,16 +899,16 @@ mod tests {
         assert_eq!(s.units.len(), 1, "{:?}", s.units);
         let u = &s.units[0];
         let got: Vec<(&str, usize, usize, usize, Option<u32>)> = u.phases.iter().map(|p| (p.label.as_str(), p.start, p.end, p.lines, p.est_cognitive)).collect();
-        // 4 phases: three at the body and the match-arm banner one level below (the closure's
-        // banner is another scope). Each `if` is +1 at nesting 0.
-        // step 2 runs to the line before step 3 (the arm banner is in the match block, not the
-        // body); the arm banner runs to its block's end; step 3 to the body's closing brace.
-        assert_eq!(got, vec![("step 1", 4, 14, 11, Some(8)), ("step 2", 15, 34, 20, Some(9)), ("arm banner", 27, 30, 4, Some(0)), ("step 3", 35, 45, 11, Some(8))], "{got:?}");
+        // 3 phases at the body. The match-arm banner one level below lies inside step 2's
+        // span, so it narrates step 2 and is not a seam; the closure's banner is another
+        // scope. Each `if` is +1 at nesting 0. step 2 runs to the line before step 3; step 3
+        // to the body's closing brace.
+        assert_eq!(got, vec![("step 1", 4, 14, 11, Some(8)), ("step 2", 15, 34, 20, Some(9)), ("step 3", 35, 45, 11, Some(8))], "{got:?}");
         // `out` and `tmp` are bound before every phase and read in >= 2; `seen` is re-bound in
         // each phase that reads it; `a`/`b` are parameters read in several phases.
         assert_eq!(u.shared_locals, vec!["a", "b", "out", "tmp"], "{:?}", u.shared_locals);
         assert_eq!(u.phases[0].shared_locals, vec!["a", "b", "out"]);
-        assert_eq!(u.reason, "work (lines 1-45, cognitive 25) already labels 4 phases: step 1 4-14, step 2 15-34, arm banner 27-30, step 3 35-45 — extract each as a helper (est. cognitive 8 / 9 / 0 / 8; 4 locals shared: a, b, out, tmp)");
+        assert_eq!(u.reason, "work (lines 1-45, cognitive 25) already labels 3 phases: step 1 4-14, step 2 15-34, step 3 35-45 — extract each as a helper (est. cognitive 8 / 9 / 8; 4 locals shared: a, b, out, tmp)");
         assert_eq!(s.phase_comments, 4);
     }
 
@@ -903,27 +916,29 @@ mod tests {
     fn phase_floors_depth_and_the_cognitive_gate_drop_units() {
         let f = file("w.rs", Language::Rust, &phased_rust());
         let m = MetricsCfg { cognitive_hard: 5, ..MetricsCfg::default() };
-        // The arm banner is 4 lines: min_phase_lines = 8 drops the unit; max_depth = 0 hides it.
+        // step 1 is 11 lines: min_phase_lines = 12 drops the unit. The arm banner inside
+        // step 2 is never a phase of its own, so max_depth = 0 changes nothing here.
         let mut cfg = Cfg::default();
         cfg.phases.min_span_lines = 10;
-        cfg.phases.min_phase_lines = 8;
+        cfg.phases.min_phase_lines = 12;
         assert!(side_with(&f, &cfg, &m).units.is_empty());
+        cfg.phases.min_phase_lines = 8;
         cfg.phases.max_depth = 0;
         let s = side_with(&f, &cfg, &m);
         assert_eq!(s.units[0].phases.iter().map(|p| p.label.as_str()).collect::<Vec<_>>(), vec!["step 1", "step 2", "step 3"]);
         assert_eq!(s.units[0].phases[1].end, 34, "step 2 runs to the line before step 3");
         // Unit cognitive below the floor: nothing; the floor follows cognitive_hard when unset.
-        cfg.phases.cross_with_cognitive_min = Some(40);
+        cfg.phases.cross_with_cognitive_min = 40;
         assert!(side_with(&f, &cfg, &m).units.is_empty());
-        cfg.phases.cross_with_cognitive_min = None;
+        cfg.phases.cross_with_cognitive_min = 0;
         assert!(side_with(&f, &cfg, &MetricsCfg { cognitive_hard: 30, ..MetricsCfg::default() }).units.is_empty());
         // Unset, the gate is the report's: over cognitive_hard, so a unit exactly at it (25) has
         // no reason line to ride on and gets no phases; the explicit knob is "at or above".
         assert!(side_with(&f, &cfg, &MetricsCfg { cognitive_hard: 25, ..MetricsCfg::default() }).units.is_empty());
         assert_eq!(side_with(&f, &cfg, &MetricsCfg { cognitive_hard: 24, ..MetricsCfg::default() }).units.len(), 1);
-        cfg.phases.cross_with_cognitive_min = Some(25);
+        cfg.phases.cross_with_cognitive_min = 25;
         assert_eq!(side_with(&f, &cfg, &MetricsCfg { cognitive_hard: 25, ..MetricsCfg::default() }).units.len(), 1);
-        cfg.phases.cross_with_cognitive_min = None;
+        cfg.phases.cross_with_cognitive_min = 0;
         // Span floor and phase count floor.
         cfg.phases.min_span_lines = 100;
         assert!(side_with(&f, &cfg, &m).units.is_empty());
@@ -970,10 +985,9 @@ mod tests {
         assert_eq!(s.units[0].shared_locals, vec!["a", "b", "out"]);
         let pad = "    if (a > 1) { b += 1; }\n".repeat(4);
         let ts = format!("function work(a: number, b: number) {{\n  let out = 0;\n  // step 1\n{pad}  out += a;\n  switch (a) {{\n    // 2. in the switch body\n    case 1: out += 1; break;\n{pad}  }}\n  return out;\n}}\n");
-        let s = side_with(&file("w.ts", Language::TypeScript, &ts), &cfg, &m);
-        assert_eq!(s.units.len(), 1, "{:?}", s.units);
-        // The switch-body phase sits one level below the body and ends with the switch.
-        assert_eq!(s.units[0].phases.iter().map(|p| (p.label.as_str(), p.start, p.end)).collect::<Vec<_>>(), vec![("step 1", 3, 18), ("2. in the switch body", 10, 16)]);
+        // The switch-body comment sits one level below the body but inside step 1's span, so
+        // it narrates step 1; one seam is under min_phases and the unit gets no phases.
+        assert!(side_with(&file("w.ts", Language::TypeScript, &ts), &cfg, &m).units.is_empty());
         // Case clauses are where phase labels are written: the `switch_body` and a case's brace
         // block are transparent, so a clause is one level below the body (max_depth = 1).
         let ts = format!("function work(a: number, b: number) {{\n  let out = 0;\n  switch (a) {{\n    case 1: {{\n      // step 1\n{pad}      break;\n    }}\n    case 2:\n      // step 2\n{pad}      break;\n    default:\n      // step 3\n{pad}  }}\n  return out;\n}}\n");
@@ -1016,5 +1030,45 @@ mod tests {
         assert_eq!(slug("drop"), "drop");
         assert_eq!(slug("A"), "a");
         assert_eq!(slug("---"), "section");
+    }
+    #[test]
+    fn a_phase_comment_nested_inside_another_phase_is_not_a_seam() {
+        let src = "\
+fn f(a: u32, b: u32) -> u32 {
+    // step 1: gather
+    let mut out = 0;
+    if a > 1 {
+        // step 2: narrates the branch inside step 1, not a sibling seam
+        if b > 1 { out += 1; }
+        if b > 2 { out += 2; }
+        if b > 3 { out += 3; }
+        if b > 4 { out += 4; }
+        if b > 5 { out += 5; }
+        if b > 6 { out += 6; }
+        if b > 7 { out += 7; }
+        if b > 8 { out += 8; }
+    }
+    if a > 2 { out += 1; }
+    if a > 3 { out += 1; }
+    if a > 4 { out += 1; }
+    // step 3: emit
+    if out > 1 { out -= 1; }
+    if out > 2 { out -= 1; }
+    if out > 3 { out -= 1; }
+    if out > 4 { out -= 1; }
+    if out > 5 { out -= 1; }
+    if out > 6 { out -= 1; }
+    if out > 7 { out -= 1; }
+    out
+}
+";
+        let f = file("n.rs", Language::Rust, src);
+        let m = MetricsCfg { cognitive_hard: 5, ..MetricsCfg::default() };
+        let mut cfg = Cfg::default();
+        cfg.phases.min_span_lines = 10;
+        let s = side_with(&f, &cfg, &m);
+        let labels: Vec<&str> = s.units[0].phases.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(labels, vec!["step 1", "step 3"], "{:?}", s.units[0].phases);
+        assert_eq!((s.units[0].phases[0].start, s.units[0].phases[0].end), (2, 17));
     }
 }
