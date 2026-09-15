@@ -6,10 +6,11 @@ mod history;
 mod lang;
 mod mentions;
 mod metrics;
+mod plan;
 mod regions;
 mod report;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -104,6 +105,23 @@ enum Cmd {
         #[arg(long, default_value_t = 25)]
         top: usize,
     },
+    /// The refactor plan for one file: the scan pipeline, output restricted to that file
+    Plan {
+        /// The file, as a path on disk (absolute, or relative to the working directory)
+        file: PathBuf,
+        /// Repository root the scan runs on (the file must lie under it)
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+        /// Emit the plan as JSON
+        #[arg(long)]
+        json: bool,
+        /// Git --since window for churn (overrides [history].since)
+        #[arg(long)]
+        since: Option<String>,
+        /// Skip git history
+        #[arg(long)]
+        no_history: bool,
+    },
     /// Print the effective configuration as TOML (defaults + <root>/scry.toml + --config)
     Config {
         #[arg(default_value = ".")]
@@ -123,6 +141,7 @@ fn main() -> Result<()> {
     let root = match &cli.cmd {
         Cmd::Scan { path, .. } | Cmd::Files { path, .. } | Cmd::History { path, .. } | Cmd::Clones { path, .. }
         | Cmd::Deps { path, .. } | Cmd::Mentions { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
+        Cmd::Plan { root, .. } => root.clone(),
         Cmd::Ast { .. } => PathBuf::from("."),
     };
     let mut cfg = config::Config::load(&root, cli.config.as_deref())?;
@@ -134,56 +153,38 @@ fn main() -> Result<()> {
             if let Some(s) = since {
                 cfg.history.since = s;
             }
-            let files = discover::walk(&path, &cfg.discover)?;
-            let source: Vec<discover::SourceFile> =
-                files.iter().filter(|f| f.kind == discover::FileKind::Source).cloned().collect();
-            let tracked: std::collections::HashSet<String> = source.iter().map(|f| f.path.clone()).collect();
-            let history = if no_history {
-                None
-            } else {
-                match history::collect(&path, &cfg.history, &tracked) {
-                    Ok(h) => {
-                        if h.commits_scanned > 0 && h.files.is_empty() {
-                            eprintln!("warning: {} commits scanned but none touched a discovered source file; ranking on static signals", h.commits_scanned);
-                        }
-                        Some(h)
-                    }
-                    Err(e) => {
-                        eprintln!("warning: history unavailable: {e:#}");
-                        None
-                    }
-                }
-            };
-            // The mentions pass reads symbols and inline test units off the metrics trees.
-            let (file_metrics, functions, sides) =
-                metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| mentions::source_side(root, f, regions, &cfg.tests));
-            let graph = deps::build(&files, &cfg.deps);
-            let clone_report = clones::detect(&source, &cfg.clones, &cfg.tests);
-            let mentions = mentions::index(&files, &sides, &cfg.tests);
-            let report = report::build(
-                report::Inputs {
-                    root: path.canonicalize()?.display().to_string(),
-                    files: &files,
-                    history: history.as_ref(),
-                    file_metrics: &file_metrics,
-                    functions: &functions,
-                    deps: &graph,
-                    clones: &clone_report,
-                    mentions: &mentions,
-                    cognitive_hard: cfg.metrics.cognitive_hard,
-                    tests: &cfg.tests,
-                    list_tables_separately: cfg.clones.list_tables_separately,
-                    history_cfg: &cfg.history,
-                    dedupe_cycle_reason: cfg.deps.dedupe_cycle_reason,
-                },
-                top,
-                &cfg.report,
-                &cfg.discover.test_dirs,
-            );
+            let report = scan(&path, &cfg, top, no_history)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                print!("{}", report::render(&report, top));
+                print!("{}", report::render_with(&report, top, cfg.plan.include_in_text_report));
+            }
+        }
+        Cmd::Plan { file, root, json, since, no_history } => {
+            if let Some(s) = since {
+                cfg.history.since = s;
+            }
+            let rel = file
+                .canonicalize()
+                .with_context(|| format!("reading {}", file.display()))?
+                .strip_prefix(root.canonicalize()?)
+                .map_err(|_| anyhow::anyhow!("{} is not under {}", file.display(), root.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            // Every file's plan is built; the ranking only decides which ones `scan` prints.
+            let report = scan(&root, &cfg, usize::MAX, no_history)?;
+            let hot = report.hotspots.iter().find(|h| h.path == rel);
+            if json {
+                let (plan, more): (&[plan::Step], usize) = hot.map_or((&[], 0), |h| (&h.plan, h.plan_more));
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"path": rel, "plan": plan, "plan_more": more}))?);
+                return Ok(());
+            }
+            match hot {
+                Some(h) => print!("{}", plan::render(&rel, &h.plan, h.plan_more)),
+                None => {
+                    eprintln!("note: {rel} is not a ranked source file");
+                    println!("no plan");
+                }
             }
         }
         Cmd::Files { path, json, top } => {
@@ -258,7 +259,7 @@ fn main() -> Result<()> {
             let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
                 files.into_iter().filter(|f| f.kind == discover::FileKind::Source).collect();
-            let r = clones::detect(&src, &cfg.clones, &cfg.tests);
+            let r = clones::detect(&src, &cfg.clones, &cfg.tests, cfg.plan.symbol_fallback);
             if json {
                 println!("{}", serde_json::to_string_pretty(&r)?);
                 return Ok(());
@@ -266,7 +267,7 @@ fn main() -> Result<()> {
             let tables = r.pairs.iter().filter(|p| p.kind == clones::CloneKind::Table).count();
             println!("{} clone pairs (>= {} tokens, {} tables) across {} files\n", r.pairs.len(), cfg.clones.min_tokens, tables, r.files.len());
             for p in r.pairs.iter().take(top) {
-                println!("{:>5} tok  {}:{}-{}  <->  {}:{}-{}{}", p.tokens, p.a.file, p.a.start_line, p.a.end_line, p.b.file, p.b.start_line, p.b.end_line, report::table_note(p));
+                println!("{}", report::pair_line(p));
             }
             let mut rows: Vec<(&String, &clones::FileClones)> = r.files.iter().collect();
             rows.sort_by(|x, y| y.1.clone_ratio.partial_cmp(&x.1.clone_ratio).unwrap());
@@ -374,4 +375,55 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Every pass over `path`, folded into the report: what `scan` prints and `plan` reads one file of.
+fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bool) -> Result<report::Report> {
+    let files = discover::walk(path, &cfg.discover)?;
+    let source: Vec<discover::SourceFile> =
+        files.iter().filter(|f| f.kind == discover::FileKind::Source).cloned().collect();
+    let tracked: std::collections::HashSet<String> = source.iter().map(|f| f.path.clone()).collect();
+    let history = if no_history {
+        None
+    } else {
+        match history::collect(path, &cfg.history, &tracked) {
+            Ok(h) => {
+                if h.commits_scanned > 0 && h.files.is_empty() {
+                    eprintln!("warning: {} commits scanned but none touched a discovered source file; ranking on static signals", h.commits_scanned);
+                }
+                Some(h)
+            }
+            Err(e) => {
+                eprintln!("warning: history unavailable: {e:#}");
+                None
+            }
+        }
+    };
+    // The mentions pass reads symbols and inline test units off the metrics trees.
+    let (file_metrics, functions, sides) =
+        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| mentions::source_side(root, f, regions, &cfg.tests));
+    let graph = deps::build(&files, &cfg.deps);
+    let clone_report = clones::detect(&source, &cfg.clones, &cfg.tests, cfg.plan.symbol_fallback);
+    let mentions = mentions::index(&files, &sides, &cfg.tests);
+    Ok(report::build(
+        report::Inputs {
+            root: path.canonicalize()?.display().to_string(),
+            files: &files,
+            history: history.as_ref(),
+            file_metrics: &file_metrics,
+            functions: &functions,
+            deps: &graph,
+            clones: &clone_report,
+            mentions: &mentions,
+            cognitive_hard: cfg.metrics.cognitive_hard,
+            tests: &cfg.tests,
+            list_tables_separately: cfg.clones.list_tables_separately,
+            history_cfg: &cfg.history,
+            dedupe_cycle_reason: cfg.deps.dedupe_cycle_reason,
+            plan: &cfg.plan,
+        },
+        top,
+        &cfg.report,
+        &cfg.discover.test_dirs,
+    ))
 }

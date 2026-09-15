@@ -6,7 +6,8 @@ and explain why in terms an LLM (or a person) can act on.
 ```
 scry scan <repo>            # ranked hotspots with reasons + cycles, hidden coupling, clones
 scry scan <repo> --json     # the same, machine-readable
-scry files | history | metrics | deps | clones <repo>   # one signal at a time
+scry files | history | metrics | deps | clones | mentions <repo>   # one signal at a time
+scry plan <file> [--root <repo>]   # one file's refactor plan (the scan pipeline, one file's output)
 scry ast <file> [--errors]  # tree-sitter debugging aid
 ```
 
@@ -24,6 +25,7 @@ language is one grammar crate plus a node-kind table.
 | clones | near-exact duplicates via normalised-token winnowing; a uniform table (dispatch `match`, registry array, map literal) matching its own second half is dropped, and pairs whose both sides are runs of uniform entries are tagged `table` and listed under a TABLES sub-heading with the logic/table split in the file's reason | two copies of a rule drift into two rules; two parallel maps over one enum must drift together, but they are not duplicated logic |
 | regions | inline test regions in Rust source (`#[cfg(test)]` mods and items, `#[test]` fns) | a 2,300-line file that is half `mod tests` is a 1,300-line file; clones and complexity inside tests are not production findings |
 | mentions | test units (functions in test files, tests inside inline `#[cfg(test)]` regions) that name a source file's symbols as identifier tokens, never in strings; the public symbols no test names | "a test file imports it" is false for CLI-style suites that drive the binary: kanspec's `cmd/status.rs` is imported by no test and named by 51 test functions; the no-tests multiplier now needs zero naming units, and a file most of whose public symbols no test names says which ones, with line ranges |
+| plan | per-hotspot refactor steps from findings already made: every clone run resolved to the metrics unit holding its start line (else the preceding top-level item), one `canonicalise_clone` step per pair naming both symbols (`park (932-962) duplicates drop_ticket (1010-1036), 239 tokens: keep one`), clone runs inside `#[cfg(test)]` folded into one step naming the region, an `extract` step per unit over the cognitive threshold, the cycle's cheapest cut when this file is its source; `scry plan <file>` prints one | a CLONES line with two line ranges and no names is a lookup the agent has to do itself; a step that names the symbol on both sides is something it can act on, and a predicted score would be fake precision under a percentile table |
 | report | percentile-normalised composite, reasons per file | one ranked list, no thresholds to tune per language |
 
 The headline score is the hotspot idea from Tornhill's *Your Code as a Crime
@@ -50,7 +52,7 @@ scry config <repo> > scry.toml   # dump the effective settings, edit what you ne
 ```
 
 Sections match the passes: `[discover]`, `[history]`, `[metrics]`, `[deps]`,
-`[clones]`, `[report]`, `[tests]`. A file only has to name what it changes:
+`[clones]`, `[report]`, `[tests]`, `[plan]`. A file only has to name what it changes:
 
 ```toml
 [discover]
@@ -75,6 +77,10 @@ table_weight = 0.25                      # dampen table pairs in clone_ratio (de
 [tests]
 min_name_len = 6                         # symbols shorter than this never count as named by a test (default 5)
 unmentioned_share_reason = 0.7           # reason when this share of a file's public symbols is named by no test (default 0.5)
+
+[plan]
+max_steps = 10                           # steps printed per hotspot before "(+N more)" (default 6)
+symbol_fallback = "none"                 # print "?" for a clone run no function holds (default names the preceding item)
 
 [report.with_history]
 hotspot = 0.5                            # other weights keep their defaults

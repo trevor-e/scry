@@ -11,11 +11,13 @@
 //! repetition, not a copy, and is dropped; a surviving run whose sides are both
 //! runs of uniform sibling entries (a dispatch match, a registry array, a map
 //! literal) is tagged `table` so it is listed apart from duplicated logic.
+//! Every surviving run then resolves to a symbol: the innermost metrics unit
+//! holding its start line, else the nearest preceding top-level item, else `?`.
 
-use crate::config::{Clones as Cfg, Tests as TestsCfg};
+use crate::config::{Clones as Cfg, SymbolFallback, Tests as TestsCfg};
 use crate::discover::SourceFile;
 use crate::lang::Language;
-use crate::regions;
+use crate::{metrics, regions};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -28,8 +30,10 @@ pub struct Loc {
     pub file: String,
     pub start_line: usize,
     pub end_line: usize,
-    /// Nearest named item enclosing the range (`as_str`, `CHECKS`, `_baseMimes`), when the grammar names one.
-    pub symbol: Option<String>,
+    /// The innermost metrics unit whose line span holds `start_line` (`park`, `Store<'c>.transact`);
+    /// with `[plan].symbol_fallback = preceding_item`, else the nearest preceding top-level named
+    /// item (`CHECKS`, `ApproveReport`, `_baseMimes`); else `?`.
+    pub symbol: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -89,13 +93,15 @@ struct Tokens {
     ends: Vec<usize>,
     /// Lines inside inline test regions, which emitted no tokens.
     inline_test_lines: usize,
+    /// The regions that emitted no tokens (empty when `[tests].inline_modules` is off).
+    test_regions: Vec<regions::TestRegion>,
     /// The parsed tree, kept for the container walks (`Tree` is `Send + Sync`).
     tree: Option<tree_sitter::Tree>,
     /// Kind classes of the file's grammar, shared by every file of that grammar.
     kinds: Arc<Kinds>,
 }
 
-pub fn detect(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg) -> CloneReport {
+pub fn detect(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg, fallback: SymbolFallback) -> CloneReport {
     let k = cfg.k;
     // Kind classes once per grammar, not per file: a grammar has a thousand kinds to classify.
     let mut kinds: HashMap<Language, Arc<Kinds>> = HashMap::new();
@@ -137,6 +143,15 @@ pub fn detect(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg) -> CloneReport 
             }
         }
     }
+
+    // Symbol names once per file that has a candidate match: units and top-level items by line.
+    let mut used = vec![false; files.len()];
+    for (fa, fb) in by_pair.keys() {
+        used[*fa] = true;
+        used[*fb] = true;
+    }
+    let symbols: Vec<Option<SymbolIndex>> =
+        toks.par_iter().zip(files.par_iter()).zip(used.par_iter()).map(|((t, f), u)| if *u { SymbolIndex::new(t, f) } else { None }).collect();
 
     let mut pairs: Vec<ClonePair> = by_pair
         .into_par_iter()
@@ -212,16 +227,16 @@ pub fn detect(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg) -> CloneReport 
             }
             kept.into_iter()
                 .map(|(sa, sb, len)| {
-                    let side_a = locate(ta, &root_a, &files[fa], sa, len, cfg);
-                    let side_b = locate(tb, root_b, &files[fb], sb, len, cfg);
+                    let side_a = locate(ta, &root_a, sa, len, cfg);
+                    let side_b = locate(tb, root_b, sb, len, cfg);
                     // A pair is a table only when both sides are.
-                    let table = match (&side_a.table, &side_b.table) {
+                    let table = match (&side_a, &side_b) {
                         (Some(t), Some(_)) => Some(t.clone()),
                         _ => None,
                     };
                     ClonePair {
-                        a: loc(&files[fa].path, ta, sa, len, side_a.symbol),
-                        b: loc(&files[fb].path, tb, sb, len, side_b.symbol),
+                        a: loc(&files[fa].path, ta, sa, len, symbols[fa].as_ref(), fallback),
+                        b: loc(&files[fb].path, tb, sb, len, symbols[fb].as_ref(), fallback),
                         tokens: len,
                         kind: if table.is_some() { CloneKind::Table } else { CloneKind::Logic },
                         container_kind: table.as_ref().map(|t| t.container_kind.clone()),
@@ -249,12 +264,13 @@ pub fn detect(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg) -> CloneReport 
             ranges.entry(&side.file).or_default().push((side.start_line, side.end_line, p.kind));
             if let Some(kind) = &p.container_kind {
                 let refs = tables.entry(&side.file).or_default();
-                match refs.iter_mut().find(|t| t.symbol == side.symbol && t.container_kind == *kind) {
+                let symbol = (side.symbol != "?").then(|| side.symbol.clone());
+                match refs.iter_mut().find(|t| t.symbol == symbol && t.container_kind == *kind) {
                     Some(t) => {
                         t.start_line = t.start_line.min(side.start_line);
                         t.end_line = t.end_line.max(side.end_line);
                     }
-                    None => refs.push(TableRef { symbol: side.symbol.clone(), container_kind: kind.clone(), start_line: side.start_line, end_line: side.end_line }),
+                    None => refs.push(TableRef { symbol, container_kind: kind.clone(), start_line: side.start_line, end_line: side.end_line }),
                 }
             }
         }
@@ -306,9 +322,96 @@ fn overlaps(s1: usize, l1: usize, s2: usize, l2: usize) -> bool {
     s1 < s2 + l2 && s2 < s1 + l1
 }
 
-fn loc(path: &str, t: &Tokens, start: usize, len: usize, symbol: Option<String>) -> Loc {
+fn loc(path: &str, t: &Tokens, start: usize, len: usize, symbols: Option<&SymbolIndex>, fallback: SymbolFallback) -> Loc {
     let end = (start + len - 1).min(t.lines.len().saturating_sub(1));
-    Loc { file: path.to_string(), start_line: t.lines[start], end_line: t.lines[end], symbol }
+    let start_line = t.lines[start];
+    let symbol = symbols.map_or_else(|| "?".to_string(), |s| s.resolve(start_line, fallback));
+    Loc { file: path.to_string(), start_line, end_line: t.lines[end], symbol }
+}
+
+// ---------- symbol resolution ----------
+
+/// What names a run of one file: its metrics units by line span and its top-level named items by
+/// start line, both read off the tokenizer's tree, so a run's symbol is the name `scry metrics`
+/// reports for the unit around it.
+struct SymbolIndex {
+    /// `(start_line, end_line, name)` in document order.
+    units: Vec<(usize, usize, String)>,
+    /// `(start_line, name)` of the root's named items, in document order. An item starts on
+    /// its first outer attribute (`#[derive(Debug)]` is a sibling node in the Rust grammar),
+    /// and items inside a region the tokenizer skipped are left out: a run can only start on
+    /// source the tokens came from, and the `#[test] fn` above a struct is not its name.
+    items: Vec<(usize, String)>,
+}
+
+impl SymbolIndex {
+    fn new(t: &Tokens, file: &SourceFile) -> Option<Self> {
+        let root = t.tree.as_ref()?.root_node();
+        let src = file.content.as_bytes();
+        let units = metrics::unit_nodes(root, file.lang)
+            .into_iter()
+            .map(|n| (n.start_position().row + 1, n.end_position().row + 1, metrics::unit_name_of(n, file.lang, src)))
+            .collect();
+        let mut items = Vec::new();
+        let mut attrs_from: Option<usize> = None;
+        let mut cursor = root.walk();
+        for n in root.named_children(&mut cursor) {
+            if n.kind() == "attribute_item" {
+                attrs_from.get_or_insert(n.start_position().row + 1);
+                continue;
+            }
+            if t.kinds.transparent(n) {
+                continue;
+            }
+            let from = attrs_from.take().unwrap_or(n.start_position().row + 1);
+            if regions::contains(&t.test_regions, n.start_byte()) {
+                continue;
+            }
+            if let Some(name) = item_name(n, src) {
+                items.push((from, name));
+            }
+        }
+        Some(SymbolIndex { units, items })
+    }
+
+    /// The innermost unit whose span holds `line` (the shortest; the later one on a tie), else
+    /// the last item starting at or before `line` when the fallback asks for it, else `?`.
+    fn resolve(&self, line: usize, fallback: SymbolFallback) -> String {
+        let unit = self
+            .units
+            .iter()
+            .filter(|(s, e, _)| *s <= line && line <= *e)
+            .min_by_key(|(s, e, _)| (e - s, std::cmp::Reverse(*s)));
+        if let Some((_, _, name)) = unit {
+            return name.clone();
+        }
+        match fallback {
+            SymbolFallback::PrecedingItem => self.items.iter().rev().find(|(s, _)| *s <= line).map_or_else(|| "?".to_string(), |(_, n)| n.clone()),
+            SymbolFallback::None => "?".to_string(),
+        }
+    }
+}
+
+/// The name of a top-level item a run can fall back to: Rust `function_item | impl_item |
+/// struct_item | enum_item | static_item | const_item`, TS `function_declaration |
+/// class_declaration | lexical_declaration`, Python `function_definition | class_definition`
+/// and an `expression_statement` holding an assignment; looked for through a TS
+/// `export_statement` and a Python `decorated_definition`. Anything else names nothing.
+fn item_name(node: Node, src: &[u8]) -> Option<String> {
+    let node = match node.kind() {
+        "export_statement" => node.child_by_field_name("declaration")?,
+        "decorated_definition" => node.child_by_field_name("definition")?,
+        _ => node,
+    };
+    let name = match node.kind() {
+        "function_item" | "struct_item" | "enum_item" | "static_item" | "const_item" | "function_declaration" | "class_declaration"
+        | "function_definition" | "class_definition" => node.child_by_field_name("name")?,
+        "impl_item" => node.child_by_field_name("type")?,
+        "lexical_declaration" => node.named_child(0).filter(|d| d.kind() == "variable_declarator")?.child_by_field_name("name")?,
+        "expression_statement" => node.named_child(0).filter(|a| a.kind() == "assignment")?.child_by_field_name("left")?,
+        _ => return None,
+    };
+    name.utf8_text(src).ok().map(str::to_string)
 }
 
 /// Byte span of a token range: start of its first token to the end of its last.
@@ -480,31 +583,11 @@ struct TableSide {
     entries: usize,
 }
 
-#[derive(Debug, Default)]
-struct SideInfo {
-    symbol: Option<String>,
-    table: Option<TableSide>,
-}
-
-/// Where a run sits: the item that names it, and the uniform-sibling container around it, if any.
-fn locate(t: &Tokens, root_kids: &[Node], file: &SourceFile, start: usize, len: usize, cfg: &Cfg) -> SideInfo {
+/// The uniform-sibling container around a run, if any.
+fn locate(t: &Tokens, root_kids: &[Node], start: usize, len: usize, cfg: &Cfg) -> Option<TableSide> {
     let (sb, eb) = byte_range(t, start, len);
-    let Some(chain) = resolve(t, root_kids, sb, eb, cfg) else { return SideInfo::default() };
-    SideInfo { symbol: enclosing_symbol(&chain, file.content.as_bytes()), table: find_table(&chain, sb, eb, &t.kinds, cfg) }
-}
-
-/// Text of the nearest node on the chain, innermost first, that names an item (`fn`, `static`,
-/// `enum`, `let`, `const x =`).
-fn enclosing_symbol(chain: &[Level], src: &[u8]) -> Option<String> {
-    chain.iter().rev().find_map(|l| {
-        let name = match l.node.kind() {
-            "let_declaration" => l.node.child_by_field_name("pattern"),
-            "assignment" => l.node.child_by_field_name("left"),
-            "impl_item" => l.node.child_by_field_name("type"),
-            _ => l.node.child_by_field_name("name"),
-        }?;
-        name.kind().contains("identifier").then(|| name.utf8_text(src).ok().map(str::to_string)).flatten()
-    })
+    let chain = resolve(t, root_kids, sb, eb, cfg)?;
+    find_table(&chain, sb, eb, &t.kinds, cfg)
 }
 
 /// Up the chain from its innermost node, the first one with at least `table_min_entries`
@@ -713,7 +796,7 @@ const NUMBER_KINDS: &[&str] = &[
 fn tokenize(file: &SourceFile, tests: &TestsCfg, kinds: Arc<Kinds>) -> Tokens {
     let mut parser = file.lang.parser();
     let src = file.content.as_bytes();
-    let mut out = Tokens { hashes: Vec::new(), lines: Vec::new(), starts: Vec::new(), ends: Vec::new(), inline_test_lines: 0, tree: None, kinds };
+    let mut out = Tokens { hashes: Vec::new(), lines: Vec::new(), starts: Vec::new(), ends: Vec::new(), inline_test_lines: 0, test_regions: Vec::new(), tree: None, kinds };
     let Some(tree) = parser.parse(src, None) else { return out };
     // Inline test regions emit no tokens, so no run can lie inside one.
     let test_regions = if tests.inline_modules && file.lang == Language::Rust {
@@ -768,6 +851,7 @@ fn tokenize(file: &SourceFile, tests: &TestsCfg, kinds: Arc<Kinds>) -> Tokens {
         }
     }
     out.tree = Some(tree);
+    out.test_regions = test_regions;
     out
 }
 
@@ -813,18 +897,18 @@ mod tests {
     #[test]
     fn a_uniform_match_matching_its_own_second_half_is_dropped() {
         let files = [rs("a.rs", dispatch("dispatch", 12))];
-        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert!(r.pairs.is_empty(), "{:?}", r.pairs);
         assert!(r.files.is_empty());
         // The knob restores the old behaviour; the tagger then sees one table on both sides,
         // `?` in every arm notwithstanding.
         assert!(!Cfg::default().table_control_kinds["rust"].iter().any(|k| k == "try_expression"));
         let keep = Cfg { drop_same_container_self_match: false, ..Cfg::default() };
-        let r = detect(&files, &keep, &TestsCfg::default());
+        let r = detect(&files, &keep, &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         let p = &r.pairs[0];
         assert_eq!((p.kind, p.container_kind.as_deref(), p.entry_count), (CloneKind::Table, Some("match_block"), Some(6)), "{p:?}");
-        assert_eq!((p.a.symbol.as_deref(), p.b.symbol.as_deref()), (Some("dispatch"), Some("dispatch")));
+        assert_eq!((p.a.symbol.as_str(), p.b.symbol.as_str()), ("dispatch", "dispatch"));
         assert_eq!((p.a.start_line, p.a.end_line, p.b.start_line, p.b.end_line), (3, 8, 9, 14));
     }
 
@@ -836,11 +920,12 @@ mod tests {
             "impl S {{\n    fn alpha(&self, aa: &[u8]) -> i32 {{\n{}        aa_a\n    }}\n    fn beta(&self, bb: &[u8]) -> i32 {{\n{}        bb_a\n    }}\n}}\n",
             unit("aa"), unit("bb")
         );
-        let r = detect(&[rs("a.rs", src)], &Cfg::default(), &TestsCfg::default());
+        let r = detect(&[rs("a.rs", src)], &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         let p = &r.pairs[0];
         assert_eq!((p.kind, &p.container_kind, p.entry_count), (CloneKind::Logic, &None, None));
-        assert_eq!((p.a.symbol.as_deref(), p.b.symbol.as_deref()), (Some("alpha"), Some("beta")));
+        // Named as `scry metrics` names them: the impl's methods.
+        assert_eq!((p.a.symbol.as_str(), p.b.symbol.as_str()), ("S.alpha", "S.beta"));
         let f = &r.files["a.rs"];
         assert_eq!((f.logic_clone_lines, f.table_clone_lines), (f.clone_lines, 0));
         assert!(f.tables.is_empty());
@@ -849,11 +934,11 @@ mod tests {
     #[test]
     fn parallel_registries_are_a_table_pair_and_split_the_file_ratio() {
         let files = [rs("a.rs", registry("A", 8)), rs("b.rs", format!("use x;\n{}", registry("B", 8)))];
-        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         let p = &r.pairs[0];
         assert_eq!((p.kind, p.container_kind.as_deref(), p.entry_count), (CloneKind::Table, Some("array_expression"), Some(8)), "{p:?}");
-        assert_eq!((p.a.symbol.as_deref(), p.b.symbol.as_deref()), (Some("A"), Some("B")));
+        assert_eq!((p.a.symbol.as_str(), p.b.symbol.as_str()), ("A", "B"));
         let fa = &r.files["a.rs"];
         assert!(fa.table_clone_lines >= 8 && fa.logic_clone_lines == 0 && fa.clone_lines == fa.table_clone_lines, "{fa:?}");
         assert_eq!(fa.tables.len(), 1);
@@ -861,7 +946,7 @@ mod tests {
         assert!((fa.clone_ratio - fa.clone_lines as f64 / 10.0).abs() < 1e-9, "{fa:?}");
         // table_weight scales only the table share of the ratio.
         let damp = Cfg { table_weight: 0.25, ..Cfg::default() };
-        let r2 = detect(&files, &damp, &TestsCfg::default());
+        let r2 = detect(&files, &damp, &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert!((r2.files["a.rs"].clone_ratio - 0.25 * fa.clone_ratio).abs() < 1e-9);
     }
 
@@ -875,15 +960,15 @@ mod tests {
             s + "];\n"
         };
         let files = [rs("a.rs", reg("A")), rs("b.rs", reg("B"))];
-        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         assert_eq!(r.pairs[0].kind, CloneKind::Logic);
         // The control-flow list is a knob: with none listed the same pair is a table.
         let none = Cfg { table_control_kinds: Default::default(), ..Cfg::default() };
-        assert_eq!(detect(&files, &none, &TestsCfg::default()).pairs[0].kind, CloneKind::Table);
+        assert_eq!(detect(&files, &none, &TestsCfg::default(), SymbolFallback::PrecedingItem).pairs[0].kind, CloneKind::Table);
         // A one-sided table is logic too: the array side is a table, the `vec!` token tree is not.
         let mixed = [rs("a.rs", registry("A", 8)), rs("b.rs", format!("fn f() {{\n    let v = vec![\n{}    ];\n}}\n", (0..8).map(|i| format!("        Check {{ id: \"c{i}\", about: \"check {i}\", run: check_{i}, fix: None }},\n")).collect::<String>()))];
-        let r = detect(&mixed, &Cfg::default(), &TestsCfg::default());
+        let r = detect(&mixed, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         // (The `vec!` body also matches its own second half inside the macro's token tree, a
         // repetition the container rule cannot see through a macro; that pair is not the point.)
         let cross: Vec<&ClonePair> = r.pairs.iter().filter(|p| p.a.file != p.b.file).collect();
@@ -896,9 +981,9 @@ mod tests {
     fn shape_share_and_entry_size_knobs_decide_a_table() {
         // Eight registry entries of one shape: a table until the node cap is below an entry's size.
         let files = [rs("a.rs", registry("A", 8)), rs("b.rs", registry("B", 8))];
-        assert_eq!(detect(&files, &Cfg::default(), &TestsCfg::default()).pairs[0].kind, CloneKind::Table);
+        assert_eq!(detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem).pairs[0].kind, CloneKind::Table);
         let small = Cfg { table_max_entry_nodes: 5, ..Cfg::default() };
-        assert_eq!(detect(&files, &small, &TestsCfg::default()).pairs[0].kind, CloneKind::Logic);
+        assert_eq!(detect(&files, &small, &TestsCfg::default(), SymbolFallback::PrecedingItem).pairs[0].kind, CloneKind::Logic);
         // Entries cycling through three shapes: the dominant one covers 3 of 8.
         let three = |name: &str| {
             let mut s = format!("pub static {name}: &[Check] = &[\n");
@@ -912,11 +997,11 @@ mod tests {
             s + "];\n"
         };
         let files = [rs("a.rs", three("A")), rs("b.rs", three("B"))];
-        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         assert_eq!(r.pairs[0].kind, CloneKind::Logic);
         let loose = Cfg { table_min_dominant_shape: 0.3, ..Cfg::default() };
-        assert_eq!(detect(&files, &loose, &TestsCfg::default()).pairs[0].kind, CloneKind::Table);
+        assert_eq!(detect(&files, &loose, &TestsCfg::default(), SymbolFallback::PrecedingItem).pairs[0].kind, CloneKind::Table);
     }
 
     #[test]
@@ -927,13 +1012,18 @@ mod tests {
         let unit = |p: &str| format!("        let {p}_a = compute({p}, 1) + other[2];\n        if {p}_a > 0 && !{p} {{ panic!(\"{{}}\", {p}_a); }}\n        for {p}_i in 0..3 {{ {p}_a += {p}_i * 2; }}\n        while {p}_a > 10 {{ {p}_a -= 1; }}\n        let {p}_b: Vec<u8> = {p}.iter().filter(|x| **x > 0).cloned().collect();\n        match {p}_b.first() {{ Some(v) => {p}_a += *v as i32, None => {p}_a = 0 }}\n        let {p}_c = {p}_a.checked_add(7).unwrap_or_default();\n        if let Some(first) = {p}.first() {{ {p}_a += *first as i32; }}\n        loop {{ if {p}_a % 3 == 0 {{ break; }} {p}_a -= 1; }}\n        let {p}_d: usize = {p}.len().saturating_sub({p}_c as usize);\n        {p}_a += {p}_d as i32 * {p}_b.len() as i32;\n        assert!({p}_a >= i32::MIN);\n");
         let file = |owner: &str, f: &str, g: &str, op: &str| format!("impl {owner} {{\n    fn {f}(aa: &[u8]) -> i32 {{\n{}        aa_a\n    }}\n    fn {g}(x: u8) -> u8 {{ x {op} 1 }}\n}}\n", unit("aa"));
         let files = [rs("a.rs", file("S", "alpha", "beta", "+")), rs("b.rs", file("T", "gamma", "delta", "*"))];
-        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         assert!(r.pairs[0].a.end_line > 8 && r.pairs[0].b.end_line > 8, "{:?}", r.pairs[0]);
-        assert_eq!((r.pairs[0].a.symbol.as_deref(), r.pairs[0].b.symbol.as_deref()), (Some("alpha"), Some("gamma")));
+        // The run's backward extension reaches the `impl S {` line, which no unit holds, so the
+        // symbol falls back to the preceding top-level item (the impl) whatever the share says;
+        // `none` prints `?` instead.
+        assert_eq!((r.pairs[0].a.start_line, r.pairs[0].a.symbol.as_str(), r.pairs[0].b.symbol.as_str()), (1, "S", "T"), "{:?}", r.pairs);
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::None);
+        assert_eq!((r.pairs[0].a.symbol.as_str(), r.pairs[0].b.symbol.as_str()), ("?", "?"));
         let whole = Cfg { dominant_child_share: 1.0, ..Cfg::default() };
-        let r = detect(&files, &whole, &TestsCfg::default());
-        assert_eq!((r.pairs[0].a.symbol.as_deref(), r.pairs[0].b.symbol.as_deref()), (Some("S"), Some("T")), "{:?}", r.pairs);
+        let r = detect(&files, &whole, &TestsCfg::default(), SymbolFallback::PrecedingItem);
+        assert_eq!((r.pairs[0].a.symbol.as_str(), r.pairs[0].b.symbol.as_str()), ("S", "T"), "{:?}", r.pairs);
     }
 
     #[test]
@@ -943,7 +1033,7 @@ mod tests {
         let body = |p: &str| format!("    let {p}_a = compute({p}, 1) + other[2];\n    if {p}_a > 0 && !{p} {{ panic!(\"{{}}\", {p}_a); }}\n    for {p}_i in 0..3 {{ {p}_a += {p}_i * 2; }}\n    while {p}_a > 10 {{ {p}_a -= 1; }}\n    let {p}_b: Vec<u8> = {p}.iter().filter(|x| **x > 0).cloned().collect();\n    match {p}_b.first() {{ Some(v) => {p}_a += *v as i32, None => {p}_a = 0 }}\n");
         let uses = |p: &str| (0..6).map(|i| format!("use crate::{p}_{i}::{{Alpha{i}, Beta{i}, Gamma{i}}};\n")).collect::<String>();
         let files = [rs("a.rs", format!("{}pub fn alpha(aa: &[u8]) -> i32 {{\n{}    aa_a\n}}\n", uses("m"), body("aa"))), rs("b.rs", format!("{}pub fn beta(bb: &[u8]) -> i32 {{\n{}    bb_a\n}}\n", uses("n"), body("bb")))];
-        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         let p = &r.pairs[0];
         assert!(p.a.start_line <= 6 && p.a.end_line >= 13, "{p:?}");
@@ -954,10 +1044,36 @@ mod tests {
         // sibling copies, not a table matching its own second half, even when the first run
         // bleeds into the `use` line that follows both.
         let src = format!("pub fn alpha(aa: &[u8]) -> i32 {{\n{}    aa_a\n}}\n{}pub fn beta(bb: &[u8]) -> i32 {{\n{}    bb_a\n}}\nuse crate::z_0::{{Alpha0, Beta0, Gamma0}};\n", body("aa"), uses("m"), body("bb"));
-        let r = detect(&[rs("s.rs", src)], &Cfg::default(), &TestsCfg::default());
+        let r = detect(&[rs("s.rs", src)], &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         let p = &r.pairs[0];
         assert_eq!((p.a.start_line, p.a.end_line, p.b.start_line, p.b.end_line, p.kind), (1, 10, 16, 25, CloneKind::Logic), "{p:?}");
+    }
+
+    #[test]
+    fn a_fallback_item_starts_on_its_attributes_and_is_never_a_stripped_test_fn() {
+        // Copied `impl` bodies whose runs extend back over `use` and `#[derive] struct` lines,
+        // each below a `#[test]` fn: named after the struct, or the fn before the tests, never
+        // after the test fn (which emitted no tokens).
+        let body = |p: &str| format!("    fn is_switch(&self) -> bool {{ false }}\n    fn name_long(&self) -> &'static str {{ \"{p}\" }}\n    fn doc_short(&self) -> &'static str {{ \"{p} doc\" }}\n    fn update(&self, v: FlagValue, args: &mut LowArgs) -> Result<()> {{\n        let {p}_x = v.unwrap_switch();\n        if {p}_x && args.{p}.is_none() {{ args.{p} = Some({p}_x); }}\n        for {p}_i in 0..3 {{ args.count += {p}_i; }}\n        Ok(())\n    }}\n");
+        let test_fn = |p: &str, s: &str| format!("#[cfg(test)]\n#[test]\nfn test_{p}() {{\n    let args = parse_low_raw([\"--{p}\"]).unwrap();\n    {s};\n}}\n");
+        let with_struct = |p: &str, s: &str| format!("pub fn head_{p}(a: u8) -> u8 {{ a {s} 1 }}\n{}/// --{p}\n#[derive(Debug)]\nstruct {p};\n\nimpl Flag for {p} {{\n{}}}\n", test_fn(p, s), body(p));
+        let files = [rs("a.rs", with_struct("Alpha", "assert_eq!(1, args.n)")), rs("b.rs", with_struct("Beta", "assert!(args.n > 0 && args.m < 3)"))];
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
+        assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
+        let p = &r.pairs[0];
+        assert_eq!(p.a.start_line, 9, "{p:?}"); // the `#[derive]` line
+        assert_eq!((p.a.symbol.as_str(), p.b.symbol.as_str()), ("Alpha", "Beta"), "{p:?}");
+        // A run starting on a `use` after the test fn: the fn before the tests names it, and
+        // with the regions un-stripped the test fn (now a token source) does.
+        let with_use = |p: &str, s: &str| format!("pub fn head_{p}(a: u8) -> u8 {{ a {s} 1 }}\n{}use crate::flags::{{FlagValue, LowArgs}};\nimpl Flag for {p} {{\n{}}}\n", test_fn(p, s), body(p));
+        let files = [rs("a.rs", with_use("Alpha", "assert_eq!(1, args.n)")), rs("b.rs", with_use("Beta", "assert!(args.n > 0 && args.m < 3)"))];
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
+        assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
+        assert_eq!((r.pairs[0].a.start_line, r.pairs[0].a.symbol.as_str(), r.pairs[0].b.symbol.as_str()), (8, "head_Alpha", "head_Beta"), "{:?}", r.pairs);
+        let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
+        let r = detect(&files, &Cfg::default(), &off, SymbolFallback::PrecedingItem);
+        assert_eq!((r.pairs[0].a.symbol.as_str(), r.pairs[0].b.symbol.as_str()), ("test_Alpha", "test_Beta"), "{:?}", r.pairs);
     }
 
     #[test]
@@ -973,7 +1089,7 @@ mod tests {
         let f = rs("a.rs", src.clone());
         let regions = regions::test_regions(Language::Rust.parser().parse(&src, None).unwrap().root_node(), src.as_bytes());
         assert_eq!(regions.len(), 4);
-        let r = detect(&[f], &Cfg::default(), &TestsCfg::default());
+        let r = detect(&[f], &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert!(!r.pairs.is_empty());
         for p in &r.pairs {
             for side in [&p.a, &p.b] {
@@ -1006,7 +1122,7 @@ mod tests {
     fn renamed_copy_is_found_and_lines_are_right() {
         let a = format!("def alpha(x):\n{}\n    return x\n", body("aa"));
         let b = format!("import os\n\ndef beta(y):\n{}\n    return y\n", body("bb"));
-        let r = detect(&[sf("a.py", a), sf("b.py", b)], &Cfg::default(), &TestsCfg::default());
+        let r = detect(&[sf("a.py", a), sf("b.py", b)], &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         let p = &r.pairs[0];
         assert_eq!(p.a.file, "a.py");
@@ -1028,11 +1144,11 @@ mod tests {
             s + "    return x\n"
         };
         let files: Vec<SourceFile> = ["a", "b", "c", "d", "e", "f"].iter().map(|p| sf(&format!("{p}.py"), body(p))).collect();
-        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert!(r.pairs.len() >= 15, "{} pairs", r.pairs.len());
         assert_eq!(r.files.len(), 6);
         // Deterministic order across runs.
-        let again = detect(&files, &Cfg::default(), &TestsCfg::default());
+        let again = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         let key = |r: &CloneReport| r.pairs.iter().map(|p| format!("{}:{}-{}:{}", p.a.file, p.a.start_line, p.b.file, p.b.start_line)).collect::<Vec<_>>();
         assert_eq!(key(&r), key(&again));
     }
@@ -1043,8 +1159,8 @@ mod tests {
         let b = format!("def beta(y):\n{}\n    return y\n", body("bb"));
         let files = [sf("a.py", a), sf("b.py", b)];
         let strict = Cfg { min_tokens: 10_000, ..Cfg::default() };
-        assert!(detect(&files, &strict, &TestsCfg::default()).pairs.is_empty());
-        assert_eq!(detect(&files, &Cfg::default(), &TestsCfg::default()).pairs.len(), 1);
+        assert!(detect(&files, &strict, &TestsCfg::default(), SymbolFallback::PrecedingItem).pairs.is_empty());
+        assert_eq!(detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem).pairs.len(), 1);
     }
 
     #[test]
@@ -1058,9 +1174,9 @@ mod tests {
         let f = SourceFile { path: "a.rs".into(), lang: Language::Rust, kind: FileKind::Source, lines: src.lines().count(), bytes: src.len(), content: src };
         let files = [f];
         let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
-        let with_tests = detect(&files, &Cfg::default(), &off);
+        let with_tests = detect(&files, &Cfg::default(), &off, SymbolFallback::PrecedingItem);
         assert!(with_tests.pairs.iter().any(|p| p.a.start_line > 9 && p.b.start_line > 9), "{:?}", with_tests.pairs);
-        let stripped = detect(&files, &Cfg::default(), &TestsCfg::default());
+        let stripped = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert!(stripped.pairs.iter().all(|p| p.a.end_line <= 9 && p.b.end_line <= 9), "{:?}", stripped.pairs);
         assert!(stripped.pairs.len() < with_tests.pairs.len(), "{} vs {}", stripped.pairs.len(), with_tests.pairs.len());
     }
@@ -1097,7 +1213,7 @@ async def handler(request):
         case 'admin': return admin_view(user)
         case _: return plain_view(user)
 ";
-        let r = detect(&[sf("a.py", a.into()), sf("b.py", b.into())], &Cfg::default(), &TestsCfg::default());
+        let r = detect(&[sf("a.py", a.into()), sf("b.py", b.into())], &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert!(r.pairs.is_empty(), "{:?}", r.pairs);
     }
 }

@@ -370,6 +370,12 @@ fn text<'a>(node: Node, src: &'a [u8]) -> &'a str {
     node.utf8_text(src).unwrap_or("?")
 }
 
+/// The name `FunctionMetrics.name` would carry for a unit node of `lang` (`park`,
+/// `Store<'c>.transact`, `app.post('/x')`), for callers naming units on their own tree.
+pub fn unit_name_of(node: Node, lang: Language, src: &[u8]) -> String {
+    unit_name(node, profile(lang), src)
+}
+
 fn unit_name(node: Node, prof: &Profile, src: &[u8]) -> String {
     let own = node.child_by_field_name("name").map(|n| text(n, src).to_string());
     let name = own.or_else(|| {

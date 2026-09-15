@@ -23,6 +23,7 @@ pub struct Config {
     pub clones: Clones,
     pub report: Report,
     pub tests: Tests,
+    pub plan: Plan,
 }
 
 impl Config {
@@ -374,6 +375,53 @@ impl Default for Tests {
             min_name_len: 5,
             unmentioned_share_reason: 0.5,
             unmentioned_min_symbols: 3,
+        }
+    }
+}
+
+// ---------- plan ----------
+
+/// What names a clone run that no metrics unit contains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolFallback {
+    /// The nearest preceding top-level named item (a `struct`, `impl`, `static`, a TS
+    /// `const`, a Python assignment): the run sits in or after it.
+    PrecedingItem,
+    /// Print `?`.
+    None,
+}
+
+/// The per-hotspot refactor plan: clone runs resolved to symbols, one step per finding the
+/// other passes already made (a clone pair, a unit over `cognitive_hard`, a cycle cut).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Plan {
+    /// Steps printed per hotspot; the rest are counted as `(+N more)`.
+    pub max_steps: usize,
+    /// Clone runs inside an inline test region (or a Test-classified file) become one
+    /// `fold_test_clones` step per file naming the region and the run count. Off, they are
+    /// silently left out; either way they never become `canonicalise_clone` steps.
+    pub fold_test_clones: bool,
+    /// A clone run's `symbol` is the innermost metrics unit containing its start line; when
+    /// none does, `preceding_item` names the nearest preceding top-level item and `none`
+    /// prints `?`.
+    pub symbol_fallback: SymbolFallback,
+    /// Step kinds in print order. A kind left out of the list is not planned.
+    pub kind_priority: Vec<String>,
+    /// Print the `PLAN` block under each hotspot in the text report; `--json` and `scry plan`
+    /// carry the steps either way.
+    pub include_in_text_report: bool,
+}
+
+impl Default for Plan {
+    fn default() -> Self {
+        Self {
+            max_steps: 6,
+            fold_test_clones: true,
+            symbol_fallback: SymbolFallback::PrecedingItem,
+            kind_priority: strings(&["fold_test_clones", "canonicalise_clone", "extract", "cut_cycle_edge"]),
+            include_in_text_report: true,
         }
     }
 }
