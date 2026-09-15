@@ -6,7 +6,7 @@ and explain why in terms an LLM (or a person) can act on.
 ```
 scry scan <repo>            # ranked hotspots with reasons + cycles, hidden coupling, clones
 scry scan <repo> --json     # the same, machine-readable
-scry files | history | metrics | deps | clones | mentions | dead | helpers | strings <repo>   # one signal at a time
+scry files | history | metrics | deps | clones | mentions | dead | helpers | strings | clumps <repo>   # one signal at a time
 scry plan <file> [--root <repo>]   # one file's refactor plan (the scan pipeline, one file's output)
 scry ast <file> [--errors]  # tree-sitter debugging aid
 ```
@@ -29,6 +29,7 @@ language is one grammar crate plus a node-kind table.
 | dead | a symbol index (every definition, every identifier reference by bare name, split into production and test context) built on the trees already parsed; exported symbols referenced nowhere (DEAD), only by tests (TESTONLY, strict: no production use even in-file, named with the test files), or only inside their own file (one per-file percentile line, never per-symbol advice); Rust struct fields nothing reads and enum variants nothing constructs; mode auto/library/application from the manifests, so a library's public API is exempt | LLM sessions write `pub fn` / `export` by default and never narrow visibility, so rustc's `dead_code` goes silent behind an all-`pub mod` lib.rs: kanspec's `hooks::install` has no caller in 81 files, `Git::is_ignored` lives only for two integration tests, and 154 of its 708 pub items are used only in their own file; a Rust 2021 `format!("{BIN_ENV}")` is a use, so string contents count |
 | helpers | top-level helpers grouped by name across files and classed verbatim / similar / different contract on a helper-specific normalizer (only bound names anonymised; callees, fields, macros and literals kept), each copy attributed to its introducing commit and `Claude-Session`; deliberate twins (same basename, re-export wrappers, per-adapter dirs, `#[cfg]` gates) suppressed; and small helper bodies (12-40 tokens) found as exact token sequences in other files, with `hoist and call` when the helper is private | each session writes the utility it needs without grepping for it: kanspec's `plural` is byte-identical in `cmd/flow.rs` and `cmd/status.rs` and re-typed with a second parameter in `cmd/proposal.rs`, three commits from two sessions; `io_err` and `render` twice each; the clones pass cannot see a 12-token idiom re-derived in place, and the same tool run on ripgrep and fd finds no verbatim family at all |
 | strings | string literals in a message role (`format!` / `println!` / `anyhow!` / `bail!` arguments, `print` / `console.*` / `logger.*` calls, `raise` / `throw`, `return` / `Err` values; docstrings, attributes, asserts, imports, JSX attributes and gettext ids excluded) masked (`{id}`, `${x}`, `%s`, digits) and grouped by exact text across files; config literals (strftime patterns, ALL_CAPS env names, paths, URLs, MIME types, numbers >= 100 in one config role) grouped by text with the named constant, when one exists, pointed at; near-duplicate messages as information | every session hand-writes the same next-step hint and error phrasing without knowing which module owns the constant: kanspec formats one timestamp as `"%Y-%m-%dT%H:%MZ"` in four files while `logentry.rs` already names it `TS_FMT`, scrubs `GIT_WORK_TREE` in three files, and, once its own `fix!` macro is listed in `message_macros`, spells `kanspec show {id}` by hand in ten files (23x); ripgrep, fd, click and hono share almost no message text |
+| clumps | every function's named parameters (receivers out) with their type text; every 3- and 4-name combination grouped repo-wide, reported at 4 functions or 2 files when at least 2 slots agree on type, collapsed into the largest tuple the members share, with the slots no member reads (`_`-prefixed or unreferenced in the body) counted per clump and the one caller they all have named; trait / override methods, callbacks and protocol tuples (`(ctx, param, value)`) skipped; weight 0 | agents extend a family by copying the last sibling's signature and keep the dead slot: kanspec's five `plan_*` functions carry `(s: &Snapshot, f, a, _m: &Minter)` with `_m` unused in all five (`plan_decide` alone reads its `m`), while fd's `(stdout, entry, config)` recurs in six `print_entry*` functions with every slot read; clump frequency is similar in human and LLM code, the silenced slot is what separates them |
 | report | percentile-normalised composite, reasons per file | one ranked list, no thresholds to tune per language |
 
 The headline score is the hotspot idea from Tornhill's *Your Code as a Crime
@@ -57,7 +58,7 @@ scry config <repo> > scry.toml   # dump the effective settings, edit what you ne
 
 Sections match the passes: `[discover]`, `[history]`, `[metrics]`, `[deps]`,
 `[clones]`, `[report]`, `[tests]`, `[plan]`, `[dead.symbols]`, `[dead.test_only]`,
-`[dead.shapes]`, `[helpers]`, `[strings]`. A file only has to name what it changes:
+`[dead.shapes]`, `[helpers]`, `[strings]`, `[clumps]`. A file only has to name what it changes:
 
 ```toml
 [discover]
@@ -107,6 +108,12 @@ min_len = 10                             # shortest masked message text that can
 min_files = 2                            # files a message must be spelled in (default 3; config literals use config_min_files = 2)
 message_macros = ["format", "println", "eprintln", "anyhow", "bail", "fix"]   # the macros whose string arguments are messages
 ignore_patterns = ["^kanspec show"]      # regexes; a hint printed from ten commands on purpose goes here
+
+[clumps]
+min_functions = 5                        # a one-file clump needs this many members (default 4; cross-file needs min_files = 2)
+min_typed_slots = 1                      # slots that must agree on type (default 2; a tuple nobody annotates needs min_functions + 1 members)
+protocol_tuples = [["c", "next"], ["ctx", "param", "value"], ["self", "request"]]   # callback shapes never analysed
+weight = 0.02                            # rank on clump membership too (default 0.0: section and reasons only)
 
 [report.with_history]
 hotspot = 0.5                            # other weights keep their defaults

@@ -27,6 +27,7 @@ pub struct Config {
     pub dead: Dead,
     pub helpers: Helpers,
     pub strings: Strings,
+    pub clumps: Clumps,
 }
 
 impl Config {
@@ -827,6 +828,84 @@ impl Default for Strings {
             max_reported_per_file: 3,
             max_sites_listed: 8,
             display_text_len: 80,
+        }
+    }
+}
+
+// ---------- clumps ----------
+
+/// The parameter-clumps pass: groups of parameter names recurring across functions, with the
+/// slots no member reads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Clumps {
+    /// Smallest name combination grouped…
+    pub min_group: usize,
+    /// …and the largest (combinations of `min_group`..=`max_group` names are counted; groups
+    /// with one member set collapse into the largest tuple those functions share).
+    pub max_group: usize,
+    /// Named parameters kept per function (receivers left out), in declared order.
+    pub max_params: usize,
+    /// A group is a clump at this many member functions…
+    pub min_functions: usize,
+    /// …or with members in this many distinct files…
+    pub min_files: usize,
+    /// …either one (on) or both (off).
+    pub report_if_either: bool,
+    /// Slots whose type text every annotated member agrees on, needed for a clump to be
+    /// reported; a tuple no member annotates at all is reported at `min_functions + 1` members
+    /// instead.
+    pub min_typed_slots: usize,
+    /// Characters of the joined tuple (`sfa` = 3), applied only to unannotated tuples: a tuple
+    /// of one-letter names counts when typed.
+    pub min_name_len: usize,
+    /// A parameter starting with this is unused by definition; empty turns that off.
+    pub unused_prefix: String,
+    /// Leave out signatures the function does not own: Rust trait impls and trait items,
+    /// Python methods of classes with superclasses, TS methods of classes with heritage, and
+    /// callback arrows passed as arguments.
+    pub skip_trait_impls: bool,
+    /// Parameter name sets of callback protocols; a function whose parameters cover one is
+    /// never analysed.
+    pub protocol_tuples: Vec<Vec<String>>,
+    /// Leave out Python `__dunder__` functions.
+    pub skip_dunder: bool,
+    /// Leave out Python `@overload` definitions.
+    pub skip_overloads: bool,
+    /// Functions with the same name in one file (cfg-gated variants) count once.
+    pub dedupe_same_name_in_file: bool,
+    /// Name the one function every member is referenced from (`all called from run`).
+    pub note_single_caller: bool,
+    /// Score weight of the percentile of `clump_members` (0: the section and reasons print,
+    /// the ranking ignores them).
+    pub weight: f64,
+    /// Reason lines per file, then `(+N more parameter clumps in clumps)`.
+    pub max_reported_per_file: usize,
+    /// Member sites a line lists before `+N more`; `functions[]` in `--json` has them all.
+    pub max_sites_listed: usize,
+}
+
+impl Default for Clumps {
+    fn default() -> Self {
+        Self {
+            min_group: 3,
+            max_group: 4,
+            max_params: 8,
+            min_functions: 4,
+            min_files: 2,
+            report_if_either: true,
+            min_typed_slots: 2,
+            min_name_len: 3,
+            unused_prefix: "_".into(),
+            skip_trait_impls: true,
+            protocol_tuples: vec![strings(&["c", "next"]), strings(&["req", "res", "next"]), strings(&["ctx", "param", "value"])],
+            skip_dunder: true,
+            skip_overloads: true,
+            dedupe_same_name_in_file: true,
+            note_single_caller: true,
+            weight: 0.0,
+            max_reported_per_file: 3,
+            max_sites_listed: 8,
         }
     }
 }

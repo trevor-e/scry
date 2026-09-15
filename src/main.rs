@@ -1,4 +1,5 @@
 mod clones;
+mod clumps;
 mod config;
 mod dead;
 mod deps;
@@ -128,6 +129,15 @@ enum Cmd {
         #[arg(long, default_value_t = 20)]
         top: usize,
     },
+    /// Parameter tuples recurring across functions, with the slots no member reads
+    Clumps {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+    },
     /// Per-function cognitive/cyclomatic complexity for source files
     Metrics {
         #[arg(default_value = ".")]
@@ -172,7 +182,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = match &cli.cmd {
         Cmd::Scan { path, .. } | Cmd::Files { path, .. } | Cmd::History { path, .. } | Cmd::Clones { path, .. }
-        | Cmd::Deps { path, .. } | Cmd::Mentions { path, .. } | Cmd::Dead { path, .. } | Cmd::Helpers { path, .. } | Cmd::Strings { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
+        | Cmd::Deps { path, .. } | Cmd::Mentions { path, .. } | Cmd::Dead { path, .. } | Cmd::Helpers { path, .. } | Cmd::Strings { path, .. } | Cmd::Clumps { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
         Cmd::Plan { root, .. } => root.clone(),
         Cmd::Ast { .. } => PathBuf::from("."),
     };
@@ -394,6 +404,15 @@ fn main() -> Result<()> {
             }
             print!("{}", strings::render(&r, top));
         }
+        Cmd::Clumps { path, json, top } => {
+            let files = discover::walk(&path, &cfg.discover)?;
+            let r = clumps::analyze(&clumps::index_all(&files, &cfg.clumps), &cfg.clumps);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+                return Ok(());
+            }
+            print!("{}", clumps::render(&r, top, &cfg.clumps.unused_prefix));
+        }
         Cmd::Metrics { path, json, top } => {
             let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
@@ -465,20 +484,22 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
             }
         }
     };
-    // The mentions, dead, helpers and strings passes read symbols, inline test units, references,
-    // helper bodies and literals off the metrics trees; Test files are parsed once here for
-    // the ones that need them.
+    // The mentions, dead, helpers, strings and clumps passes read symbols, inline test units,
+    // references, helper bodies, literals and parameter lists off the metrics trees; Test files
+    // are parsed once here for the ones that need them.
     let walker = dead::Walker::new(&cfg.dead);
     let hwalker = helpers::Walker::new(&cfg.helpers);
     let swalker = strings::Walker::new(&cfg.strings);
+    let cwalker = clumps::Walker::new(&cfg.clumps);
     let (file_metrics, functions, per_file) =
-        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions), hwalker.file_side(root, f, regions), swalker.file_side(root, f, regions)));
-    let (mut sides, mut indexes, mut helper_sides, mut string_sides) = (Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()));
-    for (m, d, h, s) in per_file {
+        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions), hwalker.file_side(root, f, regions), swalker.file_side(root, f, regions), cwalker.file_side(root, f, regions)));
+    let (mut sides, mut indexes, mut helper_sides, mut string_sides, mut clump_sides) = (Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()));
+    for (m, d, h, s, c) in per_file {
         sides.push(m);
         indexes.push(d);
         helper_sides.push(h);
         string_sides.push(s);
+        clump_sides.push(c);
     }
     let graph = deps::build(&files, &cfg.deps);
     let clone_report = clones::detect(&source, &cfg.clones, &cfg.tests, cfg.plan.symbol_fallback);
@@ -495,6 +516,7 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
     }
     let helpers_report = helpers::analyze(&helper_sides, &symbols, &graph, history.as_ref().map(|_| path), &cfg.helpers);
     let strings_report = strings::analyze(&string_sides, &cfg.strings);
+    let clumps_report = clumps::analyze(&clump_sides, &cfg.clumps);
     Ok(report::build(
         report::Inputs {
             root: path.canonicalize()?.display().to_string(),
@@ -509,6 +531,9 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
             helpers: &helpers_report,
             helpers_weight: cfg.helpers.weight,
             strings: &strings_report,
+            clumps: &clumps_report,
+            clumps_weight: cfg.clumps.weight,
+            clumps_prefix: &cfg.clumps.unused_prefix,
             cognitive_hard: cfg.metrics.cognitive_hard,
             tests: &cfg.tests,
             list_tables_separately: cfg.clones.list_tables_separately,
