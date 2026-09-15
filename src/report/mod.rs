@@ -9,7 +9,7 @@ use crate::clones::{CloneKind, CloneReport, ClonePair, Loc, TableRef};
 use crate::clumps::{self, Clump, ClumpsReport};
 use crate::config::{History as HistoryCfg, Plan as PlanCfg, Report as Cfg, Tests as TestsCfg, Weights};
 use crate::dead::{self, DeadReport, FileDead, Shape, SymbolReport};
-use crate::declared::{self, DeclaredReport, Feature, Misplaced, Orphan, UnreadKnob};
+use crate::declared::{self, DeclaredReport, Feature, Misplaced, Orphan, TestSeam, UnreadKnob};
 use crate::deps::{Cycle, DepGraph};
 use crate::helpers::{self, Family, HelpersReport, Inlined};
 use crate::discover::{FileKind, SourceFile};
@@ -67,9 +67,11 @@ pub struct Signals {
     /// Functions of the file in a reported parameter clump (see `clumps`). Percentile-ranked,
     /// weight `[clumps].weight`.
     pub clump_members: usize,
-    /// Config knobs declared in this file that no code reads (see `declared`). Percentile-ranked,
-    /// weight `[declared].weight`.
+    /// Config knobs declared in this file that no code reads (see `declared`)…
     pub unread_knobs: usize,
+    /// …and env names this file reads that only tests set. Their sum is percentile-ranked,
+    /// weight `[declared].weight`.
+    pub test_seams: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,6 +105,8 @@ pub struct Hotspot {
     pub clumps: Vec<(String, usize)>,
     /// `(section.knob, line)` of every config knob this file declares that no code reads.
     pub unread_knobs: Vec<(String, usize)>,
+    /// `(env name, line)` of every test-seam read in this file (see `declared`).
+    pub test_seams: Vec<(String, usize)>,
 }
 
 /// A co-change pair with no import between its members. In `hidden_coupling` when nothing
@@ -175,7 +179,8 @@ pub struct Report {
     pub strings: StringsSection,
     /// Parameter tuples recurring across functions, with their unused slots (see `clumps`).
     pub clumps: ClumpsSection,
-    /// Orphaned dependencies, dead feature flags and unread config knobs (see `declared`).
+    /// Orphaned dependencies, dead feature flags, unread config knobs and test seams (see
+    /// `declared`).
     pub declared: DeclaredSection,
 }
 
@@ -189,6 +194,7 @@ pub struct DeclaredSection {
     pub dead_features: Vec<Feature>,
     pub noop_features: Vec<Feature>,
     pub unread_knobs: Vec<UnreadKnob>,
+    pub test_seams: Vec<TestSeam>,
 }
 
 /// The CLUMPS section: totals, notes and the top clumps.
@@ -527,6 +533,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 family_literals: st.map_or(0, |s| s.family_literals),
                 clump_members: cl.map_or(0, |c| c.members),
                 unread_knobs: dc.map_or(0, |d| d.unread_knobs.len()),
+                test_seams: dc.map_or(0, |d| d.test_seams.len()),
             }
         })
         .collect();
@@ -542,7 +549,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
     let p_helpers = percentiles(&signals.iter().map(|s| s.helper_copies + s.inlined_idioms).collect::<Vec<_>>());
     let p_strings = percentiles(&signals.iter().map(|s| s.family_literals).collect::<Vec<_>>());
     let p_clumps = percentiles(&signals.iter().map(|s| s.clump_members).collect::<Vec<_>>());
-    let p_declared = percentiles(&signals.iter().map(|s| s.unread_knobs).collect::<Vec<_>>());
+    let p_declared = percentiles(&signals.iter().map(|s| s.unread_knobs + s.test_seams).collect::<Vec<_>>());
     // Commits that touched none of our files (a subdirectory scan of a larger
     // repo, a shallow clone) are not history we can rank on.
     let have_history = !hist.files.is_empty();
@@ -604,7 +611,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let helpers_p = if s.helper_copies + s.inlined_idioms == 0 { 0.0 } else { p_helpers[i] };
             let strings_p = if s.family_literals == 0 { 0.0 } else { p_strings[i] };
             let clumps_p = if s.clump_members == 0 { 0.0 } else { p_clumps[i] };
-            let declared_p = if s.unread_knobs == 0 { 0.0 } else { p_declared[i] };
+            let declared_p = if s.unread_knobs + s.test_seams == 0 { 0.0 } else { p_declared[i] };
             let base = w.hotspot * hotspot + w.fixes * fix + w.complexity * cx + w.coupling * coupling + w.clones * clone + w.size * p_lines[i] + w.dead * dead_p + inp.helpers_weight * helpers_p + w.strings * strings_p + inp.clumps_weight * clumps_p + inp.declared_weight * declared_p;
             let score = 100.0 * base * if s.test_units > 0 { 1.0 } else { cfg.no_tests_multiplier };
 
@@ -712,6 +719,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 repeated_literals: strings_file.map(|s| s.literals.clone()).unwrap_or_default(),
                 clumps: clumps_file.map(|c| c.clumps.clone()).unwrap_or_default(),
                 unread_knobs: declared_file.map(|d| d.unread_knobs.clone()).unwrap_or_default(),
+                test_seams: declared_file.map(|d| d.test_seams.clone()).unwrap_or_default(),
             }
         })
         .collect();
@@ -797,6 +805,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             dead_features: inp.declared.dead_features.iter().take(top).cloned().collect(),
             noop_features: inp.declared.noop_features.iter().take(top).cloned().collect(),
             unread_knobs: inp.declared.unread_knobs.iter().take(top).cloned().collect(),
+            test_seams: inp.declared.test_seams.iter().take(top).cloned().collect(),
         },
     }
 }
@@ -1049,7 +1058,7 @@ mod tests {
         let mut d = DeclaredReport { totals: Totals { manifests: 1, deps: 24, checked_deps: 21, orphans: 1, features: 1, config_structs: 8, knobs: 33, unread_knobs: 4, ..Totals::default() }, notes: vec!["2 dev-dependencies not checked (check_dev_dependencies)".into()], ..DeclaredReport::default() };
         d.orphans.push(Orphan { manifest: "Cargo.toml".into(), name: "pulldown-cmark".into(), ident: "pulldown_cmark".into(), line: 39, section: "dependencies".into(), optional: false, gated_by: vec![], birth: Some(("988d9b5".into(), "2026-08-31".into())), age_days: Some(13), commits_since: Some(101), ever_imported: None, doc_mention: Some(("DESIGN.md".into(), 632)), lint_silenced: None, line_text: orphan.into() });
         d.unread_knobs.push(UnreadKnob { section: "[ci.homerunner]".into(), struct_name: "HomerunnerCfg".into(), file: "src/config.rs".into(), start_line: 182, end_line: 204, knobs: vec!["homerunner".into(), "bin".into(), "db".into(), "api".into()], unread: vec!["homerunner".into()], source: "TOML".into(), doc: Some(("docs/config.md".into(), 91, 94)), test_only: false, rollup: true, line_text: knob.into() });
-        d.files.insert("src/config.rs".into(), FileDeclared { unread_knobs: vec![("ci.homerunner.homerunner".into(), 182)], reasons: vec![knob.into()] });
+        d.files.insert("src/config.rs".into(), FileDeclared { unread_knobs: vec![("ci.homerunner.homerunner".into(), 182)], test_seams: Vec::new(), reasons: vec![knob.into()] });
         let none = Cfg {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 0.0, dead: 0.0, strings: 0.0 },
             ..Cfg::default()
@@ -1066,11 +1075,27 @@ mod tests {
         assert!(r0.hotspots.iter().all(|h| h.score == 0.0));
         assert!(r0.hotspots.iter().find(|h| h.path == "src/config.rs").unwrap().reasons.contains(&knob.to_string()));
         let text = render(&r, 10);
-        assert!(text.contains(&format!("\nDECLARED  (dependencies no file imports; feature flags nothing checks; config knobs no code reads)\n  1 of 24 declared deps orphaned (4.2%: pulldown-cmark) in 1 manifest; 0 of 1 features dead, 0 no-op; 4 of 33 config knobs in 8 structs unread\n  2 dev-dependencies not checked (check_dev_dependencies)\n  ORPHANED DEPS  (declared, referenced by no file in the manifest's scope)\n  {orphan}\n  UNREAD KNOBS  (accepted by a Deserialize struct, read by no code)\n  {knob}\n")), "{text}");
+        assert!(text.contains(&format!("\nDECLARED  (dependencies no file imports; feature flags nothing checks; config knobs no code reads; env names only tests set)\n  1 of 24 declared deps orphaned (4.2%: pulldown-cmark) in 1 manifest; 0 of 1 features dead, 0 no-op; 4 of 33 config knobs in 8 structs unread; 0 of 0 env names read are test seams\n  2 dev-dependencies not checked (check_dev_dependencies)\n  ORPHANED DEPS  (declared, referenced by no file in the manifest's scope)\n  {orphan}\n  UNREAD KNOBS  (accepted by a Deserialize struct, read by no code)\n  {knob}\n")), "{text}");
         assert_eq!((r.declared.orphans.len(), r.declared.unread_knobs.len()), (1, 1));
+        // A test seam: its line is a reason on the reading file, `test_seams[]` and the signal
+        // carry it, the section lists it after UNREAD KNOBS, and it ranks under the same weight.
+        use crate::declared::{EnvRead, TestSeam};
+        let seam = "KANSPEC_ACTOR (src/main.rs:49 Actor.detect) is read by production code but set only by tests (8 mentions in tests/, 0 in docs) - inject or document";
+        let mut d2 = DeclaredReport { totals: Totals { env_names: 14, test_seams: 1, ..d.totals.clone() }, ..DeclaredReport::default() };
+        d2.test_seams.push(TestSeam { name: "KANSPEC_ACTOR".into(), class: "seam".into(), reads: vec![EnvRead { file: "src/main.rs".into(), line: 49, symbol: "Actor.detect".into() }], test_mentions: 8, test_dirs: vec!["tests/".into()], born_read: None, born_test: None, doc_mentions: vec![], line_text: seam.into() });
+        d2.files.insert("src/main.rs".into(), FileDeclared { unread_knobs: vec![], test_seams: vec![("KANSPEC_ACTOR".into(), 49)], reasons: vec![seam.into()] });
+        let inputs2 = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: &d2, declared_weight: w };
+        let r = build(inputs2(1.0), 10, &none, &td());
+        let m = r.hotspots.iter().find(|h| h.path == "src/main.rs").unwrap();
+        assert_eq!((m.signals.test_seams, m.test_seams.clone(), m.reasons.last().map(String::as_str)), (1, vec![("KANSPEC_ACTOR".to_string(), 49)], Some(seam)));
+        assert!(m.score > 0.0 && r.hotspots.iter().find(|h| h.path == "src/config.rs").unwrap().score == 0.0);
+        assert!(build(inputs2(0.0), 10, &none, &td()).hotspots.iter().all(|h| h.score == 0.0));
+        let text = render(&r, 10);
+        assert!(text.contains(&format!("; 1 of 14 env names read are test seams\n  TEST SEAMS  (env names read by production code, set only by tests, in no user doc)\n  {seam}\n")), "{text}");
+        assert_eq!(r.declared.test_seams.len(), 1);
         // No manifest and no candidate: the section says none.
         let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0 }, 10, &none, &td());
-        assert!(render(&r, 10).contains("DECLARED  (dependencies no file imports; feature flags nothing checks; config knobs no code reads)\n  none\n"));
+        assert!(render(&r, 10).contains("DECLARED  (dependencies no file imports; feature flags nothing checks; config knobs no code reads; env names only tests set)\n  none\n"));
     }
 
     #[test]
@@ -1644,10 +1669,10 @@ pub fn render_with(r: &Report, top: usize, plans: bool) -> String {
         let _ = writeln!(o, "  {}", c.line);
     }
 
-    let _ = writeln!(o, "\nDECLARED  (dependencies no file imports; feature flags nothing checks; config knobs no code reads)");
+    let _ = writeln!(o, "\n{}", declared::HEADING);
     o.push_str(&declared::render_section(&DeclaredReport {
         totals: r.declared.totals.clone(), notes: r.declared.notes.clone(), orphans: r.declared.orphans.clone(), misplaced: r.declared.misplaced.clone(),
-        dead_features: r.declared.dead_features.clone(), noop_features: r.declared.noop_features.clone(), unread_knobs: r.declared.unread_knobs.clone(), ..DeclaredReport::default()
+        dead_features: r.declared.dead_features.clone(), noop_features: r.declared.noop_features.clone(), unread_knobs: r.declared.unread_knobs.clone(), test_seams: r.declared.test_seams.clone(), ..DeclaredReport::default()
     }, top));
 
     let _ = writeln!(o, "\nDIRECTORIES  (by source lines)");

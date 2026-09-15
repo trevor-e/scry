@@ -9,6 +9,12 @@
 //! only in this version: package.json and pyproject.toml manifests are found and counted
 //! (`Totals::other_manifests`), never parsed; `parse_cargo` is the one manifest reader and the
 //! place a package.json / pyproject.toml reader plugs in.
+//!
+//! The third verdict is the test seam: an environment variable production code reads
+//! (`env::var`, `os.environ`, `process.env`) whose name carries the product's prefix or a test
+//! keyword, that only tests mention and no user doc or CI file names. An agent asked for a
+//! clock or identity seam reaches for the process environment because it needs no plumbing
+//! (`env_seams`; every grammar).
 
 use crate::config::Declared as Cfg;
 use crate::discover::{FileKind, SourceFile};
@@ -71,8 +77,21 @@ pub struct StructDecl {
     pub in_test: bool,
 }
 
+/// One environment-variable read site, before its file is known.
+#[derive(Debug, Clone)]
+pub struct EnvReadSite {
+    pub name: String,
+    pub line: usize,
+    pub byte: usize,
+    /// Nearest enclosing named unit of the metrics pass; empty at top level.
+    pub symbol: String,
+    /// `env!` / `option_env!` / `import.meta.env`: excluded unless `include_compile_time_env`.
+    pub compile_time: bool,
+}
+
 /// A file's side of the pass, collected on the metrics pass's tree (`scan`) or one parse
-/// (`scry declared`). Rust only; other grammars leave everything empty.
+/// (`scry declared`). The manifest legs are Rust only; the env-seam fields are filled for
+/// every grammar.
 #[derive(Debug, Clone, Default)]
 pub struct FileSide {
     pub path: String,
@@ -99,6 +118,15 @@ pub struct FileSide {
     pub field_reads: HashMap<String, RefCount>,
     /// String literals that look like a config file name (`scry.toml`), in order.
     pub config_literals: Vec<String>,
+    /// Environment variables read outside test context, by literal name.
+    pub env_reads: Vec<EnvReadSite>,
+    /// Environment variables set outside test context (`env::set_var`, `Command::env`,
+    /// `os.environ[x] =`, `process.env.X =`, `Deno.env.set`, a build script's `rustc-env`).
+    pub env_setters: HashSet<String>,
+    /// Whole-word `UPPER_CASE` tokens of the file text (those with a `_` or an `env_keywords`
+    /// entry: every name a prefix or keyword can select), split by test context: the mention
+    /// index for env names.
+    pub env_tokens: HashMap<String, RefCount>,
 }
 
 fn text<'a>(node: Node, src: &'a [u8]) -> &'a str {
@@ -140,6 +168,8 @@ pub struct Walker {
     config_struct: Regex,
     config_literal: Regex,
     serialize_fn: Regex,
+    env_token: Regex,
+    env_keywords: Vec<String>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -220,6 +250,12 @@ impl State<'_> {
                 let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
                 if !name.is_empty() {
                     self.out.build_feature_env.insert(name);
+                }
+            }
+            if let Some(rest) = inner.find("rustc-env=").map(|i| &inner[i + 10..]) {
+                let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+                if !name.is_empty() {
+                    self.out.env_setters.insert(name);
                 }
             }
             if inner.contains("rustc-cfg=")
@@ -321,6 +357,225 @@ impl State<'_> {
         }
     }
 
+    // ---- env reads (every grammar) ----
+
+    fn env_read(&mut self, name: &str, n: Node, compile_time: bool) {
+        if name.is_empty() || self.in_test(n) {
+            return;
+        }
+        self.out.env_reads.push(EnvReadSite { name: name.to_string(), line: line(n), byte: n.start_byte(), symbol: String::new(), compile_time });
+    }
+
+    fn env_setter(&mut self, name: &str, n: Node) {
+        if !name.is_empty() && !self.in_test(n) {
+            self.out.env_setters.insert(name.to_string());
+        }
+    }
+
+    /// The literal text of a plain string node (`"X"`, `'X'`; no interpolation, no raw prefix).
+    fn plain_string(&self, n: Node) -> Option<String> {
+        match n.kind() {
+            "string_literal" => {
+                let t = text(n, self.src);
+                Some(t.trim_matches('"').to_string()).filter(|s| !s.contains('"') && !s.contains('\\'))
+            }
+            "string" => {
+                let mut c = n.walk();
+                let parts: Vec<Node> = n.named_children(&mut c).collect();
+                match parts.as_slice() {
+                    [one] if matches!(one.kind(), "string_content" | "string_fragment") => Some(text(*one, self.src).to_string()),
+                    [a, b, c] if a.kind() == "string_start" && b.kind() == "string_content" && c.kind() == "string_end" => Some(text(*b, self.src).to_string()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn first_string_arg(&self, args: Node) -> Option<String> {
+        self.plain_string(args.named_child(0)?)
+    }
+
+    /// Rust: `env::var("X")` / `var_os` reads, `env::set_var("X", …)` and `Command::env("X", …)` setters.
+    fn env_call_rs(&mut self, n: Node) {
+        let (Some(f), Some(args)) = (n.child_by_field_name("function"), n.child_by_field_name("arguments")) else { return };
+        match f.kind() {
+            "scoped_identifier" => {
+                let name = f.child_by_field_name("name").map(|x| text(x, self.src)).unwrap_or("");
+                let path = f.child_by_field_name("path").map(|p| text(p, self.src)).unwrap_or("");
+                if path.rsplit("::").next().unwrap_or(path) == "env"
+                    && matches!(name, "var" | "var_os" | "set_var")
+                    && let Some(var) = self.first_string_arg(args)
+                {
+                    if name == "set_var" { self.env_setter(&var, n) } else { self.env_read(&var, n, false) }
+                }
+            }
+            "field_expression" => {
+                if f.child_by_field_name("field").is_some_and(|x| text(x, self.src) == "env")
+                    && args.named_child_count() >= 2
+                    && let Some(var) = self.first_string_arg(args)
+                {
+                    self.env_setter(&var, n);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Rust: `env!("X")` / `option_env!("X")`, compile-time.
+    fn env_macro_rs(&mut self, n: Node) {
+        let Some(m) = n.child_by_field_name("macro") else { return };
+        let m = text(m, self.src);
+        if !matches!(m.rsplit("::").next().unwrap_or(m), "env" | "option_env") {
+            return;
+        }
+        let mut c = n.walk();
+        if let Some(tt) = n.named_children(&mut c).find(|x| x.kind() == "token_tree")
+            && let Some(var) = tt.named_child(0).and_then(|lit| self.plain_string(lit))
+        {
+            self.env_read(&var, n, true);
+        }
+    }
+
+    /// Rust, inside a macro body or attribute: `env::var("X")` / `env::var_os("X")` /
+    /// `env::set_var("X", …)` tokens, and `env!("X")` / `option_env!("X")` (compile-time).
+    fn env_tokens_rs(&mut self, ident: Node) {
+        let t = text(ident, self.src);
+        if matches!(t, "env" | "option_env") {
+            if let Some(bang) = ident.next_sibling().filter(|s| s.kind() == "!")
+                && let Some(tt) = bang.next_sibling().filter(|s| s.kind() == "token_tree")
+                && let Some(var) = tt.named_child(0).and_then(|lit| self.plain_string(lit))
+            {
+                self.env_read(&var, ident, true);
+            }
+            return;
+        }
+        if !matches!(t, "var" | "var_os" | "set_var") {
+            return;
+        }
+        let Some(colons) = ident.prev_sibling().filter(|p| p.kind() == "::") else { return };
+        if !colons.prev_sibling().is_some_and(|e| e.kind() == "identifier" && text(e, self.src) == "env") {
+            return;
+        }
+        if let Some(tt) = ident.next_sibling().filter(|s| s.kind() == "token_tree")
+            && let Some(var) = tt.named_child(0).and_then(|lit| self.plain_string(lit))
+        {
+            if t == "set_var" { self.env_setter(&var, ident) } else { self.env_read(&var, ident, false) }
+        }
+    }
+
+    fn is_environ_py(&self, v: Node) -> bool {
+        match v.kind() {
+            "identifier" => text(v, self.src) == "environ",
+            "attribute" => {
+                v.child_by_field_name("object").is_some_and(|o| o.kind() == "identifier" && text(o, self.src) == "os")
+                    && v.child_by_field_name("attribute").is_some_and(|a| text(a, self.src) == "environ")
+            }
+            _ => false,
+        }
+    }
+
+    /// Python: `os.environ["X"]`, `os.environ.get("X")`, `os.getenv("X")` (and the bare
+    /// `environ` / `getenv` imports); `os.environ["X"] = …` is a setter.
+    fn walk_py(&mut self, root: Node) {
+        let mut stack = vec![root];
+        while let Some(n) = stack.pop() {
+            match n.kind() {
+                "subscript" => {
+                    if let Some(v) = n.child_by_field_name("value")
+                        && self.is_environ_py(v)
+                        && let Some(name) = n.child_by_field_name("subscript").and_then(|k| self.plain_string(k))
+                    {
+                        let setter = n.parent().is_some_and(|p| p.kind() == "assignment" && p.child_by_field_name("left").is_some_and(|l| l.id() == n.id()));
+                        if setter { self.env_setter(&name, n) } else { self.env_read(&name, n, false) }
+                    }
+                }
+                "call" => {
+                    if let (Some(f), Some(args)) = (n.child_by_field_name("function"), n.child_by_field_name("arguments")) {
+                        let is_read = match f.kind() {
+                            "attribute" => {
+                                let attr = f.child_by_field_name("attribute").map(|a| text(a, self.src)).unwrap_or("");
+                                let obj = f.child_by_field_name("object");
+                                (attr == "get" && obj.is_some_and(|o| self.is_environ_py(o))) || (attr == "getenv" && obj.is_some_and(|o| o.kind() == "identifier" && text(o, self.src) == "os"))
+                            }
+                            "identifier" => text(f, self.src) == "getenv",
+                            _ => false,
+                        };
+                        if is_read && let Some(name) = self.first_string_arg(args) {
+                            self.env_read(&name, n, false);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            let mut c = n.walk();
+            let children: Vec<Node> = n.named_children(&mut c).collect();
+            stack.extend(children.into_iter().rev());
+        }
+    }
+
+    fn is_member_ts(&self, v: Node, object: &str, property: &str) -> bool {
+        v.kind() == "member_expression"
+            && v.child_by_field_name("object").is_some_and(|o| (o.kind() == "identifier" && text(o, self.src) == object) || (object == "import.meta" && o.kind() == "meta_property"))
+            && v.child_by_field_name("property").is_some_and(|p| text(p, self.src) == property)
+    }
+
+    fn env_access_ts(&mut self, name: &str, n: Node, compile_time: bool) {
+        let setter = n.parent().is_some_and(|p| matches!(p.kind(), "assignment_expression" | "augmented_assignment_expression") && p.child_by_field_name("left").is_some_and(|l| l.id() == n.id()));
+        match (setter, compile_time) {
+            (true, false) => self.env_setter(name, n),
+            (true, true) => {}
+            (false, _) => self.env_read(name, n, compile_time),
+        }
+    }
+
+    /// TypeScript: `process.env.X`, `process.env["X"]`, `Deno.env.get("X")` reads
+    /// (`import.meta.env.X` compile-time); the assignment forms and `Deno.env.set` are setters.
+    fn walk_ts(&mut self, root: Node) {
+        let mut stack = vec![root];
+        while let Some(n) = stack.pop() {
+            match n.kind() {
+                "member_expression" => {
+                    if let Some(obj) = n.child_by_field_name("object")
+                        && let Some(p) = n.child_by_field_name("property").filter(|p| p.kind() == "property_identifier")
+                    {
+                        let name = text(p, self.src).to_string();
+                        if self.is_member_ts(obj, "process", "env") {
+                            self.env_access_ts(&name, n, false);
+                        } else if self.is_member_ts(obj, "import.meta", "env") {
+                            self.env_access_ts(&name, n, true);
+                        }
+                    }
+                }
+                "subscript_expression" => {
+                    if let Some(obj) = n.child_by_field_name("object")
+                        && self.is_member_ts(obj, "process", "env")
+                        && let Some(name) = n.child_by_field_name("index").and_then(|i| self.plain_string(i))
+                    {
+                        self.env_access_ts(&name, n, false);
+                    }
+                }
+                "call_expression" => {
+                    if let Some(f) = n.child_by_field_name("function").filter(|f| f.kind() == "member_expression")
+                        && f.child_by_field_name("object").is_some_and(|o| self.is_member_ts(o, "Deno", "env"))
+                        && let Some(m) = f.child_by_field_name("property")
+                        && let Some(name) = n.child_by_field_name("arguments").and_then(|a| self.first_string_arg(a))
+                    {
+                        match text(m, self.src) {
+                            "get" => self.env_read(&name, n, false),
+                            "set" => self.env_setter(&name, n),
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            let mut c = n.walk();
+            let children: Vec<Node> = n.named_children(&mut c).collect();
+            stack.extend(children.into_iter().rev());
+        }
+    }
+
     fn walk(&mut self, root: Node) {
         let mut stack: Vec<(Node, Ctx)> = vec![(root, Ctx::default())];
         while let Some((n, ctx)) = stack.pop() {
@@ -361,6 +616,7 @@ impl State<'_> {
                     }
                 }
                 "identifier" if ctx.in_tt => {
+                    self.env_tokens_rs(n);
                     let t = text(n, self.src);
                     let next = n.next_sibling();
                     let prev = n.prev_sibling();
@@ -388,6 +644,8 @@ impl State<'_> {
                     continue;
                 }
                 "token_tree" => child_ctx.in_tt = true,
+                "call_expression" => self.env_call_rs(n),
+                "macro_invocation" => self.env_macro_rs(n),
                 "inner_attribute_item" => {
                     if self.out.lint_silenced.is_none()
                         && let Some(attr) = n.named_child(0).filter(|a| a.kind() == "attribute")
@@ -511,27 +769,52 @@ impl Walker {
             config_struct: regex(&cfg.config_struct_regex, "config_struct"),
             config_literal: Regex::new(r"^[\w.-]+\.(toml|ya?ml|json|json5|ini|cfg|conf)$").unwrap(),
             serialize_fn: regex(&cfg.serialize_fn_regex, "serialize_fn"),
+            env_token: Regex::new(r"\b[A-Z][A-Z0-9_]{2,}\b").unwrap(),
+            env_keywords: cfg.env_keywords.clone(),
         }
     }
 
     /// One file's side on an already-parsed tree (`None` when the parse failed).
     pub fn file_side(&self, root: Option<Node>, file: &SourceFile, regions: &[TestRegion]) -> FileSide {
         let mut out = FileSide { path: file.path.clone(), rust: file.lang == Language::Rust && self.rust, test_file: file.kind == FileKind::Test, ..FileSide::default() };
-        let Some(root) = root else { return out };
-        if !out.rust {
-            return out;
+        // The mention index: whole-word upper-case tokens, test context apart.
+        for m in self.env_token.find_iter(&file.content) {
+            let t = m.as_str();
+            if t.contains('_') || self.env_keywords.iter().any(|k| t.contains(k.as_str())) {
+                let test = out.test_file || regions::contains(regions, m.start());
+                out.env_tokens.entry(t.to_string()).or_default().bump(test);
+            }
         }
+        let Some(root) = root else { return out };
+        let src = file.content.as_bytes();
         let build_script = file.path == "build.rs" || file.path.ends_with("/build.rs");
-        let mut st = State { src: file.content.as_bytes(), out: &mut out, regions, build_script, config_literal: &self.config_literal, serialize_fn: &self.serialize_fn };
-        st.walk(root);
+        let mut st = State { src, out: &mut out, regions, build_script, config_literal: &self.config_literal, serialize_fn: &self.serialize_fn };
+        match file.lang {
+            Language::Rust if self.rust => st.walk(root),
+            Language::Rust => {}
+            Language::Python => {
+                if file.content.contains("environ") || file.content.contains("getenv") {
+                    st.walk_py(root);
+                }
+            }
+            _ => {
+                if file.content.contains(".env") {
+                    st.walk_ts(root);
+                }
+            }
+        }
+        if !out.env_reads.is_empty() {
+            let units = crate::metrics::unit_nodes(root, file.lang);
+            for r in &mut out.env_reads {
+                let unit = units.iter().filter(|u| u.start_byte() <= r.byte && r.byte < u.end_byte()).max_by_key(|u| u.start_byte());
+                r.symbol = unit.map(|u| crate::metrics::unit_name_of(*u, file.lang, src)).unwrap_or_default();
+            }
+        }
         out
     }
 
     /// Parse and collect one file on its own.
     pub fn parse_side(&self, file: &SourceFile) -> FileSide {
-        if file.lang != Language::Rust || !self.rust {
-            return FileSide { path: file.path.clone(), test_file: file.kind == FileKind::Test, ..FileSide::default() };
-        }
         let src = file.content.as_bytes();
         let tree = file.lang.parser().parse(src, None);
         let root = tree.as_ref().map(|t| t.root_node());
@@ -612,6 +895,8 @@ struct Manifest {
     has_bin: bool,
     /// Crate root files, repo-relative (`src/lib.rs`, `src/main.rs`, `[[bin]] path`).
     root_files: Vec<String>,
+    /// `[package].name` and every `[[bin]].name`: the env-prefix sources.
+    names: Vec<String>,
     /// `[workspace.dependencies]` of this manifest.
     workspace_deps: HashMap<String, toml::Value>,
     /// (dep dir repo-relative, features) for every path dep with a `features` list.
@@ -752,11 +1037,13 @@ fn parse_cargo(rel: &str, text: &str) -> Option<Manifest> {
     }
     let mut consumers = HashSet::new();
     let mut bins = Vec::new();
+    let mut names: Vec<String> = t.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str()).map(String::from).into_iter().collect();
     for target in ["bin", "example", "test", "bench"] {
         for tt in t.get(target).and_then(|v| v.as_array()).into_iter().flatten() {
             consumers.extend(strings_of(tt.get("required-features")));
             if target == "bin" {
                 bins.push(tt.get("path").and_then(|p| p.as_str()).map(|p| join_dir(&dir, p.trim_start_matches("./"))));
+                names.extend(tt.get("name").and_then(|n| n.as_str()).map(String::from));
             }
         }
     }
@@ -775,8 +1062,21 @@ fn parse_cargo(rel: &str, text: &str) -> Option<Manifest> {
     root_files.push(join_dir(&dir, "src/main.rs"));
     Some(Manifest {
         path: rel.to_string(), dir, deps, features, manifest_consumers: consumers, enabled_by: Vec::new(),
-        has_bin: !bins.is_empty(), root_files, workspace_deps, path_dep_features,
+        has_bin: !bins.is_empty(), root_files, workspace_deps, path_dep_features, names,
     })
+}
+
+/// The product name of a package.json (`name`, scope stripped) or pyproject.toml
+/// (`[project].name`), for the env-prefix rule; the manifest is not parsed further.
+fn other_manifest_name(rel: &str, text: &str) -> Option<String> {
+    if rel.ends_with("package.json") {
+        let v: serde_json::Value = serde_json::from_str(text).ok()?;
+        let name = v.get("name")?.as_str()?;
+        Some(name.rsplit('/').next().unwrap_or(name).to_string())
+    } else {
+        let t: toml::Table = toml::from_str(text).ok()?;
+        Some(t.get("project")?.get("name")?.as_str()?.to_string())
+    }
 }
 
 /// Files under `root` matching `globs`, repo-relative with `/` separators; `.git` and the
@@ -894,10 +1194,43 @@ pub struct UnreadKnob {
     pub line_text: String,
 }
 
+/// One production read site of an env name.
+#[derive(Debug, Clone, Serialize)]
+pub struct EnvRead {
+    pub file: String,
+    pub line: usize,
+    /// Nearest enclosing named unit (metrics pass); empty at top level.
+    pub symbol: String,
+}
+
+/// An env name production code reads that only tests set: nothing in the user docs or the CI
+/// / build files names it and no production code sets it.
+#[derive(Debug, Clone, Serialize)]
+pub struct TestSeam {
+    pub name: String,
+    /// `seam` (Class A); the only class this version reports.
+    pub class: String,
+    pub reads: Vec<EnvRead>,
+    /// Whole-word mentions in Test files and `#[cfg(test)]` regions…
+    pub test_mentions: usize,
+    /// …and where they sit (`tests/`, `inline tests`).
+    pub test_dirs: Vec<String>,
+    /// Oldest commit whose diff changed the name's count under the read files' dirs / the
+    /// test dirs: (short hash, date).
+    pub born_read: Option<(String, String)>,
+    pub born_test: Option<(String, String)>,
+    /// `public_doc_globs` lines naming it (always empty for a seam; the exempt candidates
+    /// carry theirs in a note).
+    pub doc_mentions: Vec<(String, usize)>,
+    pub line_text: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct FileDeclared {
     /// `(section.knob, line)` of every unread knob declared in this file.
     pub unread_knobs: Vec<(String, usize)>,
+    /// `(env name, line)` of every test-seam read in this file.
+    pub test_seams: Vec<(String, usize)>,
     pub reasons: Vec<String>,
 }
 
@@ -918,6 +1251,11 @@ pub struct Totals {
     pub knobs: usize,
     pub unread_knobs: usize,
     pub test_only_knobs: usize,
+    /// Distinct env names read by production code (compile-time reads apart unless
+    /// `include_compile_time_env`)…
+    pub env_names: usize,
+    /// …and those that are test seams.
+    pub test_seams: usize,
     pub git_lookups_capped: bool,
 }
 
@@ -931,6 +1269,8 @@ pub struct DeclaredReport {
     pub dead_features: Vec<Feature>,
     pub noop_features: Vec<Feature>,
     pub unread_knobs: Vec<UnreadKnob>,
+    /// Sorted by test mentions, most first.
+    pub test_seams: Vec<TestSeam>,
     pub files: BTreeMap<String, FileDeclared>,
 }
 
@@ -975,8 +1315,10 @@ fn commits_since(root: &Path, hash: &str) -> Option<usize> {
 
 // ---------- analysis ----------
 
-/// `(repo-relative path, text)` of the doc / CI files read for a pass.
+/// `(repo-relative path, text)` of the doc / CI files read for a pass…
 type Docs = Vec<(String, String)>;
+/// …read on first use.
+type LazyDocs = std::cell::OnceCell<Docs>;
 
 fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
@@ -1113,10 +1455,12 @@ pub fn analyze(sides: &[FileSide], root: &Path, use_git: bool, cfg: &Cfg, skip_d
     let doc_globs = globset(&cfg.doc_globs);
     let ci_globs = globset(&cfg.feature_ci_globs);
     let public_doc_globs = globset(&cfg.public_doc_globs);
+    let setter_globs = globset(&cfg.setter_file_globs);
     let mut union: Vec<String> = cfg.manifest_globs.clone();
     union.extend(cfg.doc_globs.iter().cloned());
     union.extend(cfg.feature_ci_globs.iter().cloned());
     union.extend(cfg.public_doc_globs.iter().cloned());
+    union.extend(cfg.setter_file_globs.iter().cloned());
     let aux = find_files(root, &globset(&union), skip_dirs);
     let read = |rel: &str| -> Option<String> {
         let p = root.join(rel);
@@ -1127,9 +1471,11 @@ pub fn analyze(sides: &[FileSide], root: &Path, use_git: bool, cfg: &Cfg, skip_d
         std::fs::read_to_string(p).ok()
     };
     let mut manifests: Vec<Manifest> = Vec::new();
+    let mut product_names: Vec<String> = Vec::new();
     for rel in aux.iter().filter(|r| manifest_globs.is_match(r)) {
         if !rel.ends_with("Cargo.toml") {
             report.totals.other_manifests += 1;
+            product_names.extend(read(rel).and_then(|t| other_manifest_name(rel, &t)));
             continue;
         }
         match read(rel).and_then(|t| parse_cargo(rel, &t)) {
@@ -1137,20 +1483,38 @@ pub fn analyze(sides: &[FileSide], root: &Path, use_git: bool, cfg: &Cfg, skip_d
             None => report.notes.push(format!("{rel} did not parse as TOML; skipped")),
         }
     }
-    // Docs, CI files and public docs are read on first use: a repo with no manifest never
-    // reads them.
+    product_names.extend(manifests.iter().flat_map(|m| m.names.iter().cloned()));
+    // Docs, CI files, public docs and setter files are read on first use: a repo with no
+    // manifest and no env read never reads them.
     let lazy = |globs: &GlobSet| -> Vec<String> { aux.iter().filter(|r| !manifest_globs.is_match(r) && globs.is_match(r)).cloned().collect() };
-    let (doc_paths, ci_paths, public_paths) = (lazy(&doc_globs), lazy(&ci_globs), lazy(&public_doc_globs));
+    let (doc_paths, ci_paths, public_paths, setter_paths) = (lazy(&doc_globs), lazy(&ci_globs), lazy(&public_doc_globs), lazy(&setter_globs));
     let load = |paths: &[String]| -> Docs { paths.iter().filter_map(|p| read(p).map(|t| (p.clone(), t))).collect() };
-    let (docs_cell, ci_cell, public_cell): (std::cell::OnceCell<Docs>, std::cell::OnceCell<Docs>, std::cell::OnceCell<Docs>) = Default::default();
+    let (docs_cell, ci_cell, public_cell, setter_cell): (LazyDocs, LazyDocs, LazyDocs, LazyDocs) = Default::default();
     let docs = || docs_cell.get_or_init(|| load(&doc_paths));
     let ci = || ci_cell.get_or_init(|| load(&ci_paths));
     let public_docs = || public_cell.get_or_init(|| load(&public_paths));
+    let setter_files = || setter_cell.get_or_init(|| load(&setter_paths));
     report.totals.manifests = manifests.len();
     if report.totals.other_manifests > 0 {
         report.notes.push(format!("{} package.json / pyproject.toml {} found; only Cargo.toml is parsed in this version", report.totals.other_manifests, if report.totals.other_manifests == 1 { "manifest" } else { "manifests" }));
     }
+
+    // Test context of a side: a Test file, or a Source file a `#[cfg(test)] mod x;` names.
+    let all_paths: HashSet<&str> = sides.iter().map(|s| s.path.as_str()).collect();
+    let mut propagated_test: HashSet<String> = HashSet::new();
+    for s in sides.iter().filter(|s| s.rust) {
+        for name in &s.cfg_test_mods {
+            if let Some(p) = resolve_mod(&s.path, name, &all_paths) {
+                propagated_test.insert(p);
+            }
+        }
+    }
+    let is_test_side = |s: &FileSide| s.test_file || propagated_test.contains(&s.path);
+
+    // ---- P67: test seams (every grammar, manifests only for the prefixes) ----
+    let seams = env_seams(sides, &product_names, root, use_git, cfg, &public_docs, &setter_files, &is_test_side, &mut report);
     if manifests.is_empty() {
+        attach_seams(seams, &mut report);
         return report;
     }
     manifests.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1184,15 +1548,6 @@ pub fn analyze(sides: &[FileSide], root: &Path, use_git: bool, cfg: &Cfg, skip_d
     }
 
     // Scope: every Rust side's nearest manifest.
-    let all_paths: HashSet<&str> = sides.iter().map(|s| s.path.as_str()).collect();
-    let mut propagated_test: HashSet<String> = HashSet::new();
-    for s in sides.iter().filter(|s| s.rust) {
-        for name in &s.cfg_test_mods {
-            if let Some(p) = resolve_mod(&s.path, name, &all_paths) {
-                propagated_test.insert(p);
-            }
-        }
-    }
     let nearest = |path: &str| -> Option<usize> {
         manifests.iter().enumerate().filter(|(_, m)| m.dir.is_empty() || path.starts_with(&format!("{}/", m.dir))).max_by_key(|(_, m)| m.dir.len()).map(|(i, _)| i)
     };
@@ -1204,7 +1559,6 @@ pub fn analyze(sides: &[FileSide], root: &Path, use_git: bool, cfg: &Cfg, skip_d
             scope[mi].push(si);
         }
     }
-    let is_test_side = |s: &FileSide| s.test_file || propagated_test.contains(&s.path);
 
     // ---- P64: orphans ----
     let mut all_orphans: Vec<Orphan> = Vec::new();
@@ -1476,12 +1830,133 @@ pub fn analyze(sides: &[FileSide], root: &Path, use_git: bool, cfg: &Cfg, skip_d
     report.notes.extend(notes);
     // ---- P66: config knobs ----
     knobs(sides, &manifests, &scope, &walker, cfg, public_docs(), &is_test_side, &mut report);
+    attach_seams(seams, &mut report);
 
     report.orphans = orphans;
     report.features = all_features;
     report.dead_features = dead_features;
     report.noop_features = noop;
     report
+}
+
+/// The env-seam verdict. Candidates are the names production code reads (Source files,
+/// outside test regions) that start with a product prefix or contain an `env_keywords`
+/// entry; a candidate is a seam when tests mention it, no `public_doc_globs` file and no
+/// `setter_file_globs` file does, and no production code sets it. Returns the seams; the
+/// totals and notes go on the report here, the per-file reasons in `attach_seams`.
+#[allow(clippy::too_many_arguments)]
+fn env_seams<'d>(sides: &[FileSide], product_names: &[String], root: &Path, use_git: bool, cfg: &Cfg, public_docs: &dyn Fn() -> &'d Docs, setter_files: &dyn Fn() -> &'d Docs, is_test_side: &dyn Fn(&FileSide) -> bool, report: &mut DeclaredReport) -> Vec<TestSeam> {
+    let norm = |n: &str| n.to_uppercase().replace('-', "_");
+    let mut prefixes: Vec<String> = product_names.iter().filter(|n| !cfg.env_prefix_stoplist.iter().any(|s| s.eq_ignore_ascii_case(n))).map(|n| norm(n)).chain(cfg.env_prefixes.iter().map(|p| norm(p))).filter(|p| !p.is_empty()).collect();
+    prefixes.sort();
+    prefixes.dedup();
+    let candidate = |name: &str| prefixes.iter().any(|p| name == p || (name.len() > p.len() + 1 && name.starts_with(p.as_str()) && name.as_bytes()[p.len()] == b'_')) || cfg.env_keywords.iter().any(|k| !k.is_empty() && name.contains(k.as_str()));
+    // Production reads by name, production setters, compile-time-only candidates.
+    let mut reads: BTreeMap<&str, Vec<EnvRead>> = BTreeMap::new();
+    let mut compile_only: BTreeSet<&str> = BTreeSet::new();
+    let mut setters: HashSet<&str> = HashSet::new();
+    for s in sides.iter().filter(|s| !is_test_side(s)) {
+        for r in &s.env_reads {
+            if r.compile_time && !cfg.include_compile_time_env {
+                compile_only.insert(r.name.as_str());
+                continue;
+            }
+            reads.entry(r.name.as_str()).or_default().push(EnvRead { file: s.path.clone(), line: r.line, symbol: r.symbol.clone() });
+        }
+        setters.extend(s.env_setters.iter().map(String::as_str));
+    }
+    report.totals.env_names = reads.len();
+    let compile_only: Vec<&str> = compile_only.into_iter().filter(|n| !reads.contains_key(n) && candidate(n)).collect();
+    if !compile_only.is_empty() {
+        report.notes.push(format!("{} not checked: {} (include_compile_time_env)", plural(compile_only.len(), "compile-time env read (env! / option_env! / import.meta.env)", "compile-time env reads (env! / option_env! / import.meta.env)"), compile_only.join(", ")));
+    }
+    let mut seams: Vec<TestSeam> = Vec::new();
+    let mut exempt: Vec<String> = Vec::new();
+    for (name, sites) in reads {
+        if !candidate(name) {
+            continue;
+        }
+        let (mut test_mentions, mut test_dirs) = (0usize, BTreeSet::new());
+        for s in sides {
+            let Some(rc) = s.env_tokens.get(name) else { continue };
+            let n = if is_test_side(s) { rc.total() } else { rc.test };
+            if n == 0 {
+                continue;
+            }
+            test_mentions += n as usize;
+            if is_test_side(s) {
+                test_dirs.insert(s.path.split_once('/').map_or(s.path.clone(), |(d, _)| format!("{d}/")));
+            } else {
+                test_dirs.insert("inline tests".to_string());
+            }
+        }
+        if test_mentions < cfg.min_test_mentions {
+            continue;
+        }
+        let doc_mentions: Vec<(String, usize)> = public_docs().iter().flat_map(|(p, t)| t.lines().enumerate().filter(|(_, l)| word_at(l, name).is_some()).map(move |(i, _)| (p.clone(), i + 1))).collect();
+        let ci_files: Vec<String> = setter_files().iter().filter(|(_, t)| word_at(t, name).is_some()).map(|(p, _)| p.clone()).collect();
+        let prod_setter = setters.contains(name);
+        if !doc_mentions.is_empty() || !ci_files.is_empty() || prod_setter {
+            let why = if let Some((p, l)) = doc_mentions.first() { format!("documented in {p}:{l}") } else if !ci_files.is_empty() { format!("set by {}", join_and(&ci_files)) } else { "set by production code".to_string() };
+            exempt.push(format!("{name} ({why})"));
+            continue;
+        }
+        // Test dirs first, `inline tests` last.
+        let mut test_dirs: Vec<String> = test_dirs.into_iter().collect();
+        test_dirs.sort_by_key(|d| !d.ends_with('/'));
+        seams.push(TestSeam { name: name.to_string(), class: "seam".to_string(), reads: sites, test_mentions, test_dirs, born_read: None, born_test: None, doc_mentions, line_text: String::new() });
+    }
+    if !exempt.is_empty() {
+        report.notes.push(format!("{} read by production code and mentioned by tests but public or set elsewhere, not a seam: {}", plural(exempt.len(), "env name", "env names"), exempt.join(", ")));
+    }
+    seams.sort_by(|a, b| b.test_mentions.cmp(&a.test_mentions).then_with(|| a.name.cmp(&b.name)));
+    // Birth of the read and of the first test setter, at most `max_git_lookups` seams.
+    if use_git && !seams.is_empty() {
+        let n = seams.len().min(cfg.max_git_lookups);
+        if seams.len() > n {
+            report.totals.git_lookups_capped = true;
+        }
+        let test_sides: Vec<&FileSide> = sides.iter().filter(|s| is_test_side(s)).collect();
+        type Birth = Option<(String, String)>;
+        let births: Vec<(Birth, Birth)> = seams[..n].par_iter().map(|sm| {
+            let read_dirs: Vec<String> = scope_dirs("", &sm.reads.iter().map(|r| r.file.as_str()).collect::<Vec<_>>()).into_iter().map(|d| d.trim_end_matches('/').to_string()).collect();
+            let test_paths: Vec<&str> = test_sides.iter().filter(|s| s.env_tokens.get(&sm.name).is_some_and(|rc| rc.total() > 0)).map(|s| s.path.as_str()).collect();
+            let test_dirs: Vec<String> = scope_dirs("", &test_paths).into_iter().map(|d| d.trim_end_matches('/').to_string()).collect();
+            let born = |dirs: &[String]| if dirs.is_empty() { None } else { birth_of(root, &sm.name, dirs).map(|(h, d, _)| (h, d)) };
+            (born(&read_dirs), born(&test_dirs))
+        }).collect();
+        for (sm, (r, t)) in seams.iter_mut().zip(births) {
+            sm.born_read = r;
+            sm.born_test = t;
+        }
+    }
+    for sm in &mut seams {
+        let sites: Vec<String> = sm.reads.iter().map(|r| if r.symbol.is_empty() { format!("{}:{}", r.file, r.line) } else { format!("{}:{} {}", r.file, r.line, r.symbol) }).collect();
+        let born = match (&sm.born_read, &sm.born_test) {
+            (Some((a, _)), Some((b, _))) if a == b => format!("; born {a} together with its first test setter"),
+            (Some((a, _)), Some((b, _))) => format!("; read born {a}, first test setter {b}"),
+            (Some((a, _)), None) => format!("; read born {a}"),
+            _ => String::new(),
+        };
+        sm.line_text = format!("{} ({}) is read by production code but set only by tests ({} in {}, 0 in docs{born}) - inject or document", sm.name, sites.join(", "), plural(sm.test_mentions, "mention", "mentions"), join_and(&sm.test_dirs));
+    }
+    report.totals.test_seams = seams.len();
+    seams
+}
+
+/// Every seam line is a reason on each file holding one of its reads.
+fn attach_seams(seams: Vec<TestSeam>, report: &mut DeclaredReport) {
+    for sm in &seams {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for r in &sm.reads {
+            let e = report.files.entry(r.file.clone()).or_default();
+            e.test_seams.push((sm.name.clone(), r.line));
+            if seen.insert(r.file.as_str()) {
+                e.reasons.push(sm.line_text.clone());
+            }
+        }
+    }
+    report.test_seams = seams;
 }
 
 /// The struct the deserialise call targets, else the file / name rule.
@@ -1731,9 +2206,10 @@ pub fn totals_line(r: &DeclaredReport) -> String {
     let names: Vec<&str> = r.orphans.iter().map(|o| o.name.as_str()).collect();
     let orphan_names = if names.is_empty() { String::new() } else { format!(": {}", names.join(", ")) };
     format!(
-        "{} of {} declared deps orphaned ({pct:.1}%{orphan_names}) in {}; {} of {} features dead, {} no-op; {} of {} config knobs in {} unread{}",
+        "{} of {} declared deps orphaned ({pct:.1}%{orphan_names}) in {}; {} of {} features dead, {} no-op; {} of {} config knobs in {} unread{}; {} of {} env names read are test seams",
         t.orphans, t.deps, plural(t.manifests, "manifest", "manifests"), t.dead_features, t.features, t.noop_features, t.unread_knobs, t.knobs, plural(t.config_structs, "struct", "structs"),
-        if t.test_only_knobs > 0 { format!(", {} read only by tests", t.test_only_knobs) } else { String::new() }
+        if t.test_only_knobs > 0 { format!(", {} read only by tests", t.test_only_knobs) } else { String::new() },
+        t.test_seams, t.env_names
     )
 }
 
@@ -1741,7 +2217,7 @@ pub fn totals_line(r: &DeclaredReport) -> String {
 pub fn render_section(r: &DeclaredReport, top: usize) -> String {
     use std::fmt::Write;
     let mut o = String::new();
-    if r.totals.manifests == 0 && r.totals.config_structs == 0 {
+    if r.totals.manifests == 0 && r.totals.config_structs == 0 && r.totals.env_names == 0 {
         let _ = writeln!(o, "  none");
     } else {
         let _ = writeln!(o, "  {}", totals_line(r));
@@ -1777,22 +2253,30 @@ pub fn render_section(r: &DeclaredReport, top: usize) -> String {
             let _ = writeln!(o, "  {}", x.line_text);
         }
     }
-    if r.totals.manifests + r.totals.config_structs > 0 && printed_orphans.is_empty() && r.misplaced.is_empty() && r.dead_features.is_empty() && r.noop_features.is_empty() && r.unread_knobs.is_empty() {
+    if !r.test_seams.is_empty() {
+        let _ = writeln!(o, "  TEST SEAMS  (env names read by production code, set only by tests, in no user doc)");
+        for x in r.test_seams.iter().take(top) {
+            let _ = writeln!(o, "  {}", x.line_text);
+        }
+    }
+    if r.totals.manifests + r.totals.config_structs + r.totals.env_names > 0 && printed_orphans.is_empty() && r.misplaced.is_empty() && r.dead_features.is_empty() && r.noop_features.is_empty() && r.unread_knobs.is_empty() && r.test_seams.is_empty() {
         let _ = writeln!(o, "  none");
     }
     o
 }
 
-/// `scry declared`: the section, then the files with unread knobs and their reasons.
+pub const HEADING: &str = "DECLARED  (dependencies no file imports; feature flags nothing checks; config knobs no code reads; env names only tests set)";
+
+/// `scry declared`: the section, then the files with unread knobs or seam reads and their reasons.
 pub fn render(r: &DeclaredReport, top: usize) -> String {
     use std::fmt::Write;
     let mut o = String::new();
-    let _ = writeln!(o, "DECLARED  (dependencies no file imports; feature flags nothing checks; config knobs no code reads)");
+    let _ = writeln!(o, "{HEADING}");
     o.push_str(&render_section(r, top));
     if !r.files.is_empty() {
-        let _ = writeln!(o, "\nfiles with unread config knobs:");
+        let _ = writeln!(o, "\nfiles with unread config knobs or test-seam reads:");
         for (p, f) in r.files.iter().take(top) {
-            let _ = writeln!(o, "  {p} ({}):", plural(f.unread_knobs.len(), "knob", "knobs"));
+            let _ = writeln!(o, "  {p} ({}):", plural(f.unread_knobs.len() + f.test_seams.len(), "finding", "findings"));
             for reason in &f.reasons {
                 let _ = writeln!(o, "    - {reason}");
             }
@@ -1811,6 +2295,10 @@ mod tests {
 
     fn side(path: &str, content: &str) -> FileSide {
         Walker::new(&Cfg::default()).parse_side(&src(path, content))
+    }
+
+    fn strings(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
     }
 
     /// A temp repo root with the given files, no git.
@@ -2159,7 +2647,154 @@ pub fn load(t: &str) -> Config { let c: Config = toml::from_str(t).unwrap(); c }
         assert_eq!(render_section(&r, 5), "  none\n");
         let root = repo(&[("Cargo.toml", "[package]\nname = \"k\"\n[dependencies]\nanyhow = \"1\"\n"), ("src/main.rs", "fn main() { anyhow::bail!() }\n")]);
         let r = run(&root, &Cfg::default());
-        assert_eq!(render_section(&r, 5), "  0 of 1 declared deps orphaned (0.0%) in 1 manifest; 0 of 0 features dead, 0 no-op; 0 of 0 config knobs in 0 structs unread\n  none\n");
+        assert_eq!(render_section(&r, 5), "  0 of 1 declared deps orphaned (0.0%) in 1 manifest; 0 of 0 features dead, 0 no-op; 0 of 0 config knobs in 0 structs unread; 0 of 0 env names read are test seams\n  none\n");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn env_reads_setters_and_the_mention_index_are_collected_per_grammar_with_test_masking() {
+        let s = side("src/a.rs", r#"
+#[command(version = env!("K_ATTR"))]
+struct Cli;
+fn read_all(name: &str) {
+    let a = std::env::var("K_A");
+    let b = env::var_os("K_B");
+    let c = env!("K_C");
+    let d = option_env!("K_D");
+    let f = matches!(env::var("K_F"), Ok(_));
+    std::env::set_var("K_SET", "1");
+    Command::new("x").env("K_CMD", "1").spawn();
+    let dynamic = std::env::var(name);
+    let _ = "K_PROD_MENTION";
+}
+#[test]
+fn t2() { std::env::var("K_MASKED2"); }
+#[cfg(test)]
+mod tests { fn t() { std::env::var("K_MASKED"); std::env::set_var("K_TSET", ""); let _ = "K_A K_A"; } }
+"#);
+        let reads: Vec<(&str, usize, &str, bool)> = s.env_reads.iter().map(|r| (r.name.as_str(), r.line, r.symbol.as_str(), r.compile_time)).collect();
+        assert_eq!(reads, vec![("K_ATTR", 2, "", true), ("K_A", 5, "read_all", false), ("K_B", 6, "read_all", false), ("K_C", 7, "read_all", true), ("K_D", 8, "read_all", true), ("K_F", 9, "read_all", false)]);
+        assert_eq!(s.env_setters.iter().map(String::as_str).collect::<BTreeSet<_>>(), ["K_CMD", "K_SET"].into_iter().collect());
+        // The mention index: whole words, test context apart; `K_A` is named once in production
+        // (the read) and twice in the test module; `K_MASKED` only in tests.
+        assert_eq!((s.env_tokens["K_A"].prod, s.env_tokens["K_A"].test), (1, 2));
+        assert_eq!((s.env_tokens["K_MASKED"].prod, s.env_tokens["K_MASKED"].test), (0, 1));
+        assert_eq!(s.env_tokens["K_PROD_MENTION"].prod, 1);
+        assert!(!s.env_tokens.contains_key("K") && !s.env_tokens.contains_key("Ok"));
+        let b = side("build.rs", r#"fn main() { println!("cargo:rustc-env=K_VER={}", v); }"#);
+        assert!(b.env_setters.contains("K_VER"));
+        let t = side("tests/t.rs", "fn t() { std::env::set_var(\"K_A\", \"x\"); }\n");
+        assert!(t.env_reads.is_empty() && t.env_setters.is_empty() && t.env_tokens["K_A"].test == 1);
+        let py = side("src/a.py", "import os\nfrom os import environ, getenv\ndef f():\n    x = os.environ[\"P_X\"]\n    y = os.environ.get(\"P_Y\")\n    z = os.getenv(\"P_Z\", \"d\")\n    os.environ[\"P_SET\"] = \"1\"\n    w = environ[\"P_W\"]\n    v = getenv(\"P_V\")\n    u = os.environ[f\"P_{v}\"]\n");
+        assert_eq!(py.env_reads.iter().map(|r| (r.name.as_str(), r.symbol.as_str())).collect::<Vec<_>>(), vec![("P_X", "f"), ("P_Y", "f"), ("P_Z", "f"), ("P_W", "f"), ("P_V", "f")]);
+        assert_eq!(py.env_setters.iter().map(String::as_str).collect::<Vec<_>>(), vec!["P_SET"]);
+        let ts = side("src/a.ts", "const a = process.env.T_A;\nconst b = process.env[\"T_B\"];\nconst c = Deno.env.get(\"T_C\");\nconst d = import.meta.env.VITE_D;\nprocess.env.T_SET = \"1\";\nDeno.env.set(\"T_DSET\", \"1\");\nexport function f() { return process.env.NODE_ENV === 'test'; }\n");
+        assert_eq!(ts.env_reads.iter().map(|r| (r.name.as_str(), r.symbol.as_str(), r.compile_time)).collect::<Vec<_>>(), vec![("T_A", "", false), ("T_B", "", false), ("T_C", "", false), ("VITE_D", "", true), ("NODE_ENV", "f", false)]);
+        assert_eq!(ts.env_setters.iter().map(String::as_str).collect::<BTreeSet<_>>(), ["T_DSET", "T_SET"].into_iter().collect());
+    }
+
+    #[test]
+    fn test_seams_need_a_candidate_name_test_mentions_and_no_public_or_production_setter() {
+        let main = r#"
+fn main() {
+    let now = std::env::var("MY_APP_NOW");
+    let seed = std::env::var_os("MA_SEED");
+    let mock = std::env::var("FOO_MOCK");
+    let documented = std::env::var("MY_APP_DOCD");
+    let ci = std::env::var("MY_APP_CI");
+    let set = std::env::var("MY_APP_SET");
+    std::env::set_var("MY_APP_SET", "1");
+    let untested = std::env::var("MY_APP_NOTEST");
+    let foreign = std::env::var("TERM");
+    let color = std::env::var("NO_COLOR");
+    let build = env!("MY_APP_BUILD");
+}
+"#;
+        let test = "fn t() { for n in [\"MY_APP_NOW\", \"MY_APP_NOW\", \"MA_SEED\", \"FOO_MOCK\", \"MY_APP_DOCD\", \"MY_APP_CI\", \"MY_APP_SET\", \"TERM\", \"NO_COLOR\", \"MY_APP_BUILD\"] { std::env::set_var(n, \"1\"); } }\n";
+        let root = repo(&[
+            ("Cargo.toml", "[package]\nname = \"my-app\"\n[[bin]]\nname = \"ma\"\npath = \"src/main.rs\"\n"),
+            ("src/main.rs", main),
+            ("tests/t.rs", test),
+            ("README.md", "# my-app\n\nSet `MY_APP_DOCD` to override the doc dir.\n"),
+            (".github/workflows/ci.yml", "env:\n  MY_APP_CI: 1\n"),
+        ]);
+        let r = run(&root, &Cfg::default());
+        assert_eq!((r.totals.env_names, r.totals.test_seams), (9, 3));
+        let lines: Vec<&str> = r.test_seams.iter().map(|s| s.line_text.as_str()).collect();
+        assert_eq!(lines, vec![
+            "MY_APP_NOW (src/main.rs:3 main) is read by production code but set only by tests (2 mentions in tests/, 0 in docs) - inject or document",
+            "FOO_MOCK (src/main.rs:5 main) is read by production code but set only by tests (1 mention in tests/, 0 in docs) - inject or document",
+            "MA_SEED (src/main.rs:4 main) is read by production code but set only by tests (1 mention in tests/, 0 in docs) - inject or document",
+        ]);
+        assert_eq!((r.test_seams[0].class.as_str(), r.test_seams[0].test_mentions, r.test_seams[0].reads.len(), r.test_seams[0].born_read.is_none()), ("seam", 2, 1, true));
+        assert!(r.notes.iter().any(|n| n == "1 compile-time env read (env! / option_env! / import.meta.env) not checked: MY_APP_BUILD (include_compile_time_env)"), "{:?}", r.notes);
+        assert!(r.notes.iter().any(|n| n == "3 env names read by production code and mentioned by tests but public or set elsewhere, not a seam: MY_APP_CI (set by .github/workflows/ci.yml), MY_APP_DOCD (documented in README.md:3), MY_APP_SET (set by production code)"), "{:?}", r.notes);
+        let f = &r.files["src/main.rs"];
+        assert_eq!(f.test_seams, vec![("MY_APP_NOW".to_string(), 3), ("FOO_MOCK".to_string(), 5), ("MA_SEED".to_string(), 4)]);
+        assert_eq!(f.reasons, lines.iter().map(|l| l.to_string()).collect::<Vec<_>>());
+        let text = render(&r, 10);
+        assert!(text.contains("; 3 of 9 env names read are test seams\n") && text.contains("  TEST SEAMS  (env names read by production code, set only by tests, in no user doc)\n  MY_APP_NOW ("), "{text}");
+        // Knobs: the compile-time read joins with its flag; a higher mention floor drops the
+        // one-mention seams; an extra prefix or keyword makes a candidate; no keyword, no bin
+        // prefix and a stoplisted package name leave only the package-prefixed seam.
+        let r = run(&root, &Cfg { include_compile_time_env: true, ..Cfg::default() });
+        assert!(r.test_seams.iter().any(|s| s.name == "MY_APP_BUILD" && s.reads[0].symbol == "main") && r.totals.env_names == 10 && !r.notes.iter().any(|n| n.contains("compile-time")), "{:?} {:?}", r.notes, r.test_seams.iter().map(|s| &s.name).collect::<Vec<_>>());
+        let r = run(&root, &Cfg { min_test_mentions: 2, ..Cfg::default() });
+        assert_eq!(r.test_seams.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["MY_APP_NOW"]);
+        let r = run(&root, &Cfg { env_prefixes: strings(&["no"]), ..Cfg::default() });
+        assert!(r.test_seams.iter().any(|s| s.name == "NO_COLOR") && !r.test_seams.iter().any(|s| s.name == "TERM"));
+        let r = run(&root, &Cfg { env_keywords: strings(&["NOW"]), env_prefix_stoplist: strings(&["my-app", "ma"]), ..Cfg::default() });
+        assert_eq!(r.test_seams.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["MY_APP_NOW"]);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn product_prefixes_come_from_package_json_and_pyproject_without_a_cargo_manifest() {
+        let root = repo(&[
+            ("package.json", "{ \"name\": \"@acme/tool\", \"version\": \"1.0.0\" }\n"),
+            ("src/a.ts", "export function clock() { return process.env.TOOL_NOW ?? Date.now(); }\n"),
+            ("test/a.test.ts", "process.env.TOOL_NOW = '2020';\n"),
+            ("py/pyproject.toml", "[project]\nname = \"clicky\"\n"),
+            ("py/src/b.py", "import os\ndef seed():\n    return os.environ.get(\"CLICKY_SEED\")\n"),
+            ("py/tests/test_b.py", "import os\nos.environ[\"CLICKY_SEED\"] = \"1\"\n"),
+        ]);
+        let r = run(&root, &Cfg::default());
+        assert_eq!((r.totals.manifests, r.totals.other_manifests, r.totals.env_names, r.totals.test_seams), (0, 2, 2, 2));
+        assert_eq!(r.test_seams.iter().map(|s| s.line_text.as_str()).collect::<Vec<_>>(), vec![
+            "CLICKY_SEED (py/src/b.py:3 seed) is read by production code but set only by tests (1 mention in py/, 0 in docs) - inject or document",
+            "TOOL_NOW (src/a.ts:1 clock) is read by production code but set only by tests (1 mention in test/, 0 in docs) - inject or document",
+        ]);
+        assert!(r.files.contains_key("src/a.ts") && r.files["py/src/b.py"].test_seams == vec![("CLICKY_SEED".to_string(), 3)]);
+        assert!(render(&r, 5).contains("  TEST SEAMS"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn seam_births_come_from_git_for_the_read_and_the_first_test_setter() {
+        let root = repo(&[
+            ("Cargo.toml", "[package]\nname = \"k\"\n[[bin]]\nname = \"k\"\npath = \"src/main.rs\"\n"),
+            ("src/main.rs", "fn main() { std::env::var(\"K_NOW\"); std::env::var(\"K_SEED\"); }\n"),
+            ("tests/t.rs", "fn t() { std::env::set_var(\"K_SEED\", \"1\"); }\n"),
+        ]);
+        let git = |args: &[&str]| {
+            let out = Command::new("git").arg("-C").arg(&root).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&["commit", "-qm", "root"]);
+        let first = git(&["rev-parse", "--short", "HEAD"]);
+        std::fs::write(root.join("tests/t.rs"), "fn t() { std::env::set_var(\"K_SEED\", \"1\"); std::env::set_var(\"K_NOW\", \"2\"); }\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-qm", "now"]);
+        let second = git(&["rev-parse", "--short", "HEAD"]);
+        let files = crate::discover::walk(&root, &crate::config::Discover::default()).unwrap();
+        let r = analyze(&index_all(&files, &Cfg::default()), &root, true, &Cfg::default(), &[]);
+        let seam = |n: &str| r.test_seams.iter().find(|s| s.name == n).unwrap();
+        assert_eq!((seam("K_SEED").born_read.as_ref().map(|(h, _)| h.as_str()), seam("K_SEED").born_test.as_ref().map(|(h, _)| h.as_str())), (Some(first.as_str()), Some(first.as_str())));
+        assert!(seam("K_SEED").line_text.ends_with(&format!("(1 mention in tests/, 0 in docs; born {first} together with its first test setter) - inject or document")), "{}", seam("K_SEED").line_text);
+        assert!(seam("K_NOW").line_text.ends_with(&format!("(1 mention in tests/, 0 in docs; read born {first}, first test setter {second}) - inject or document")), "{}", seam("K_NOW").line_text);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

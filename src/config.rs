@@ -914,12 +914,14 @@ impl Default for Clumps {
 // ---------- declared ----------
 
 /// The declared-but-unconsumed pass: orphaned dependencies, dead feature flags, unread config
-/// knobs. Cargo only in this version; the JavaScript and Python knobs are reserved.
+/// knobs (Cargo only in this version; the JavaScript and Python knobs are reserved) and env
+/// names production code reads that only tests set (every grammar).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Declared {
     /// Languages whose manifests are checked; only `rust` is implemented (`javascript`,
-    /// `python` are accepted and ignored until their legs land).
+    /// `python` are accepted and ignored until their legs land). The env-seam leg reads every
+    /// grammar regardless.
     pub languages: Vec<String>,
     /// Manifest files, found by glob; only `Cargo.toml` is parsed, the others are counted.
     pub manifest_globs: Vec<String>,
@@ -972,15 +974,33 @@ pub struct Declared {
     /// Report an unread knob only when a sibling field of its struct is read or the knob is
     /// documented (`public_doc_globs`).
     pub require_sibling_read_or_doc: bool,
-    /// Docs whose TOML / YAML fences document a knob (`documented at docs/config.md:91-93`).
+    /// User-facing docs: their TOML / YAML fences document a knob (`documented at
+    /// docs/config.md:91-93`), and an env name any of them mentions is public, never a seam.
     pub public_doc_globs: Vec<String>,
     /// A field name shorter than this is skipped only when another candidate struct declares
     /// the same name.
     pub min_field_name_len: usize,
     /// Knob names a line lists before `+N more`.
     pub max_knobs_listed: usize,
-    /// Score weight of the percentile of `unread_knobs` (0: the section and reasons print,
-    /// the ranking ignores them).
+    /// Extra product prefixes for the env-seam rule, on top of the ones derived from every
+    /// `[package]` / `[[bin]]` / package.json / pyproject name (uppercased, `-` -> `_`).
+    pub env_prefixes: Vec<String>,
+    /// Manifest names too generic to derive a prefix from (`app`, `core`, `cli`, `server`).
+    pub env_prefix_stoplist: Vec<String>,
+    /// An env name containing one of these (case-sensitive) is a candidate even without a
+    /// product prefix; a name with neither is foreign and never reported.
+    pub env_keywords: Vec<String>,
+    /// Whole-word mentions in Test files or `#[cfg(test)]` regions a candidate needs to be a
+    /// test seam.
+    pub min_test_mentions: usize,
+    /// CI, container and build files: an env name any of them mentions is set outside tests
+    /// and never a seam.
+    pub setter_file_globs: Vec<String>,
+    /// Check compile-time reads too (`env!`, `option_env!`, `import.meta.env`); off: they are
+    /// counted in a note.
+    pub include_compile_time_env: bool,
+    /// Score weight of the percentile of `unread_knobs + test_seams` (0: the section and
+    /// reasons print, the ranking ignores them).
     pub weight: f64,
 }
 
@@ -1009,9 +1029,15 @@ impl Default for Declared {
             config_is_public_api: false,
             require_bin_target: true,
             require_sibling_read_or_doc: true,
-            public_doc_globs: strings(&["README*", "docs/**", "*.1", "man/**"]),
+            public_doc_globs: strings(&["README*", "docs/**", "doc/**", "*.1", "man/**", "GUIDE*", "FAQ*"]),
             min_field_name_len: 3,
             max_knobs_listed: 8,
+            env_prefixes: Vec::new(),
+            env_prefix_stoplist: strings(&["app", "core", "cli", "server"]),
+            env_keywords: strings(&["TEST", "FIXTURE", "SEED", "MOCK", "FAKE", "STUB", "REPLAY"]),
+            min_test_mentions: 1,
+            setter_file_globs: strings(&[".github/**", "Dockerfile*", "Makefile", "justfile", "docker-compose*", ".env*"]),
+            include_compile_time_env: false,
             weight: 0.0,
         }
     }
