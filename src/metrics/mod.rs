@@ -149,26 +149,54 @@ fn is_bound_callable(node: Node) -> bool {
 }
 
 pub fn analyze_all(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
-    let per_file: Vec<(FileMetrics, Vec<FunctionMetrics>)> =
-        files.par_iter().map(|f| analyze_file(f, cfg, tests)).collect();
-    let mut file_metrics = Vec::with_capacity(per_file.len());
-    let mut funcs = Vec::new();
-    for (fm, fs) in per_file {
-        file_metrics.push(fm);
-        funcs.extend(fs);
-    }
+    let (file_metrics, funcs, _) = analyze_all_with(files, cfg, tests, |_, _, _| ());
     (file_metrics, funcs)
 }
 
+/// `analyze_all` plus one caller-supplied pass over each file's parsed tree (`None` when the
+/// parse failed) with its test regions: the mentions pass collects symbols and inline test
+/// units there, so no Source file is parsed twice. The extras come back in file order.
+pub fn analyze_all_with<'a, T: Send>(
+    files: &'a [SourceFile],
+    cfg: &Cfg,
+    tests: &TestsCfg,
+    extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion]) -> T + Sync,
+) -> (Vec<FileMetrics>, Vec<FunctionMetrics>, Vec<T>) {
+    let per_file: Vec<(FileMetrics, Vec<FunctionMetrics>, T)> =
+        files.par_iter().map(|f| analyze_file_with(f, cfg, tests, &extra)).collect();
+    let mut file_metrics = Vec::with_capacity(per_file.len());
+    let mut funcs = Vec::new();
+    let mut extras = Vec::with_capacity(per_file.len());
+    for (fm, fs, x) in per_file {
+        file_metrics.push(fm);
+        funcs.extend(fs);
+        extras.push(x);
+    }
+    (file_metrics, funcs, extras)
+}
+
+#[cfg(test)]
 pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetrics, Vec<FunctionMetrics>) {
+    let (fm, fs, ()) = analyze_file_with(file, cfg, tests, |_, _, _| ());
+    (fm, fs)
+}
+
+fn analyze_file_with<'a, T>(
+    file: &'a SourceFile,
+    cfg: &Cfg,
+    tests: &TestsCfg,
+    extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion]) -> T,
+) -> (FileMetrics, Vec<FunctionMetrics>, T) {
     let mut parser = file.lang.parser();
     let src = file.content.as_bytes();
     let mut funcs = Vec::new();
     let mut parse_errors = false;
-    // Regions are always detected on a Rust file, so `has_tests` sees an inline `mod tests`
-    // whatever the knob says; the knob gates their effects (unit tags, line counts).
+    // Regions are always detected on a Rust file, so they are listed whatever the knob says;
+    // the knob gates their effects (unit tags, line counts).
     let mut test_regions = Vec::new();
-    if let Some(tree) = parser.parse(src, None) {
+    let tree = parser.parse(src, None);
+    let extra_out;
+    if let Some(tree) = &tree {
         let root = tree.root_node();
         parse_errors = root.has_error();
         if file.lang == Language::Rust {
@@ -176,6 +204,9 @@ pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetr
         }
         let tagged = if tests.inline_modules { test_regions.as_slice() } else { &[] };
         collect_units(root, file.lang, src, &file.path, tagged, &mut funcs);
+        extra_out = extra(Some(root), file, &test_regions);
+    } else {
+        extra_out = extra(None, file, &test_regions);
     }
     // File totals describe the production code only; tagged units stay in the list.
     let source = || funcs.iter().filter(|f| !f.in_test);
@@ -190,7 +221,7 @@ pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetr
         inline_test_lines: if tests.inline_modules { regions::inline_lines(&test_regions) } else { 0 },
         test_regions,
     };
-    (fm, funcs)
+    (fm, funcs, extra_out)
 }
 
 /// Every node reported as a unit, in document order: the grammar's unit kinds, with arrow
@@ -549,7 +580,7 @@ mod tests {
         assert_eq!(fm.inline_test_lines, 5);
         assert_eq!(fm.test_regions.len(), 1);
         // The knob turns the effects off: every unit is source and every line counts, but the
-        // region is still reported, so the report's `has_tests` does not change with the knob.
+        // region is still reported.
         let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
         let (fm, fs) = analyze_file(&f, &Cfg { cognitive_hard: 5 }, &off);
         assert!(fs.iter().all(|f| !f.in_test));

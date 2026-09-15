@@ -333,14 +333,16 @@ impl Default for Clones {
 
 // ---------- tests ----------
 
-/// Inline test regions (`#[cfg(test)] mod`, `#[cfg(test)]` items, bare `#[test]` fns) in Rust Source files.
+/// Inline test regions (`#[cfg(test)] mod`, `#[cfg(test)]` items, bare `#[test]` fns) in Rust
+/// Source files, and the test-mention index that replaces "a test file imports it".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Tests {
     /// Apply inline test regions: metrics units inside one are tagged `in_test` and left out of
     /// file totals, `inline_test_lines` come off the size signal, and the clone tokenizer skips
-    /// their bytes. Off means every line is source; regions are still detected and listed, so
-    /// `has_tests` sees an inline `mod tests` either way.
+    /// their bytes. Off means every line is source; regions are still detected and listed, and
+    /// the mention index finds them on its own tree, so `count_inline_tests_as_refs` is
+    /// unaffected.
     pub inline_modules: bool,
     /// A hotspot whose inline test lines / file lines is at or above this gets
     /// `N in #[cfg(test)] mod at a-b` after its line count.
@@ -348,11 +350,31 @@ pub struct Tests {
     /// A Source file whose inline test ratio is above this is treated as a Test file for
     /// ranking: it is not a hotspot and does not count toward source lines.
     pub reclassify_file_above_ratio: f64,
+    /// Functions inside inline test regions are test units: one that names a symbol of any
+    /// Source file counts toward that file's `test_units`. Off, only Test files hold test units.
+    pub count_inline_tests_as_refs: bool,
+    /// Symbols with names shorter than this are never matched (`run`, `new`, `get`, `parse`
+    /// collide with every test); 4 still lets `execute`-length names through, 5 does not
+    /// let `commit`/`is_empty`-length generic names collide.
+    pub min_name_len: usize,
+    /// A file whose share of public symbols named by no test unit is at or above this gets
+    /// `N of M public symbols are named by no test: a (lines 1-9), …`…
+    pub unmentioned_share_reason: f64,
+    /// …when it has at least this many public symbols (a two-symbol file has no share worth a line).
+    pub unmentioned_min_symbols: usize,
 }
 
 impl Default for Tests {
     fn default() -> Self {
-        Self { inline_modules: true, report_inline_ratio_above: 0.5, reclassify_file_above_ratio: 0.9 }
+        Self {
+            inline_modules: true,
+            report_inline_ratio_above: 0.5,
+            reclassify_file_above_ratio: 0.9,
+            count_inline_tests_as_refs: true,
+            min_name_len: 5,
+            unmentioned_share_reason: 0.5,
+            unmentioned_min_symbols: 3,
+        }
     }
 }
 
@@ -379,7 +401,8 @@ pub struct Report {
     pub with_history: Weights,
     /// Weights when it did not (`--no-history`, not a repo, subdirectory scan).
     pub without_history: Weights,
-    /// Score multiplier for a file no test references.
+    /// Score multiplier for a file with `test_units == 0`: no test unit names one of its
+    /// symbols, no test file imports it, no same-stem test sits in its tree.
     pub no_tests_multiplier: f64,
     /// complexity = this × pct(max cognitive) + (1 − this) × pct(total cognitive).
     pub complexity_max_share: f64,

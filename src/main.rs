@@ -4,6 +4,7 @@ mod deps;
 mod discover;
 mod history;
 mod lang;
+mod mentions;
 mod metrics;
 mod regions;
 mod report;
@@ -85,6 +86,15 @@ enum Cmd {
         #[arg(long, default_value_t = 15)]
         top: usize,
     },
+    /// Test units (test-file functions, inline #[cfg(test)] tests) naming each source file's symbols
+    Mentions {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 15)]
+        top: usize,
+    },
     /// Per-function cognitive/cyclomatic complexity for source files
     Metrics {
         #[arg(default_value = ".")]
@@ -112,7 +122,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = match &cli.cmd {
         Cmd::Scan { path, .. } | Cmd::Files { path, .. } | Cmd::History { path, .. } | Cmd::Clones { path, .. }
-        | Cmd::Deps { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
+        | Cmd::Deps { path, .. } | Cmd::Mentions { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
         Cmd::Ast { .. } => PathBuf::from("."),
     };
     let mut cfg = config::Config::load(&root, cli.config.as_deref())?;
@@ -144,9 +154,12 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let (file_metrics, functions) = metrics::analyze_all(&source, &cfg.metrics, &cfg.tests);
+            // The mentions pass reads symbols and inline test units off the metrics trees.
+            let (file_metrics, functions, sides) =
+                metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| mentions::source_side(root, f, regions, &cfg.tests));
             let graph = deps::build(&files, &cfg.deps);
             let clone_report = clones::detect(&source, &cfg.clones, &cfg.tests);
+            let mentions = mentions::index(&files, &sides, &cfg.tests);
             let report = report::build(
                 report::Inputs {
                     root: path.canonicalize()?.display().to_string(),
@@ -156,6 +169,7 @@ fn main() -> Result<()> {
                     functions: &functions,
                     deps: &graph,
                     clones: &clone_report,
+                    mentions: &mentions,
                     cognitive_hard: cfg.metrics.cognitive_hard,
                     tests: &cfg.tests,
                     list_tables_separately: cfg.clones.list_tables_separately,
@@ -286,6 +300,31 @@ fn main() -> Result<()> {
             println!("\n{:>6} {:>7} {:>5} {:>5}  most depended-on", "fan_in", "fan_out", "tests", "inst");
             for (p, d) in rows.iter().take(top) {
                 println!("{:>6} {:>7} {:>5} {:>5.2}  {}{}", d.fan_in, d.fan_out, d.test_refs, d.instability, p, if d.in_cycle { "  (cycle)" } else { "" });
+            }
+        }
+        Cmd::Mentions { path, json, top } => {
+            let files = discover::walk(&path, &cfg.discover)?;
+            let idx = mentions::index_all(&files, &cfg.tests);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&idx)?);
+                return Ok(());
+            }
+            let test_files = files.iter().filter(|f| f.kind == discover::FileKind::Test).count();
+            let unnamed = idx.files.values().filter(|m| m.test_units == 0).count();
+            println!("{} test units ({} in {test_files} test files, {} inline) name symbols of {} of {} source files; {unnamed} named by no test unit\n",
+                idx.test_file_units + idx.inline_units, idx.test_file_units, idx.inline_units, idx.files.len() - unnamed, idx.files.len());
+            let mut rows: Vec<(&String, &mentions::FileMentions)> = idx.files.iter().collect();
+            // Fewest test units first: the files the suite never names are the finding.
+            rows.sort_by(|(pa, a), (pb, b)| (a.test_units, std::cmp::Reverse(a.public_symbols)).cmp(&(b.test_units, std::cmp::Reverse(b.public_symbols))).then_with(|| pa.cmp(pb)));
+            println!("{:>5} {:>6} {:>7} {:>6} {:>7}  path", "units", "inline", "symbols", "public", "unnamed");
+            for (p, m) in rows.iter().take(top) {
+                println!("{:>5} {:>6} {:>7} {:>6} {:>7}  {}", m.test_units, m.inline_units, m.symbols, m.public_symbols, m.unmentioned.len(), p);
+            }
+            println!("\npublic symbols named by no test unit (most first):");
+            rows.sort_by(|(pa, a), (pb, b)| b.unmentioned.len().cmp(&a.unmentioned.len()).then_with(|| pa.cmp(pb)));
+            for (p, m) in rows.iter().filter(|(_, m)| !m.unmentioned.is_empty()).take(top) {
+                let names: Vec<String> = m.unmentioned.iter().map(|s| format!("{} {}-{}", s.name, s.start_line, s.end_line)).collect();
+                println!("  {p} ({} of {}): {}", m.unmentioned.len(), m.public_symbols, names.join(", "));
             }
         }
         Cmd::Metrics { path, json, top } => {

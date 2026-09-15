@@ -23,12 +23,13 @@ language is one grammar crate plus a node-kind table.
 | deps | import graph, SCC cycles (file and directory), fan-in/out, instability; every edge knows its kind (`use` / `mod` / `type_only`) and how many names it carries, so a large cycle comes with its cheapest single-import cut, a hub cut and a greedy cut set | tangles and hubs are where a change fans out; an agent adds `use crate::x` wherever convenient, so its cycle is dense and the report should say what cutting one import buys instead of repeating the cycle on every member |
 | clones | near-exact duplicates via normalised-token winnowing; a uniform table (dispatch `match`, registry array, map literal) matching its own second half is dropped, and pairs whose both sides are runs of uniform entries are tagged `table` and listed under a TABLES sub-heading with the logic/table split in the file's reason | two copies of a rule drift into two rules; two parallel maps over one enum must drift together, but they are not duplicated logic |
 | regions | inline test regions in Rust source (`#[cfg(test)]` mods and items, `#[test]` fns) | a 2,300-line file that is half `mod tests` is a 1,300-line file; clones and complexity inside tests are not production findings |
+| mentions | test units (functions in test files, tests inside inline `#[cfg(test)]` regions) that name a source file's symbols as identifier tokens, never in strings; the public symbols no test names | "a test file imports it" is false for CLI-style suites that drive the binary: kanspec's `cmd/status.rs` is imported by no test and named by 51 test functions; the no-tests multiplier now needs zero naming units, and a file most of whose public symbols no test names says which ones, with line ranges |
 | report | percentile-normalised composite, reasons per file | one ranked list, no thresholds to tune per language |
 
 The headline score is the hotspot idea from Tornhill's *Your Code as a Crime
 Scene*: churn × complexity, with boosts for fix commits, coupling, duplication
-and missing tests. Every ranked file carries the reasons it ranked, with
-function names and line ranges. Import cycles are described once, under
+and missing tests (no test unit names any of the file's symbols). Every
+ranked file carries the reasons it ranked, with function names and line ranges. Import cycles are described once, under
 CYCLES, with the cheapest import to cut and the cycle that would leave
 (`15 -> 12`), a hub cut, and `no single import breaks this cycle` when that is
 the truth; members say which cycle they are in and only the two files of the
@@ -70,6 +71,10 @@ cut_rust_cycles = false                  # keep the deduped count line, drop the
 [clones]
 min_tokens = 100
 table_weight = 0.25                      # dampen table pairs in clone_ratio (default 1.0)
+
+[tests]
+min_name_len = 6                         # symbols shorter than this never count as named by a test (default 5)
+unmentioned_share_reason = 0.7           # reason when this share of a file's public symbols is named by no test (default 0.5)
 
 [report.with_history]
 hotspot = 0.5                            # other weights keep their defaults

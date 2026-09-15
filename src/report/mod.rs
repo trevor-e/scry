@@ -10,6 +10,7 @@ use crate::config::{History as HistoryCfg, Report as Cfg, Tests as TestsCfg, Wei
 use crate::deps::{Cycle, DepGraph};
 use crate::discover::{FileKind, SourceFile};
 use crate::history::{CoChange, History};
+use crate::mentions::{MentionIndex, Symbol};
 use crate::metrics::{FileMetrics, FunctionMetrics};
 use crate::regions::{RegionKind, TestRegion};
 use serde::Serialize;
@@ -38,7 +39,12 @@ pub struct Signals {
     pub table_clone_lines: usize,
     /// `(logic + [clones].table_weight x table) / (lines - inline_test_lines)`.
     pub clone_ratio: f64,
-    pub has_tests: bool,
+    /// Test units (functions in Test files, tests inside inline `#[cfg(test)]` regions) whose
+    /// body names one of the file's symbols as an identifier token; at least 1 when a test file
+    /// imports the file or a same-stem test sits in its tree. 0 turns the no-tests multiplier on.
+    pub test_units: usize,
+    /// Public symbols the mention index holds for the file (names of `[tests].min_name_len`+).
+    pub public_symbols: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,6 +58,8 @@ pub struct Hotspot {
     /// `1026 in #[cfg(test)] mod at 1283-2308`, printed after the line count when the inline
     /// test ratio is at or above `[tests].report_inline_ratio_above`.
     pub inline_test_note: Option<String>,
+    /// Public symbols named by no test unit, in line order (the reason lists the first few).
+    pub unmentioned: Vec<Symbol>,
 }
 
 /// A co-change pair with no import between its members. In `hidden_coupling` when nothing
@@ -126,6 +134,7 @@ pub struct Inputs<'a> {
     pub functions: &'a [FunctionMetrics],
     pub deps: &'a DepGraph,
     pub clones: &'a CloneReport,
+    pub mentions: &'a MentionIndex,
     pub cognitive_hard: u32,
     pub tests: &'a TestsCfg,
     /// `[clones].list_tables_separately`.
@@ -302,6 +311,19 @@ fn inline_test_note(regions: &[TestRegion], inline_test_lines: usize) -> String 
     format!("{inline_test_lines} in {what} at {}-{}{more}", biggest.start_line, biggest.end_line)
 }
 
+/// Symbols listed in the unmentioned reason before `+N more`; `unmentioned[]` in `--json` has them all.
+const UNMENTIONED_LISTED: usize = 5;
+
+/// `4 of 6 public symbols are named by no test: router (lines 204-229), request_ctx (lines 243-257)`.
+fn unmentioned_reason(unmentioned: &[Symbol], public: usize) -> String {
+    let named: Vec<String> = unmentioned.iter().take(UNMENTIONED_LISTED).map(|s| format!("{} (lines {}-{})", s.name, s.start_line, s.end_line)).collect();
+    let more = match unmentioned.len().saturating_sub(UNMENTIONED_LISTED) {
+        0 => String::new(),
+        n => format!(", +{n} more"),
+    };
+    format!("{} of {public} public symbols are named by no test: {}{more}", unmentioned.len(), named.join(", "))
+}
+
 pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report {
     let fm: HashMap<&str, &FileMetrics> = inp.file_metrics.iter().map(|m| (m.path.as_str(), m)).collect();
     let inline_ratio = |f: &SourceFile| {
@@ -325,6 +347,9 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let m = fm.get(f.path.as_str());
             let d = inp.deps.files.get(&f.path);
             let c = inp.clones.files.get(&f.path);
+            let mn = inp.mentions.files.get(&f.path);
+            // An importing test file or a same-stem test is evidence too: worth one unit.
+            let other_evidence = d.is_some_and(|d| d.test_refs > 0) || stem_tested(&tstems, f);
             Signals {
                 lines: f.lines,
                 inline_test_lines: m.map_or(0, |m| m.inline_test_lines),
@@ -342,7 +367,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 logic_clone_lines: c.map_or(0, |c| c.logic_clone_lines),
                 table_clone_lines: c.map_or(0, |c| c.table_clone_lines),
                 clone_ratio: c.map_or(0.0, |c| c.clone_ratio),
-                has_tests: d.is_some_and(|d| d.test_refs > 0) || stem_tested(&tstems, f) || m.is_some_and(|m| !m.test_regions.is_empty()),
+                test_units: mn.map_or(0, |m| m.test_units).max(usize::from(other_evidence)),
+                public_symbols: mn.map_or(0, |m| m.public_symbols),
             }
         })
         .collect();
@@ -411,7 +437,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let fix = if s.fix_commits == 0 { 0.0 } else { p_fix[i] };
             let w: &Weights = if have_history { &cfg.with_history } else { &cfg.without_history };
             let base = w.hotspot * hotspot + w.fixes * fix + w.complexity * cx + w.coupling * coupling + w.clones * clone + w.size * p_lines[i];
-            let score = 100.0 * base * if s.has_tests { 1.0 } else { cfg.no_tests_multiplier };
+            let score = 100.0 * base * if s.test_units > 0 { 1.0 } else { cfg.no_tests_multiplier };
 
             let mut reasons = Vec::new();
             let window = hist.window.trim_end_matches(" ago");
@@ -449,8 +475,14 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                     Some(via) => format!("changes together with {other} ({}x): both import {via}, which changed in {} of those commits", h.together_nonsweep, h.explained_commits),
                 });
             }
-            if !s.has_tests {
-                reasons.push("no test file references it".to_string());
+            if s.test_units == 0 {
+                reasons.push("no test unit names any of its symbols".to_string());
+            }
+            let unmentioned = inp.mentions.files.get(&f.path).map(|m| m.unmentioned.clone()).unwrap_or_default();
+            if s.public_symbols >= inp.tests.unmentioned_min_symbols
+                && unmentioned.len() as f64 / s.public_symbols as f64 >= inp.tests.unmentioned_share_reason
+            {
+                reasons.push(unmentioned_reason(&unmentioned, s.public_symbols));
             }
             if s.commits >= cfg.reason_bus_factor_min_commits {
                 match s.authors {
@@ -470,6 +502,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 worst_functions: worst.get(f.path.as_str()).map(|v| v.iter().map(|f| (*f).clone()).collect()).unwrap_or_default(),
                 test_regions,
                 inline_test_note,
+                unmentioned,
             }
         })
         .collect();
@@ -568,17 +601,20 @@ mod tests {
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
         let hcfg = hcfg();
+        // The inline test names a symbol of a.rs; nothing names b.rs.
+        let mut mentions = MentionIndex::default();
+        mentions.files.insert("a.rs".into(), crate::mentions::FileMentions { test_units: 1, inline_units: 1, ..Default::default() });
         let size_only = Cfg {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 1.0 },
             ..Cfg::default()
         };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &size_only, &td());
         let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["b.rs", "a.rs"], "{r:?}");
         let a = &r.hotspots[1];
         assert_eq!((a.signals.lines, a.signals.inline_test_lines), (2308, 1300));
-        assert!(a.signals.has_tests);
-        assert!(!r.hotspots[0].signals.has_tests);
+        assert_eq!(a.signals.test_units, 1);
+        assert_eq!(r.hotspots[0].signals.test_units, 0);
         assert_eq!(a.inline_test_note.as_deref(), Some("1300 in #[cfg(test)] mod at 1009-2308"));
         assert_eq!(a.test_regions.len(), 1);
         assert_eq!(a.worst_functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), vec!["src"]);
@@ -587,15 +623,15 @@ mod tests {
         let text = render(&r, 10);
         assert!(text.contains("a.rs  (2308 lines, 1300 in #[cfg(test)] mod at 1009-2308)"), "{text}");
         assert!(text.contains("b.rs  (1500 lines)"), "{text}");
-        // Below the ratio knob the note is absent; the region still counts as tests.
+        // Below the ratio knob the note is absent; the inline unit still counts.
         let strict = TestsCfg { report_inline_ratio_above: 0.9, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &strict, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &strict, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &size_only, &td());
         assert!(r.hotspots[1].inline_test_note.is_none());
-        assert!(r.hotspots[1].signals.has_tests);
-        // With the knob off metrics still report the regions, so has_tests does not change.
+        assert_eq!(r.hotspots[1].signals.test_units, 1);
+        // The inline_modules knob gates line counts and tags, not the mention index.
         let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &off, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &size_only, &td());
-        assert!(r.hotspots.iter().find(|h| h.path == "a.rs").unwrap().signals.has_tests);
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &off, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &size_only, &td());
+        assert_eq!(r.hotspots.iter().find(|h| h.path == "a.rs").unwrap().signals.test_units, 1);
         // Many regions: the largest one's kind and range, the rest counted.
         let many = [region(RegionKind::CfgTestItem, 18, 20), region(RegionKind::CfgTestMod, 66, 210), region(RegionKind::CfgTestItem, 24, 26)];
         assert_eq!(inline_test_note(&many, 151), "151 in #[cfg(test)] mod at 66-210, +2 more");
@@ -615,8 +651,8 @@ mod tests {
             fh.authors = authors;
             hist.files.insert(p.into(), fh);
         }
-        let (deps, clones, tests, hcfg) = (DepGraph::default(), CloneReport::default(), TestsCfg::default(), hcfg());
-        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &Cfg::default(), &td());
+        let (deps, clones, tests, hcfg, mentions) = (DepGraph::default(), CloneReport::default(), TestsCfg::default(), hcfg(), MentionIndex::default());
+        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &Cfg::default(), &td());
         let reasons = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.clone();
         assert!(reasons("bot.rs").contains(&"9 commits in the last 6 months (0 fix commits, 0 authors (all bot commits))".to_string()), "{:?}", reasons("bot.rs"));
         assert!(reasons("bot.rs").contains(&"no non-bot author over the window (bus factor 0)".to_string()));
@@ -642,7 +678,8 @@ mod tests {
         let deps = DepGraph::default();
         let tests = TestsCfg::default();
         let hcfg = hcfg();
-        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: sep, history_cfg: &hcfg, dedupe_cycle_reason: true };
+        let mentions = MentionIndex::default();
+        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: sep, history_cfg: &hcfg, dedupe_cycle_reason: true };
         let r = build(inputs(true), 10, &Cfg::default(), &td());
         assert_eq!((r.clones.len(), r.tables.len()), (1, 1));
         assert_eq!(r.clones[0].kind, CloneKind::Logic);
@@ -696,10 +733,11 @@ mod tests {
         deps.add_edge("a.rs", "d.rs"); // a<->d import each other: not hidden at all
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
+        let mentions = MentionIndex::default();
         let dflt = HistoryCfg::default();
         let strict = HistoryCfg { explained_min_share: 0.9, ..HistoryCfg::default() };
         fn constrain<'a, F: Fn(&'a HistoryCfg) -> Inputs<'a>>(f: F) -> F { f }
-        let inputs = constrain(|hcfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: hcfg, dedupe_cycle_reason: true });
+        let inputs = constrain(|hcfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: hcfg, dedupe_cycle_reason: true });
         let r = build(inputs(&dflt), 10, &Cfg::default(), &td());
         assert_eq!(r.hidden_coupling.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.together, h.together_nonsweep)).collect::<Vec<_>>(), vec![("a.rs", "b.rs", 6, 4), ("a.rs", "e.rs", 3, 3)]);
         assert!(r.hidden_coupling.iter().all(|h| h.explained_by.is_none()));
@@ -733,7 +771,7 @@ mod tests {
         hist.sweep_commits = 0;
         hist.sweeps.clear();
         hist.co_changes.retain(|c| c.a == "c.rs");
-        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &dflt, dedupe_cycle_reason: true }, 10, &Cfg::default(), &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &dflt, dedupe_cycle_reason: true }, 10, &Cfg::default(), &td());
         let text = render(&r, 10);
         assert!(r.sweep_note.is_none() && !text.contains("directory-sweep"));
         assert!(r.hidden_coupling.is_empty() && r.explained_coupling.len() == 1);
@@ -769,7 +807,8 @@ mod tests {
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
         let hcfg = hcfg();
-        let inputs = |dedupe: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: dedupe };
+        let mentions = MentionIndex::default();
+        let inputs = |dedupe: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: dedupe };
         let r = build(inputs(true), 10, &Cfg::default(), &td());
         let reason = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.iter().find(|x| x.contains("cycle")).cloned().unwrap_or_default();
         assert_eq!(reason("src/paths.rs"), "in the 4-file src cycle (cut: paths.rs -> plan.rs, EntityRef)");
@@ -788,6 +827,58 @@ mod tests {
         let r = build(inputs(false), 10, &Cfg::default(), &td());
         assert!(r.hotspots.iter().all(|h| h.reasons.iter().any(|x| x.starts_with("in an import cycle of "))), "{:?}", r.hotspots);
         assert!(r.hotspots.iter().find(|h| h.path == "src/scan.rs").unwrap().reasons.contains(&"in an import cycle of 4 files".to_string()));
+    }
+
+    #[test]
+    fn test_units_gate_the_multiplier_and_the_unmentioned_reason() {
+        use crate::deps::FileDeps;
+        use crate::mentions::FileMentions;
+        let sf = |p: &str| SourceFile { path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines: 100, bytes: 0, content: String::new() };
+        let sym = |name: &str, line: usize| Symbol { name: name.into(), kind: "fn", start_line: line, end_line: line + 9, public: true };
+        // named.rs: 36 units name it, all symbols named. gap.rs: 2 units, 4 of 6 public symbols unnamed.
+        // imported.rs: no unit names it but a test file imports it. stem.rs: same-stem test in its tree.
+        // silent.rs: nothing at all, 2 public symbols (below the share rule's minimum).
+        // many.rs: 8 of 8 unnamed, so the reason lists five and counts the rest.
+        let files = vec![sf("src/named.rs"), sf("src/gap.rs"), sf("src/imported.rs"), sf("src/stem.rs"), sf("src/silent.rs"), sf("src/many.rs"),
+            SourceFile { path: "tests/stem.rs".into(), lang: crate::lang::Language::Rust, kind: FileKind::Test, lines: 10, bytes: 0, content: String::new() }];
+        let fm: Vec<FileMetrics> = files.iter().map(|f| fmetrics(&f.path, 1, 1, 0)).collect();
+        let mut mentions = MentionIndex::default();
+        mentions.files.insert("src/named.rs".into(), FileMentions { test_units: 36, test_file_units: 36, symbols: 4, public_symbols: 4, ..Default::default() });
+        mentions.files.insert("src/gap.rs".into(), FileMentions { test_units: 2, test_file_units: 2, symbols: 7, public_symbols: 6, unmentioned: vec![sym("router", 204), sym("request_ctx", 243), sym("serve_forever", 260), sym("shutdown_now", 280)], ..Default::default() });
+        mentions.files.insert("src/imported.rs".into(), FileMentions { symbols: 1, public_symbols: 1, unmentioned: vec![sym("load_all", 1)], ..Default::default() });
+        mentions.files.insert("src/stem.rs".into(), FileMentions::default());
+        mentions.files.insert("src/silent.rs".into(), FileMentions { symbols: 2, public_symbols: 2, unmentioned: vec![sym("alpha_fn", 1), sym("beta_fn", 20)], ..Default::default() });
+        mentions.files.insert("src/many.rs".into(), FileMentions { symbols: 8, public_symbols: 8, unmentioned: (0..8).map(|i| sym(&format!("thing_{i}"), 10 * i + 1)).collect(), ..Default::default() });
+        let mut deps = DepGraph::default();
+        deps.files.insert("src/imported.rs".into(), FileDeps { test_refs: 1, ..Default::default() });
+        let clones = CloneReport::default();
+        let tests = TestsCfg::default();
+        let hcfg = hcfg();
+        fn constrain<'a, F: Fn(&'a TestsCfg) -> Inputs<'a>>(f: F) -> F { f }
+        let inputs = constrain(|tests| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, mentions: &mentions, cognitive_hard: 15, tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true });
+        let r = build(inputs(&tests), 10, &Cfg::default(), &td());
+        let hot = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap();
+        let units = |p: &str| hot(p).signals.test_units;
+        assert_eq!((units("src/named.rs"), units("src/gap.rs"), units("src/imported.rs"), units("src/stem.rs"), units("src/silent.rs")), (36, 2, 1, 1, 0));
+        // Every signal is equal, so the multiplier is the only difference in score: silent and many pay it.
+        let base = hot("src/named.rs").score;
+        assert!((hot("src/silent.rs").score - base * 1.15).abs() < 1e-9, "{} vs {base}", hot("src/silent.rs").score);
+        assert_eq!(hot("src/imported.rs").score, base);
+        let reasons = |p: &str| hot(p).reasons.clone();
+        assert_eq!(reasons("src/named.rs"), Vec::<String>::new());
+        assert_eq!(reasons("src/gap.rs"), vec!["4 of 6 public symbols are named by no test: router (lines 204-213), request_ctx (lines 243-252), serve_forever (lines 260-269), shutdown_now (lines 280-289)"]);
+        assert_eq!(reasons("src/imported.rs"), Vec::<String>::new()); // one symbol: below the minimum
+        assert_eq!(reasons("src/silent.rs"), vec!["no test unit names any of its symbols"]);
+        assert_eq!(reasons("src/many.rs"), vec!["no test unit names any of its symbols", "8 of 8 public symbols are named by no test: thing_0 (lines 1-10), thing_1 (lines 11-20), thing_2 (lines 21-30), thing_3 (lines 31-40), thing_4 (lines 41-50), +3 more"]);
+        assert_eq!(hot("src/many.rs").unmentioned.len(), 8);
+        assert!(!render(&r, 10).contains("no test file references it"));
+        // A stricter share or a higher minimum turns the per-file reason off; the no-unit reason stays.
+        let strict = TestsCfg { unmentioned_share_reason: 0.7, ..TestsCfg::default() };
+        let r2 = build(inputs(&strict), 10, &Cfg::default(), &td());
+        assert!(r2.hotspots.iter().find(|h| h.path == "src/gap.rs").unwrap().reasons.is_empty());
+        let big = TestsCfg { unmentioned_min_symbols: 9, ..TestsCfg::default() };
+        let r3 = build(inputs(&big), 10, &Cfg::default(), &td());
+        assert_eq!(r3.hotspots.iter().find(|h| h.path == "src/many.rs").unwrap().reasons, vec!["no test unit names any of its symbols"]);
     }
 
     #[test]
@@ -813,7 +904,8 @@ mod tests {
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
         let hcfg = hcfg();
-        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true };
+        let mentions = MentionIndex::default();
+        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true };
         let by_default = build(inputs(), 10, &Cfg::default(), &td());
         assert_eq!(by_default.hotspots[0].path, "small.py");
         let size_only = Cfg {
