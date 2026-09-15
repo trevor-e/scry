@@ -184,7 +184,10 @@ fn clone_reason(s: &Signals, tables: &[TableRef]) -> String {
     }
     let denom = s.lines.saturating_sub(s.inline_test_lines).max(1) as f64;
     let pct = |n: usize| (100.0 * n as f64 / denom).round() as usize;
-    let (t, l) = (pct(s.table_clone_lines), pct(s.logic_clone_lines));
+    // The parts sum to the headline: rounding each on its own can disagree by one.
+    let head = pct(s.table_clone_lines + s.logic_clone_lines);
+    let t = pct(s.table_clone_lines);
+    let l = head.saturating_sub(t);
     let desc = match tables.first().map(|t| t.container_kind.as_str()) {
         Some(k) if tables.iter().all(|t| t.container_kind == k) => table_desc(k),
         _ => "table",
@@ -197,9 +200,9 @@ fn clone_reason(s: &Signals, tables: &[TableRef]) -> String {
         })
         .collect();
     if l == 0 {
-        format!("{}% duplicated lines were all {desc} ({}), no logic", t + l, named.join("; "))
+        format!("{head}% duplicated lines were all {desc} ({}), no logic", named.join("; "))
     } else {
-        format!("{}% duplicated lines were {t}% {desc} ({}) and {l}% logic", t + l, named.join("; "))
+        format!("{head}% duplicated lines were {t}% {desc} ({}) and {l}% logic", named.join("; "))
     }
 }
 
@@ -283,16 +286,20 @@ fn stem_tested(tstems: &HashMap<String, Vec<String>>, f: &SourceFile) -> bool {
     })
 }
 
-/// `1026 in #[cfg(test)] mod at 1283-2308`; every merged region's range when there are several.
+/// `1026 in #[cfg(test)] mod at 1283-2308`: the largest region's kind and range, then `+N more`
+/// when there are others (a file of a hundred `#[cfg(test)]` items lists them all in `test_regions[]`).
 fn inline_test_note(regions: &[TestRegion], inline_test_lines: usize) -> String {
-    let biggest = regions.iter().max_by_key(|r| r.lines()).map(|r| r.kind);
-    let what = match biggest {
-        Some(RegionKind::CfgTestMod) => "#[cfg(test)] mod",
-        Some(RegionKind::TestFn) => "#[test] fn",
-        _ => "#[cfg(test)] item",
+    let Some(biggest) = regions.iter().max_by_key(|r| r.lines()) else { return format!("{inline_test_lines} in inline tests") };
+    let what = match biggest.kind {
+        RegionKind::CfgTestMod => "#[cfg(test)] mod",
+        RegionKind::TestFn => "#[test] fn",
+        RegionKind::CfgTestItem => "#[cfg(test)] item",
     };
-    let ranges: Vec<String> = regions.iter().map(|r| format!("{}-{}", r.start_line, r.end_line)).collect();
-    format!("{inline_test_lines} in {what} at {}", ranges.join(", "))
+    let more = match regions.len() {
+        0 | 1 => String::new(),
+        n => format!(", +{} more", n - 1),
+    };
+    format!("{inline_test_lines} in {what} at {}-{}{more}", biggest.start_line, biggest.end_line)
 }
 
 pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report {
@@ -409,10 +416,9 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let mut reasons = Vec::new();
             let window = hist.window.trim_end_matches(" ago");
             if have_history && p_commits[i] >= cfg.reason_churn_percentile && s.commits > 0 {
-                reasons.push(format!(
-                    "{} commits in the last {window} ({} fix commits, {} authors)",
-                    s.commits, s.fix_commits, s.authors
-                ));
+                // No author with commits means every commit was a bot's.
+                let authors = if s.authors == 0 { "0 authors (all bot commits)".to_string() } else { format!("{} authors", s.authors) };
+                reasons.push(format!("{} commits in the last {window} ({} fix commits, {authors})", s.commits, s.fix_commits));
             } else if s.fix_commits >= cfg.reason_min_fix_commits {
                 reasons.push(format!("{} fix commits in the last {window}", s.fix_commits));
             }
@@ -433,24 +439,25 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             if s.clone_ratio >= cfg.reason_clone_ratio {
                 reasons.push(clone_reason(s, inp.clones.files.get(&f.path).map_or(&[], |c| c.tables.as_slice())));
             }
-            if let Some(hs) = hidden_by_file.get(f.path.as_str()) {
-                for h in hs.iter().take(cfg.reason_hidden_partners) {
-                    let other = if h.a == f.path { &h.b } else { &h.a };
-                    reasons.push(format!("changes together with {other} ({}x, {:.1}x more often than chance{}) but neither imports the other", h.together_nonsweep, h.lift, sweeps_ignored(h)));
-                }
-            }
-            if let Some(hs) = explained_by_file.get(f.path.as_str()) {
-                for h in hs.iter().take(cfg.reason_hidden_partners) {
-                    let other = if h.a == f.path { &h.b } else { &h.a };
-                    let via = h.explained_by.as_deref().unwrap_or("");
-                    reasons.push(format!("changes together with {other} ({}x): both import {via}, which changed in {} of those commits", h.together_nonsweep, h.explained_commits));
-                }
+            // One partner budget per file: hidden partners first, then explained ones.
+            let hidden_partners = hidden_by_file.get(f.path.as_str()).into_iter().flatten();
+            let explained_partners = explained_by_file.get(f.path.as_str()).into_iter().flatten();
+            for h in hidden_partners.chain(explained_partners).take(cfg.reason_hidden_partners) {
+                let other = if h.a == f.path { &h.b } else { &h.a };
+                reasons.push(match &h.explained_by {
+                    None => format!("changes together with {other} ({}x, {:.1}x more often than chance{}) but neither imports the other", h.together_nonsweep, h.lift, sweeps_ignored(h)),
+                    Some(via) => format!("changes together with {other} ({}x): both import {via}, which changed in {} of those commits", h.together_nonsweep, h.explained_commits),
+                });
             }
             if !s.has_tests {
                 reasons.push("no test file references it".to_string());
             }
-            if s.authors == 1 && s.commits >= cfg.reason_bus_factor_min_commits {
-                reasons.push("single author over the window (bus factor 1)".to_string());
+            if s.commits >= cfg.reason_bus_factor_min_commits {
+                match s.authors {
+                    1 => reasons.push("single author over the window (bus factor 1)".to_string()),
+                    0 => reasons.push("no non-bot author over the window (bus factor 0)".to_string()),
+                    _ => {}
+                }
             }
             let test_regions = fm.get(f.path.as_str()).map(|m| m.test_regions.clone()).unwrap_or_default();
             let inline_test_note = (!test_regions.is_empty() && inline_ratio(f) >= inp.tests.report_inline_ratio_above)
@@ -585,6 +592,37 @@ mod tests {
         let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &strict, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &size_only, &td());
         assert!(r.hotspots[1].inline_test_note.is_none());
         assert!(r.hotspots[1].signals.has_tests);
+        // With the knob off metrics still report the regions, so has_tests does not change.
+        let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, tests: &off, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &size_only, &td());
+        assert!(r.hotspots.iter().find(|h| h.path == "a.rs").unwrap().signals.has_tests);
+        // Many regions: the largest one's kind and range, the rest counted.
+        let many = [region(RegionKind::CfgTestItem, 18, 20), region(RegionKind::CfgTestMod, 66, 210), region(RegionKind::CfgTestItem, 24, 26)];
+        assert_eq!(inline_test_note(&many, 151), "151 in #[cfg(test)] mod at 66-210, +2 more");
+        assert_eq!(inline_test_note(&many[..1], 3), "3 in #[cfg(test)] item at 18-20");
+    }
+
+    #[test]
+    fn a_file_touched_only_by_bots_has_bus_factor_zero() {
+        use crate::history::FileHistory;
+        let sf = |p: &str| SourceFile { path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines: 100, bytes: 0, content: String::new() };
+        let files = vec![sf("bot.rs"), sf("solo.rs"), sf("pair.rs"), sf("quiet.rs")];
+        let fm: Vec<FileMetrics> = files.iter().map(|f| fmetrics(&f.path, 1, 1, 0)).collect();
+        let mut hist = History { window: "6 months ago".into(), commits_scanned: 20, ..History::default() };
+        for (p, commits, authors) in [("bot.rs", 9, 0), ("solo.rs", 6, 1), ("pair.rs", 5, 2), ("quiet.rs", 1, 1)] {
+            let mut fh = FileHistory::default();
+            fh.commits = commits;
+            fh.authors = authors;
+            hist.files.insert(p.into(), fh);
+        }
+        let (deps, clones, tests, hcfg) = (DepGraph::default(), CloneReport::default(), TestsCfg::default(), hcfg());
+        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true }, 10, &Cfg::default(), &td());
+        let reasons = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.clone();
+        assert!(reasons("bot.rs").contains(&"9 commits in the last 6 months (0 fix commits, 0 authors (all bot commits))".to_string()), "{:?}", reasons("bot.rs"));
+        assert!(reasons("bot.rs").contains(&"no non-bot author over the window (bus factor 0)".to_string()));
+        assert!(reasons("solo.rs").contains(&"single author over the window (bus factor 1)".to_string()), "{:?}", reasons("solo.rs"));
+        assert!(!reasons("pair.rs").iter().any(|r| r.contains("bus factor")), "{:?}", reasons("pair.rs"));
+        assert!(!reasons("quiet.rs").iter().any(|r| r.contains("bus factor")), "{:?}", reasons("quiet.rs"));
     }
 
     #[test]
@@ -624,19 +662,28 @@ mod tests {
     fn hidden_coupling_prints_lift_and_sweeps_and_explained_pairs_leave_the_list() {
         use crate::history::{CoChange, FileHistory, SweepCommit};
         let sf = |p: &str| SourceFile { path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines: 100, bytes: 0, content: String::new() };
-        let files = vec![sf("a.rs"), sf("b.rs"), sf("c.rs"), sf("d.rs"), sf("x.rs")];
-        let fm: Vec<FileMetrics> = ["a.rs", "b.rs", "c.rs", "d.rs", "x.rs"].iter().map(|p| fmetrics(p, 1, 1, 0)).collect();
+        let names = ["a.rs", "b.rs", "c.rs", "d.rs", "e.rs", "g.rs", "x.rs"];
+        let files: Vec<SourceFile> = names.iter().map(|p| sf(p)).collect();
+        let fm: Vec<FileMetrics> = names.iter().map(|p| fmetrics(p, 1, 1, 0)).collect();
         let pair = |a: &str, b: &str, together, nonsweep, strength, lift| CoChange { a: a.into(), b: b.into(), together, together_nonsweep: nonsweep, strength, lift };
         let sweep = |hash: &str| SweepCommit { hash: hash.into(), subject: "sweep".into(), files: 5, dir: "".into(), dir_touched: 5, dir_files: 5 };
         let v = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
         let mut hist = History {
             window: "6 months ago".into(), commits_scanned: 30, sweep_commits: 2, lift_applied: true, sweeps: vec![sweep("h1"), sweep("h2")],
-            co_changes: vec![pair("a.rs", "b.rs", 6, 4, 0.8, 3.5), pair("c.rs", "d.rs", 5, 5, 1.0, 4.0), pair("a.rs", "d.rs", 3, 3, 0.5, 3.2)],
-            // c and d shipped together five times; x.rs went along in four of them.
-            co_commits: vec![v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs"]), v(&["a.rs", "b.rs"])],
+            // a.rs has two hidden partners (b, e) and two explained ones (g, c): one budget of two.
+            co_changes: vec![
+                pair("a.rs", "b.rs", 6, 4, 0.8, 3.5), pair("c.rs", "d.rs", 5, 5, 1.0, 4.0), pair("a.rs", "d.rs", 3, 3, 0.5, 3.2),
+                pair("a.rs", "e.rs", 3, 3, 0.5, 3.1), pair("a.rs", "g.rs", 5, 3, 0.5, 3.0), pair("a.rs", "c.rs", 3, 3, 0.5, 3.0),
+            ],
+            // c and d shipped together five times; x.rs went along in four of them. a with g and
+            // with c three times each, x.rs along twice.
+            co_commits: vec![
+                v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs", "x.rs"]), v(&["c.rs", "d.rs"]), v(&["a.rs", "b.rs"]),
+                v(&["a.rs", "g.rs", "x.rs"]), v(&["a.rs", "g.rs", "x.rs"]), v(&["a.rs", "g.rs"]), v(&["a.rs", "c.rs", "x.rs"]), v(&["a.rs", "c.rs", "x.rs"]), v(&["a.rs", "c.rs"]), v(&["a.rs", "e.rs"]),
+            ],
             ..History::default()
         };
-        for p in ["a.rs", "b.rs", "c.rs", "d.rs", "x.rs"] {
+        for p in names {
             let mut fh = FileHistory::default();
             fh.commits = 8;
             hist.files.insert(p.into(), fh);
@@ -644,58 +691,81 @@ mod tests {
         let mut deps = DepGraph::default();
         deps.add_edge("c.rs", "x.rs");
         deps.add_edge("d.rs", "x.rs");
+        deps.add_edge("a.rs", "x.rs");
+        deps.add_edge("g.rs", "x.rs");
         deps.add_edge("a.rs", "d.rs"); // a<->d import each other: not hidden at all
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
-        let inputs = |hcfg: &'static HistoryCfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: hcfg, dedupe_cycle_reason: true };
-        let r = build(inputs(Box::leak(Box::new(HistoryCfg::default()))), 10, &Cfg::default(), &td());
-        assert_eq!(r.hidden_coupling.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.together, h.together_nonsweep)).collect::<Vec<_>>(), vec![("a.rs", "b.rs", 6, 4)]);
-        assert!(r.hidden_coupling[0].explained_by.is_none());
+        let dflt = HistoryCfg::default();
+        let strict = HistoryCfg { explained_min_share: 0.9, ..HistoryCfg::default() };
+        fn constrain<'a, F: Fn(&'a HistoryCfg) -> Inputs<'a>>(f: F) -> F { f }
+        let inputs = constrain(|hcfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: hcfg, dedupe_cycle_reason: true });
+        let r = build(inputs(&dflt), 10, &Cfg::default(), &td());
+        assert_eq!(r.hidden_coupling.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.together, h.together_nonsweep)).collect::<Vec<_>>(), vec![("a.rs", "b.rs", 6, 4), ("a.rs", "e.rs", 3, 3)]);
+        assert!(r.hidden_coupling.iter().all(|h| h.explained_by.is_none()));
         let e = &r.explained_coupling;
-        assert_eq!(e.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.explained_by.as_deref(), h.explained_commits)).collect::<Vec<_>>(), vec![("c.rs", "d.rs", Some("x.rs"), 4)]);
+        assert_eq!(e.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.explained_by.as_deref(), h.explained_commits)).collect::<Vec<_>>(), vec![("c.rs", "d.rs", Some("x.rs"), 4), ("a.rs", "g.rs", Some("x.rs"), 2), ("a.rs", "c.rs", Some("x.rs"), 2)]);
         assert_eq!(r.summary.sweep_commits, 2);
         assert_eq!(r.sweep_note.as_deref(), Some("2 directory-sweep commits (>= 50% of .) excluded from pair counts; still counted as churn"));
-        let reason = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.iter().find(|x| x.contains("changes together")).cloned().unwrap_or_default();
+        let reasons = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.iter().filter(|x| x.contains("changes together")).cloned().collect::<Vec<_>>();
+        let reason = |p: &str| reasons(p).first().cloned().unwrap_or_default();
         assert_eq!(reason("a.rs"), "changes together with b.rs (4x, 3.5x more often than chance; 2 sweep commits ignored) but neither imports the other");
         assert_eq!(reason("b.rs"), "changes together with a.rs (4x, 3.5x more often than chance; 2 sweep commits ignored) but neither imports the other");
         assert_eq!(reason("c.rs"), "changes together with d.rs (5x): both import x.rs, which changed in 4 of those commits");
         assert_eq!(reason("x.rs"), "");
+        // Four partners, a budget of two: the hidden ones first, the explained ones only when it stretches.
+        assert_eq!(reasons("a.rs").len(), 2, "{:?}", reasons("a.rs"));
+        assert_eq!(reasons("a.rs")[1], "changes together with e.rs (3x, 3.1x more often than chance) but neither imports the other");
         let text = render(&r, 10);
-        assert!(text.contains("   4x 0.80  lift  3.5  a.rs  <->  b.rs  (2 sweep commits ignored)\n  EXPLAINED  (both import a file that changed in the same commits: shotgun surgery on it)\n   5x 1.00  c.rs  <->  d.rs  via x.rs (4 of 5)\n  2 directory-sweep commits (>= 50% of .) excluded from pair counts; still counted as churn\n"), "{text}");
-        // A stricter share leaves c<->d unexplained: hidden, with no sweep clause (none were ignored).
-        let strict = Box::leak(Box::new(HistoryCfg { explained_min_share: 0.9, ..HistoryCfg::default() }));
-        let r = build(inputs(strict), 10, &Cfg::default(), &td());
-        assert_eq!(r.hidden_coupling.len(), 2);
+        assert!(text.contains("   4x 0.80  lift  3.5  a.rs  <->  b.rs  (2 sweep commits ignored)\n   3x 0.50  lift  3.1  a.rs  <->  e.rs\n  EXPLAINED  (both import a file that changed in the same commits: shotgun surgery on it)\n   5x 1.00  c.rs  <->  d.rs  via x.rs (4 of 5)\n   3x 0.50  a.rs  <->  g.rs  via x.rs (2 of 3)  (2 sweep commits ignored)\n   3x 0.50  a.rs  <->  c.rs  via x.rs (2 of 3)\n  2 directory-sweep commits (>= 50% of .) excluded from pair counts; still counted as churn\n"), "{text}");
+        let wide = Cfg { reason_hidden_partners: 3, ..Cfg::default() };
+        let r3 = build(inputs(&dflt), 10, &wide, &td());
+        let a3: Vec<&String> = r3.hotspots.iter().find(|h| h.path == "a.rs").unwrap().reasons.iter().filter(|x| x.contains("changes together")).collect();
+        assert_eq!(a3.len(), 3);
+        assert_eq!(a3[2], "changes together with g.rs (3x): both import x.rs, which changed in 2 of those commits");
+        // A stricter share leaves every pair unexplained: hidden, c<->d with no sweep clause (none were ignored).
+        let r = build(inputs(&strict), 10, &Cfg::default(), &td());
+        assert_eq!(r.hidden_coupling.len(), 5);
         assert!(r.explained_coupling.is_empty());
         let reason = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.iter().find(|x| x.contains("changes together")).cloned().unwrap_or_default();
         assert_eq!(reason("c.rs"), "changes together with d.rs (5x, 4.0x more often than chance) but neither imports the other");
-        // No sweeps: no footer.
+        // No sweeps: no footer. No hidden pairs but explained ones: no "none" either.
         hist.sweep_commits = 0;
         hist.sweeps.clear();
-        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: strict, dedupe_cycle_reason: true }, 10, &Cfg::default(), &td());
-        assert!(r.sweep_note.is_none() && !render(&r, 10).contains("directory-sweep"));
+        hist.co_changes.retain(|c| c.a == "c.rs");
+        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, tests: &tests, list_tables_separately: true, history_cfg: &dflt, dedupe_cycle_reason: true }, 10, &Cfg::default(), &td());
+        let text = render(&r, 10);
+        assert!(r.sweep_note.is_none() && !text.contains("directory-sweep"));
+        assert!(r.hidden_coupling.is_empty() && r.explained_coupling.len() == 1);
+        assert!(text.contains("HIDDEN COUPLING  (change together, no import between them)\n  EXPLAINED"), "{text}");
     }
 
     #[test]
     fn cycle_reason_is_deduped_and_cycles_print_one_block_each() {
         use crate::deps::{Cuts, Edge, EdgeCut, EdgeKind, HubCut};
         let sf = |p: &str| SourceFile { path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines: 100, bytes: 0, content: String::new() };
-        let files = vec![sf("src/paths.rs"), sf("src/plan.rs"), sf("src/scan.rs"), sf("src/ctx.rs")];
+        let files = vec![sf("src/paths.rs"), sf("src/plan.rs"), sf("src/scan.rs"), sf("src/ctx.rs"), sf("src/t/a.ts"), sf("src/jsx/a.ts"), sf("src/jsx/c.ts"), sf("top.rs")];
         let fm: Vec<FileMetrics> = files.iter().map(|f| fmetrics(&f.path, 1, 1, 0)).collect();
         let edge = |from: &str, to: &str, names: &[&str]| Edge { from: from.into(), to: to.into(), kind: EdgeKind::Use, symbols: names.len() as u32, names: names.iter().map(|s| s.to_string()).collect(), glob: false, line: 16 };
         let mut deps = DepGraph::default();
         deps.file_cycles.push(crate::deps::Cycle {
-            members: files.iter().map(|f| f.path.clone()).collect(),
+            members: files[..4].iter().map(|f| f.path.clone()).collect(),
             dir: "src".into(),
             cuts: Some(Cuts {
                 internal_edges: 9, mod_edges: 0, type_only_edges: 0, base: 4,
                 single: Some(EdgeCut { edge: edge("src/paths.rs", "src/plan.rs", &["EntityRef"]), largest_after: 4 }),
-                hub: Some(HubCut { member: "src/paths.rs".into(), imports: 4, symbols: 9, largest_after: 3 }),
+                hub: Some(HubCut { member: "src/paths.rs".into(), imports: 4, symbols: 9, glob: false, largest_after: 3 }),
                 cut_set: vec![EdgeCut { edge: edge("src/paths.rs", "src/plan.rs", &["EntityRef"]), largest_after: 4 }, EdgeCut { edge: edge("src/plan.rs", "src/scan.rs", &["ScanToken", "Tok"]), largest_after: 3 }],
                 no_single_break: true,
             }),
         });
         deps.file_cycles.push(crate::deps::Cycle { members: vec!["src/a.rs".into(), "src/b.rs".into()], dir: "src".into(), cuts: None });
+        // Carried by type-only imports only, in part, and across the repo root.
+        let members = |dir: &str, n: usize| (0..n).map(|i| format!("{dir}/{}.ts", (b'a' + i as u8) as char)).collect::<Vec<_>>();
+        let no_cuts = |base: usize, type_only: usize, single: Option<EdgeCut>| Cuts { internal_edges: 12, mod_edges: 0, type_only_edges: type_only, base, single, hub: None, cut_set: vec![], no_single_break: false };
+        deps.file_cycles.push(crate::deps::Cycle { members: members("src/t", 6), dir: "src/t".into(), cuts: Some(no_cuts(1, 8, None)) });
+        deps.file_cycles.push(crate::deps::Cycle { members: members("src/jsx", 6), dir: "src/jsx".into(), cuts: Some(no_cuts(4, 3, Some(EdgeCut { edge: edge("src/jsx/a.ts", "src/jsx/b.ts", &["X"]), largest_after: 2 }))) });
+        deps.file_cycles.push(crate::deps::Cycle { members: vec!["src/b.rs".into(), "top.rs".into()], dir: ".".into(), cuts: None });
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
         let hcfg = hcfg();
@@ -705,11 +775,19 @@ mod tests {
         assert_eq!(reason("src/paths.rs"), "in the 4-file src cycle (cut: paths.rs -> plan.rs, EntityRef)");
         assert_eq!(reason("src/plan.rs"), "in the 4-file src cycle (cut: paths.rs -> plan.rs, EntityRef)");
         assert_eq!(reason("src/scan.rs"), "in the 4-file src cycle");
+        assert_eq!(reason("src/t/a.ts"), "in the 6-file src/t cycle (type-only, no runtime cycle)");
+        assert_eq!(reason("src/jsx/a.ts"), "in the 6-file src/jsx cycle (runtime cycle 4; cut: a.ts -> b.ts, X)");
+        assert_eq!(reason("src/jsx/c.ts"), "in the 6-file src/jsx cycle (runtime cycle 4)");
+        assert_eq!(reason("top.rs"), "in the 2-file top-level cycle");
         let text = render(&r, 10);
         assert!(text.contains("\nCYCLES\n  4-file cycle in src: cheapest cut src/paths.rs -> src/plan.rs imports 1 symbol (EntityRef, line 16) -> largest remaining cycle 4; hub cut: drop paths.rs's 4 imports (9 symbols) -> 3; no single import breaks this cycle\n    files: src/paths.rs, src/plan.rs, src/scan.rs, src/ctx.rs\n    cut set of 2 imports dissolves it: src/paths.rs -> src/plan.rs (EntityRef), src/plan.rs -> src/scan.rs (ScanToken, Tok)\n  2-file cycle in src\n    files: src/a.rs, src/b.rs\n"), "{text}");
+        assert!(text.contains("\n  6-file cycle in src/t: 8 type-only imports ignored, largest runtime cycle 1; no runtime cycle\n"), "{text}");
+        assert!(text.contains("\n  6-file cycle in src/jsx: 3 type-only imports ignored, largest runtime cycle 4; cheapest cut src/jsx/a.ts -> src/jsx/b.ts imports 1 symbol (X, line 16) -> largest remaining cycle 2\n"), "{text}");
+        assert!(text.contains("\n  2-file cycle at the repo root\n    files: src/b.rs, top.rs\n"), "{text}");
         // Without dedupe: the old count line on every member.
         let r = build(inputs(false), 10, &Cfg::default(), &td());
-        assert!(r.hotspots.iter().all(|h| h.reasons.contains(&"in an import cycle of 4 files".to_string())), "{:?}", r.hotspots);
+        assert!(r.hotspots.iter().all(|h| h.reasons.iter().any(|x| x.starts_with("in an import cycle of "))), "{:?}", r.hotspots);
+        assert!(r.hotspots.iter().find(|h| h.path == "src/scan.rs").unwrap().reasons.contains(&"in an import cycle of 4 files".to_string()));
     }
 
     #[test]
@@ -765,12 +843,21 @@ mod tests {
 }
 
 /// `in the 15-file src cycle (cut: paths.rs -> plan.rs, EntityRef)`: the cut clause only on the
-/// two files of the cheapest cut edge. Without dedupe, `in an import cycle of 15 files`.
+/// two files of the cheapest cut edge. A cycle that type-only imports carry in part says so,
+/// `(type-only, no runtime cycle)` or `(runtime cycle 4; cut: …)`, so the reason agrees with the
+/// CYCLES block. Without dedupe, `in an import cycle of 15 files`.
 fn cycle_reason(c: &Cycle, path: &str, dedupe: bool) -> String {
     if !dedupe {
         return format!("in an import cycle of {} files", c.members.len());
     }
-    format!("in the {}-file {} cycle{}", c.members.len(), c.dir, c.cut_note(path).unwrap_or_default())
+    let mut notes: Vec<String> = Vec::new();
+    if let Some(cuts) = &c.cuts && cuts.base < c.members.len() {
+        notes.push(if cuts.base < 2 { "type-only, no runtime cycle".to_string() } else { format!("runtime cycle {}", cuts.base) });
+    }
+    notes.extend(c.cut_clause(path));
+    let note = if notes.is_empty() { String::new() } else { format!(" ({})", notes.join("; ")) };
+    let dir = if c.dir == "." { "top-level" } else { c.dir.as_str() };
+    format!("in the {}-file {dir} cycle{note}", c.members.len())
 }
 
 /// `; 2 sweep commits ignored` inside a hidden-coupling reason, empty when none were.
@@ -830,18 +917,21 @@ pub fn render(r: &Report, top: usize) -> String {
     }
 
     let _ = writeln!(o, "\nHIDDEN COUPLING  (change together, no import between them)");
-    if r.hidden_coupling.is_empty() {
+    if r.hidden_coupling.is_empty() && r.explained_coupling.is_empty() {
         let _ = writeln!(o, "  none");
     }
-    for h in r.hidden_coupling.iter().take(top) {
+    // `  (2 sweep commits ignored)` after a row, so the printed count is auditable.
+    let ignored_note = |h: &HiddenCoupling| {
         let ignored = sweeps_ignored(h);
-        let note = if ignored.is_empty() { String::new() } else { format!("  ({})", &ignored[2..]) };
-        let _ = writeln!(o, "  {:>2}x {:.2}  lift {:>4.1}  {}  <->  {}{note}", h.together_nonsweep, h.strength, h.lift, h.a, h.b);
+        if ignored.is_empty() { String::new() } else { format!("  ({})", &ignored[2..]) }
+    };
+    for h in r.hidden_coupling.iter().take(top) {
+        let _ = writeln!(o, "  {:>2}x {:.2}  lift {:>4.1}  {}  <->  {}{}", h.together_nonsweep, h.strength, h.lift, h.a, h.b, ignored_note(h));
     }
     if !r.explained_coupling.is_empty() {
         let _ = writeln!(o, "  EXPLAINED  (both import a file that changed in the same commits: shotgun surgery on it)");
         for h in r.explained_coupling.iter().take(top) {
-            let _ = writeln!(o, "  {:>2}x {:.2}  {}  <->  {}  via {} ({} of {})", h.together_nonsweep, h.strength, h.a, h.b, h.explained_by.as_deref().unwrap_or(""), h.explained_commits, h.together_nonsweep);
+            let _ = writeln!(o, "  {:>2}x {:.2}  {}  <->  {}  via {} ({} of {}){}", h.together_nonsweep, h.strength, h.a, h.b, h.explained_by.as_deref().unwrap_or(""), h.explained_commits, h.together_nonsweep, ignored_note(h));
         }
     }
     if let Some(n) = &r.sweep_note {

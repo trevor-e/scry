@@ -71,6 +71,8 @@ pub struct HubCut {
     pub member: String,
     pub imports: usize,
     pub symbols: u32,
+    /// One of the dropped imports is a wildcard, so `symbols` is a floor.
+    pub glob: bool,
     pub largest_after: usize,
 }
 
@@ -431,10 +433,11 @@ fn cuts_for(members: &[String], edge_map: &HashMap<(String, String), Edge>, cfg:
                 continue;
             }
             let after = largest_after(n, &edges, &removed);
-            let cost: u64 = edges.iter().zip(&removed).filter(|(_, r)| **r).map(|(e, _)| e.cost).sum();
+            let dropped = || edges.iter().zip(&removed).filter(|(_, r)| **r).map(|(e, _)| e);
+            let cost: u64 = dropped().map(|e| e.cost).sum();
             if best.is_none_or(|(a, c, _)| (after, cost) < (a, c)) {
                 best = Some((after, cost, m));
-                hub = Some(HubCut { member: name.clone(), imports, symbols: cost as u32, largest_after: after });
+                hub = Some(HubCut { member: name.clone(), imports, symbols: cost as u32, glob: dropped().any(|e| e.edge.glob), largest_after: after });
             }
         }
         if let (Some(h), Some(s)) = (&hub, &single) && h.largest_after >= s.largest_after {
@@ -454,12 +457,20 @@ fn cuts_for(members: &[String], edge_map: &HashMap<(String, String), Edge>, cfg:
     }
     let cut_set = if dissolved { set } else { Vec::new() };
 
-    let no_single_break = single.as_ref().is_none_or(|s| s.largest_after as f64 >= cfg.no_single_cut_share * n as f64);
+    // Only meaningful over a runtime cycle: with none there is nothing a cut could break.
+    let no_single_break = base >= 2 && single.as_ref().is_none_or(|s| s.largest_after as f64 >= cfg.no_single_cut_share * n as f64);
     Cuts { internal_edges, mod_edges, type_only_edges, base, single, hub, cut_set, no_single_break }
 }
 
-fn basename(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
+/// The file name, with its directory when the name alone says nothing: `searcher/mod.rs`,
+/// `dom/index.ts`, `pkg/__init__.py`.
+fn short_name(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let generic = name == "mod.rs" || name == "__init__.py" || name.starts_with("index.");
+    match path[..path.len() - name.len()].trim_end_matches('/').rsplit('/').next() {
+        Some(parent) if generic && !parent.is_empty() => &path[path.len() - name.len() - parent.len() - 1..],
+        _ => name,
+    }
 }
 
 /// `EntityRef`, `A, B, C, D, +3 more`, `*` for a wildcard.
@@ -488,11 +499,12 @@ impl Cycle {
     /// imports 1 symbol (EntityRef, line 16) -> largest remaining cycle 12; hub cut: drop
     /// paths.rs's 4 imports (9 symbols) -> 11; no single import breaks this cycle`.
     pub fn headline(&self) -> String {
-        let mut o = format!("{}-file cycle in {}", self.members.len(), self.dir);
+        let mut o = format!("{}-file cycle {}", self.members.len(), if self.dir == "." { "at the repo root".to_string() } else { format!("in {}", self.dir) });
         let Some(c) = &self.cuts else { return o };
         let mut parts: Vec<String> = Vec::new();
         if c.type_only_edges > 0 && c.base < self.members.len() {
-            parts.push(format!("{} type-only imports ignored, largest runtime cycle {}", c.type_only_edges, c.base));
+            let s = if c.type_only_edges == 1 { "" } else { "s" };
+            parts.push(format!("{} type-only import{s} ignored, largest runtime cycle {}", c.type_only_edges, c.base));
         }
         match &c.single {
             Some(s) => parts.push(format!(
@@ -504,7 +516,8 @@ impl Cycle {
         }
         if let Some(h) = &c.hub {
             let s = if h.imports == 1 { "" } else { "s" };
-            parts.push(format!("hub cut: drop {}'s {} import{s} ({} symbols) -> {}", basename(&h.member), h.imports, h.symbols, h.largest_after));
+            let floor = if h.glob { ">= " } else { "" };
+            parts.push(format!("hub cut: drop {}'s {} import{s} ({floor}{} symbols) -> {}", short_name(&h.member), h.imports, h.symbols, h.largest_after));
         }
         if c.no_single_break && c.base >= 2 {
             parts.push("no single import breaks this cycle".to_string());
@@ -525,11 +538,12 @@ impl Cycle {
         Some(format!("cut set of {} import{s} dissolves it: {}", c.cut_set.len(), edges.join(", ")))
     }
 
-    /// `(cut: paths.rs -> plan.rs, EntityRef)` for a member on the cheapest cut edge.
-    pub fn cut_note(&self, member: &str) -> Option<String> {
+    /// `cut: paths.rs -> plan.rs, EntityRef` for a member on the cheapest cut edge; the report
+    /// joins it into the member's reason.
+    pub fn cut_clause(&self, member: &str) -> Option<String> {
         let s = self.cuts.as_ref()?.single.as_ref()?;
         (s.edge.from == member || s.edge.to == member)
-            .then(|| format!(" (cut: {} -> {}, {})", basename(&s.edge.from), basename(&s.edge.to), symbol_names(&s.edge.names, s.edge.glob)))
+            .then(|| format!("cut: {} -> {}, {}", short_name(&s.edge.from), short_name(&s.edge.to), symbol_names(&s.edge.names, s.edge.glob)))
     }
 }
 
@@ -621,7 +635,9 @@ fn extract_js(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
             // Names split by whether they survive to runtime: `import { type A, b }` is one
             // type-only import and one value import of the same file.
             let (mut value, mut types): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
-            let mut glob = false;
+            // `export * from './x'`: the star is an anonymous token with no named node around it.
+            let mut c = n.walk();
+            let mut glob = n.children(&mut c).any(|ch| !ch.is_named() && ch.kind() == "*");
             let mut stack = vec![n];
             while let Some(x) = stack.pop() {
                 match x.kind() {
@@ -1106,7 +1122,8 @@ mod tests {
     #[test]
     fn ts_type_only_imports_are_tagged_and_python_counts_names() {
         let files = vec![
-            sf("src/x.ts", "import type { A, B } from './y'\nimport { type C, D, E as F } from './z'\nimport * as ns from './w'\nexport type { H } from './v'\nimport './side'\n"),
+            sf("src/x.ts", "import type { A, B } from './y'\nimport { type C, D, E as F } from './z'\nimport * as ns from './w'\nexport type { H } from './v'\nimport './side'\nexport * from './star'\n"),
+            sf("src/star.ts", ""),
             sf("src/y.ts", "import { X } from './x'\n"),
             sf("src/z.ts", ""),
             sf("src/w.ts", ""),
@@ -1126,6 +1143,8 @@ mod tests {
         assert!(e("src/x.ts", "src/w.ts").glob && e("src/x.ts", "src/w.ts").symbols == 20);
         assert_eq!(e("src/x.ts", "src/v.ts").kind, EdgeKind::TypeOnly);
         assert_eq!((e("src/x.ts", "src/side.ts").symbols, e("src/x.ts", "src/side.ts").names.clone()), (1, vec!["./side".to_string()]));
+        let star = e("src/x.ts", "src/star.ts");
+        assert_eq!((star.kind, star.glob, star.symbols, star.names.is_empty()), (EdgeKind::Use, true, 20, true), "{star:?}");
         assert_eq!((e("pkg/p.py", "pkg/q.py").symbols, e("pkg/p.py", "pkg/q.py").names.clone()), (2, vec!["a".to_string(), "b".to_string()]));
         assert!(e("pkg/p.py", "pkg/r.py").glob);
         assert_eq!(e("pkg/p.py", "pkg/s.py").symbols, 1);
@@ -1134,8 +1153,8 @@ mod tests {
         let g = build(&files, &cfg);
         let c = g.file_cycles.iter().find(|c| c.members.contains(&"src/x.ts".to_string())).unwrap();
         let cuts = c.cuts.as_ref().unwrap();
-        assert_eq!((cuts.type_only_edges, cuts.base, cuts.single.is_none()), (1, 1, true), "{cuts:?}");
-        assert_eq!(c.headline(), "2-file cycle in src: 1 type-only imports ignored, largest runtime cycle 1; no runtime cycle");
+        assert_eq!((cuts.type_only_edges, cuts.base, cuts.single.is_none(), cuts.no_single_break), (1, 1, true, false), "{cuts:?}");
+        assert_eq!(c.headline(), "2-file cycle in src: 1 type-only import ignored, largest runtime cycle 1; no runtime cycle");
         cfg.ignore_type_only_imports = false;
         let g = build(&files, &cfg);
         let c = g.file_cycles.iter().find(|c| c.members.contains(&"src/x.ts".to_string())).unwrap();
@@ -1148,7 +1167,7 @@ mod tests {
             sf("src/lib.rs", "mod a;\nmod b;\nmod c;\n"),
             sf("src/a.rs", "mod a2;\n"),
             sf("src/a/a2.rs", "use crate::b::B;\n"),
-            sf("src/b.rs", "use crate::a::A;\nuse crate::c::C;\n"),
+            sf("src/b/mod.rs", "use crate::a::A;\nuse crate::c::C;\n"),
             sf("src/c.rs", "use crate::a::A;\nuse crate::b::B2;\n"),
         ]
     }
@@ -1174,18 +1193,49 @@ mod tests {
         let cuts = c.cuts.as_ref().unwrap();
         assert_eq!((cuts.internal_edges, cuts.mod_edges, cuts.base), (6, 1, 4));
         let s = cuts.single.as_ref().unwrap();
-        assert_eq!((s.edge.from.as_str(), s.edge.to.as_str(), s.edge.kind, s.largest_after), ("src/a/a2.rs", "src/b.rs", EdgeKind::Use, 2));
+        assert_eq!((s.edge.from.as_str(), s.edge.to.as_str(), s.edge.kind, s.largest_after), ("src/a/a2.rs", "src/b/mod.rs", EdgeKind::Use, 2));
         let h = cuts.hub.as_ref().unwrap();
-        assert_eq!((h.member.as_str(), h.imports, h.symbols, h.largest_after), ("src/b.rs", 2, 2, 1));
+        assert_eq!((h.member.as_str(), h.imports, h.symbols, h.glob, h.largest_after), ("src/b/mod.rs", 2, 2, false, 1));
         assert!(!cuts.no_single_break);
-        assert_eq!(cuts.cut_set.iter().map(|e| (e.edge.from.as_str(), e.edge.to.as_str(), e.largest_after)).collect::<Vec<_>>(), vec![("src/a/a2.rs", "src/b.rs", 2)]);
-        assert_eq!(c.headline(), "4-file cycle in src: cheapest cut src/a/a2.rs -> src/b.rs imports 1 symbol (B, line 1) -> largest remaining cycle 2; hub cut: drop b.rs's 2 imports (2 symbols) -> 1");
-        assert_eq!(c.cut_set_line().as_deref(), Some("cut set of 1 import dissolves it: src/a/a2.rs -> src/b.rs (B)"));
-        assert_eq!(c.cut_note("src/b.rs").as_deref(), Some(" (cut: a2.rs -> b.rs, B)"));
-        assert!(c.cut_note("src/a.rs").is_none());
+        assert_eq!(cuts.cut_set.iter().map(|e| (e.edge.from.as_str(), e.edge.to.as_str(), e.largest_after)).collect::<Vec<_>>(), vec![("src/a/a2.rs", "src/b/mod.rs", 2)]);
+        // `mod.rs` names nothing on its own: the short name carries its directory.
+        assert_eq!(c.headline(), "4-file cycle in src: cheapest cut src/a/a2.rs -> src/b/mod.rs imports 1 symbol (B, line 1) -> largest remaining cycle 2; hub cut: drop b/mod.rs's 2 imports (2 symbols) -> 1");
+        assert_eq!(c.cut_set_line().as_deref(), Some("cut set of 1 import dissolves it: src/a/a2.rs -> src/b/mod.rs (B)"));
+        assert_eq!(c.cut_clause("src/b/mod.rs").as_deref(), Some("cut: a2.rs -> b/mod.rs, B"));
+        assert!(c.cut_clause("src/a.rs").is_none());
+        assert_eq!((short_name("src/dom/index.ts"), short_name("pkg/__init__.py"), short_name("index.ts"), short_name("src/x.rs"), short_name("mod.rs")), ("dom/index.ts", "pkg/__init__.py", "index.ts", "x.rs", "mod.rs"));
         // Without the hub, and with the hub not beating the single, it is absent.
         let cfg = Cfg { report_hub_cut: false, ..Cfg::default() };
         assert!(build(&cycle_files(), &cfg).file_cycles[0].cuts.as_ref().unwrap().hub.is_none());
+    }
+
+    #[test]
+    fn search_knobs_bound_the_edges_tried_and_price_globs() {
+        // a2 -> b costs 2 now, so it sorts after the four 1-symbol edges; with one edge tried the
+        // search stops at the first of those, which leaves the whole cycle.
+        let mut files = cycle_files();
+        files[2] = sf("src/a/a2.rs", "use crate::b::{B, B2};\n");
+        let g = build(&files, &Cfg::default());
+        let s = g.file_cycles[0].cuts.as_ref().unwrap().single.as_ref().unwrap();
+        assert_eq!((s.edge.from.as_str(), s.edge.symbols, s.largest_after), ("src/a/a2.rs", 2, 2));
+        let g = build(&files, &Cfg { max_edges_tried: 1, ..Cfg::default() });
+        let s = g.file_cycles[0].cuts.as_ref().unwrap().single.as_ref().unwrap();
+        assert_eq!((s.edge.from.as_str(), s.edge.to.as_str(), s.largest_after), ("src/b/mod.rs", "src/a.rs", 4));
+        // A wildcard costs the knob, and a hub that drops one says `>= N symbols`.
+        files[2] = sf("src/a/a2.rs", "use crate::b::B;\n");
+        files[3] = sf("src/b/mod.rs", "use crate::a::*;\nuse crate::c::C;\n");
+        let g = build(&files, &Cfg { glob_import_symbol_cost: 3, ..Cfg::default() });
+        let e = g.edge("src/b/mod.rs", "src/a.rs").unwrap();
+        assert_eq!((e.glob, e.symbols), (true, 3));
+        let c = &g.file_cycles[0];
+        let cuts = c.cuts.as_ref().unwrap();
+        assert_eq!(cuts.single.as_ref().unwrap().edge.from.as_str(), "src/a/a2.rs");
+        let h = cuts.hub.as_ref().unwrap();
+        assert_eq!((h.member.as_str(), h.imports, h.glob, h.symbols, h.largest_after), ("src/b/mod.rs", 2, true, 4, 1));
+        assert!(c.headline().ends_with("hub cut: drop b/mod.rs's 2 imports (>= 4 symbols) -> 1"), "{}", c.headline());
+        // The share knob decides when a single cut is called no break at all.
+        let g = build(&dense_files(), &Cfg { no_single_cut_share: 1.01, ..Cfg::default() });
+        assert!(!g.file_cycles[0].cuts.as_ref().unwrap().no_single_break);
     }
 
     #[test]
@@ -1215,7 +1265,7 @@ mod tests {
         let g = build(&cycle_files(), &cfg);
         assert!(g.file_cycles[0].cuts.is_none());
         assert_eq!(g.file_cycles[0].headline(), "4-file cycle in src");
-        assert!(g.file_cycles[0].cut_set_line().is_none() && g.file_cycles[0].cut_note("src/b.rs").is_none());
+        assert!(g.file_cycles[0].cut_set_line().is_none() && g.file_cycles[0].cut_clause("src/b/mod.rs").is_none());
         let cfg = Cfg { min_cycle_size_to_cut: 5, ..Cfg::default() };
         assert!(build(&cycle_files(), &cfg).file_cycles[0].cuts.is_none());
     }

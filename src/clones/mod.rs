@@ -469,7 +469,7 @@ fn table_self_match(t: &Tokens, root_kids: &[Node], sa: usize, sb: usize, len: u
     if dominated(a0, a1) && dominated(b0, b1) {
         return false;
     }
-    find_table(&chain[..=lca], &t.kinds, cfg).is_some()
+    find_table(&chain[..=lca], u0, u1, &t.kinds, cfg).is_some()
 }
 
 // ---------- table tagging ----------
@@ -490,7 +490,7 @@ struct SideInfo {
 fn locate(t: &Tokens, root_kids: &[Node], file: &SourceFile, start: usize, len: usize, cfg: &Cfg) -> SideInfo {
     let (sb, eb) = byte_range(t, start, len);
     let Some(chain) = resolve(t, root_kids, sb, eb, cfg) else { return SideInfo::default() };
-    SideInfo { symbol: enclosing_symbol(&chain, file.content.as_bytes()), table: find_table(&chain, &t.kinds, cfg) }
+    SideInfo { symbol: enclosing_symbol(&chain, file.content.as_bytes()), table: find_table(&chain, sb, eb, &t.kinds, cfg) }
 }
 
 /// Text of the nearest node on the chain, innermost first, that names an item (`fn`, `static`,
@@ -508,11 +508,31 @@ fn enclosing_symbol(chain: &[Level], src: &[u8]) -> Option<String> {
 }
 
 /// Up the chain from its innermost node, the first one with at least `table_min_entries`
-/// consecutive same-kind named children under the range decides: a table when those entries
-/// are uniform, otherwise nothing.
-fn find_table(chain: &[Level], kinds: &Kinds, cfg: &Cfg) -> Option<TableSide> {
+/// consecutive same-kind named children spanning at least `dominant_child_share` of the range
+/// `sb..eb` decides: a table when those entries are uniform, otherwise nothing. Entries that
+/// merely sit under the range (six imports at the top of a copied file) are not the run, and
+/// the level above is asked instead.
+fn find_table(chain: &[Level], sb: usize, eb: usize, kinds: &Kinds, cfg: &Cfg) -> Option<TableSide> {
     for (i, l) in chain.iter().enumerate().rev() {
         if let Some(entries) = table_entries(chain, i, cfg.table_min_entries) {
+            // The comments, attributes and punctuation next to the entries belong to them: a
+            // run that ends on the `#[serde(default)]` of the entry after the last one covered
+            // is still the table.
+            let (mut first, mut last) = (entries[0].start_byte(), entries[entries.len() - 1].end_byte());
+            let mut next = entries[entries.len() - 1].next_sibling();
+            while let Some(n) = next.filter(|n| !n.is_named() || kinds.transparent(*n)) {
+                last = n.end_byte();
+                next = n.next_sibling();
+            }
+            let mut prev = entries[0].prev_sibling();
+            while let Some(n) = prev.filter(|n| !n.is_named() || kinds.transparent(*n)) {
+                first = n.start_byte();
+                prev = n.prev_sibling();
+            }
+            let covered = last.min(eb).saturating_sub(first.max(sb));
+            if (covered as f64) < cfg.dominant_child_share * (eb - sb) as f64 {
+                continue;
+            }
             return uniform(&entries, kinds, cfg).then(|| TableSide { container_kind: l.node.kind().to_string(), entries: entries.len() });
         }
     }
@@ -703,12 +723,26 @@ fn tokenize(file: &SourceFile, tests: &TestsCfg, kinds: Arc<Kinds>) -> Tokens {
     };
     out.inline_test_lines = regions::inline_lines(&test_regions);
     let mut stack: Vec<Node> = vec![tree.root_node()];
+    let mut last_break: Option<usize> = None;
     while let Some(n) = stack.pop() {
         let kind = n.kind();
         if kind == "comment" || kind == "line_comment" || kind == "block_comment" {
             continue;
         }
-        if !test_regions.is_empty() && regions::contains(&test_regions, n.start_byte()) {
+        if !test_regions.is_empty()
+            && let Some(i) = regions::index_of(&test_regions, n.start_byte())
+        {
+            // A skipped region must not splice the code before it onto the code after it: that
+            // run would span the region and count its lines as cloned. One sentinel per region,
+            // unique to this file, so no k-gram across the gap can match anything.
+            if last_break != Some(i) {
+                last_break = Some(i);
+                let r = &test_regions[i];
+                out.hashes.push(hash_str(&format!("\u{0}region:{}:{i}", file.path)));
+                out.lines.push(r.start_line);
+                out.starts.push(r.start_byte);
+                out.ends.push(r.end_byte);
+            }
             continue;
         }
         let class = if STRING_KINDS.contains(&kind) {
@@ -847,10 +881,107 @@ mod tests {
         // The control-flow list is a knob: with none listed the same pair is a table.
         let none = Cfg { table_control_kinds: Default::default(), ..Cfg::default() };
         assert_eq!(detect(&files, &none, &TestsCfg::default()).pairs[0].kind, CloneKind::Table);
-        // A one-sided table is logic too.
+        // A one-sided table is logic too: the array side is a table, the `vec!` token tree is not.
         let mixed = [rs("a.rs", registry("A", 8)), rs("b.rs", format!("fn f() {{\n    let v = vec![\n{}    ];\n}}\n", (0..8).map(|i| format!("        Check {{ id: \"c{i}\", about: \"check {i}\", run: check_{i}, fix: None }},\n")).collect::<String>()))];
-        let strict = Cfg { table_min_entries: 9, ..Cfg::default() };
-        assert!(detect(&mixed, &strict, &TestsCfg::default()).pairs.iter().all(|p| p.kind == CloneKind::Logic));
+        let r = detect(&mixed, &Cfg::default(), &TestsCfg::default());
+        // (The `vec!` body also matches its own second half inside the macro's token tree, a
+        // repetition the container rule cannot see through a macro; that pair is not the point.)
+        let cross: Vec<&ClonePair> = r.pairs.iter().filter(|p| p.a.file != p.b.file).collect();
+        assert_eq!(cross.len(), 1, "{:?}", r.pairs);
+        assert_eq!((cross[0].kind, cross[0].container_kind.is_none(), cross[0].entry_count), (CloneKind::Logic, true, None), "{:?}", cross[0]);
+        assert!(r.files["a.rs"].tables.is_empty() && r.files["a.rs"].table_clone_lines == 0, "{:?}", r.files["a.rs"]);
+    }
+
+    #[test]
+    fn shape_share_and_entry_size_knobs_decide_a_table() {
+        // Eight registry entries of one shape: a table until the node cap is below an entry's size.
+        let files = [rs("a.rs", registry("A", 8)), rs("b.rs", registry("B", 8))];
+        assert_eq!(detect(&files, &Cfg::default(), &TestsCfg::default()).pairs[0].kind, CloneKind::Table);
+        let small = Cfg { table_max_entry_nodes: 5, ..Cfg::default() };
+        assert_eq!(detect(&files, &small, &TestsCfg::default()).pairs[0].kind, CloneKind::Logic);
+        // Entries cycling through three shapes: the dominant one covers 3 of 8.
+        let three = |name: &str| {
+            let mut s = format!("pub static {name}: &[Check] = &[\n");
+            for i in 0..8 {
+                s.push_str(&match i % 3 {
+                    0 => format!("    Check {{ id: \"c{i}\", run: check_{i} }},\n"),
+                    1 => format!("    Check {{ id: \"c{i}\", about: \"check {i}\", run: check_{i}, fix: None }},\n"),
+                    _ => format!("    Check {{ id: \"c{i}\", run: check_{i}, fix: Some(fix_{i}) }},\n"),
+                });
+            }
+            s + "];\n"
+        };
+        let files = [rs("a.rs", three("A")), rs("b.rs", three("B"))];
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
+        assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
+        assert_eq!(r.pairs[0].kind, CloneKind::Logic);
+        let loose = Cfg { table_min_dominant_shape: 0.3, ..Cfg::default() };
+        assert_eq!(detect(&files, &loose, &TestsCfg::default()).pairs[0].kind, CloneKind::Table);
+    }
+
+    #[test]
+    fn dominant_child_share_keeps_a_bleeding_run_on_its_own_item() {
+        // The copied body's run extends through `} fn <name>(x: u8) -> u8 { x` of the next method
+        // before the bodies differ. At 0.9 the range still resolves to the method; requiring the
+        // whole range moves it up to the impl.
+        let unit = |p: &str| format!("        let {p}_a = compute({p}, 1) + other[2];\n        if {p}_a > 0 && !{p} {{ panic!(\"{{}}\", {p}_a); }}\n        for {p}_i in 0..3 {{ {p}_a += {p}_i * 2; }}\n        while {p}_a > 10 {{ {p}_a -= 1; }}\n        let {p}_b: Vec<u8> = {p}.iter().filter(|x| **x > 0).cloned().collect();\n        match {p}_b.first() {{ Some(v) => {p}_a += *v as i32, None => {p}_a = 0 }}\n        let {p}_c = {p}_a.checked_add(7).unwrap_or_default();\n        if let Some(first) = {p}.first() {{ {p}_a += *first as i32; }}\n        loop {{ if {p}_a % 3 == 0 {{ break; }} {p}_a -= 1; }}\n        let {p}_d: usize = {p}.len().saturating_sub({p}_c as usize);\n        {p}_a += {p}_d as i32 * {p}_b.len() as i32;\n        assert!({p}_a >= i32::MIN);\n");
+        let file = |owner: &str, f: &str, g: &str, op: &str| format!("impl {owner} {{\n    fn {f}(aa: &[u8]) -> i32 {{\n{}        aa_a\n    }}\n    fn {g}(x: u8) -> u8 {{ x {op} 1 }}\n}}\n", unit("aa"));
+        let files = [rs("a.rs", file("S", "alpha", "beta", "+")), rs("b.rs", file("T", "gamma", "delta", "*"))];
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
+        assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
+        assert!(r.pairs[0].a.end_line > 8 && r.pairs[0].b.end_line > 8, "{:?}", r.pairs[0]);
+        assert_eq!((r.pairs[0].a.symbol.as_deref(), r.pairs[0].b.symbol.as_deref()), (Some("alpha"), Some("gamma")));
+        let whole = Cfg { dominant_child_share: 1.0, ..Cfg::default() };
+        let r = detect(&files, &whole, &TestsCfg::default());
+        assert_eq!((r.pairs[0].a.symbol.as_deref(), r.pairs[0].b.symbol.as_deref()), (Some("S"), Some("T")), "{:?}", r.pairs);
+    }
+
+    #[test]
+    fn uniform_siblings_under_a_copied_block_do_not_make_it_a_table() {
+        // Six identical imports and a copied function with control flow: the imports are entries
+        // under the run, but they are not the run.
+        let body = |p: &str| format!("    let {p}_a = compute({p}, 1) + other[2];\n    if {p}_a > 0 && !{p} {{ panic!(\"{{}}\", {p}_a); }}\n    for {p}_i in 0..3 {{ {p}_a += {p}_i * 2; }}\n    while {p}_a > 10 {{ {p}_a -= 1; }}\n    let {p}_b: Vec<u8> = {p}.iter().filter(|x| **x > 0).cloned().collect();\n    match {p}_b.first() {{ Some(v) => {p}_a += *v as i32, None => {p}_a = 0 }}\n");
+        let uses = |p: &str| (0..6).map(|i| format!("use crate::{p}_{i}::{{Alpha{i}, Beta{i}, Gamma{i}}};\n")).collect::<String>();
+        let files = [rs("a.rs", format!("{}pub fn alpha(aa: &[u8]) -> i32 {{\n{}    aa_a\n}}\n", uses("m"), body("aa"))), rs("b.rs", format!("{}pub fn beta(bb: &[u8]) -> i32 {{\n{}    bb_a\n}}\n", uses("n"), body("bb")))];
+        let r = detect(&files, &Cfg::default(), &TestsCfg::default());
+        assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
+        let p = &r.pairs[0];
+        assert!(p.a.start_line <= 6 && p.a.end_line >= 13, "{p:?}");
+        assert_eq!((p.kind, &p.container_kind, p.entry_count), (CloneKind::Logic, &None, None));
+        let f = &r.files["a.rs"];
+        assert_eq!((f.table_clone_lines, f.tables.len()), (0, 0), "{f:?}");
+        // Same file, drop path: two copied fns with six uniform `use` lines between them are
+        // sibling copies, not a table matching its own second half, even when the first run
+        // bleeds into the `use` line that follows both.
+        let src = format!("pub fn alpha(aa: &[u8]) -> i32 {{\n{}    aa_a\n}}\n{}pub fn beta(bb: &[u8]) -> i32 {{\n{}    bb_a\n}}\nuse crate::z_0::{{Alpha0, Beta0, Gamma0}};\n", body("aa"), uses("m"), body("bb"));
+        let r = detect(&[rs("s.rs", src)], &Cfg::default(), &TestsCfg::default());
+        assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
+        let p = &r.pairs[0];
+        assert_eq!((p.a.start_line, p.a.end_line, p.b.start_line, p.b.end_line, p.kind), (1, 10, 16, 25, CloneKind::Logic), "{p:?}");
+    }
+
+    #[test]
+    fn runs_never_span_an_inline_test_region() {
+        // Four copies of one impl body, each followed by a `#[cfg(test)]` fn (the shape of
+        // ripgrep's flags/defs.rs). With the regions silently skipped, `A B` would match `C D`
+        // across the tests between them and the region's lines would count as cloned.
+        let unit = |p: &str| format!("        let {p}_a = compute({p}, 1) + other[2];\n        if {p}_a > 0 && !{p} {{ panic!(\"{{}}\", {p}_a); }}\n        for {p}_i in 0..3 {{ {p}_a += {p}_i * 2; }}\n        while {p}_a > 10 {{ {p}_a -= 1; }}\n        let {p}_b: Vec<u8> = {p}.iter().filter(|x| **x > 0).cloned().collect();\n        match {p}_b.first() {{ Some(v) => {p}_a += *v as i32, None => {p}_a = 0 }}\n");
+        let mut src = String::new();
+        for (i, p) in ["aa", "bb", "cc", "dd"].iter().enumerate() {
+            src.push_str(&format!("impl S{i} {{\n    fn run(&self, {p}: &[u8]) -> i32 {{\n{}        {p}_a\n    }}\n}}\n#[cfg(test)]\n#[test]\nfn t_{i}() {{\n    assert_eq!(S{i}.run(&[{i}, {i}]), {i} + {i});\n    assert!(S{i}.run(&[]) == 0);\n}}\n", unit(p)));
+        }
+        let f = rs("a.rs", src.clone());
+        let regions = regions::test_regions(Language::Rust.parser().parse(&src, None).unwrap().root_node(), src.as_bytes());
+        assert_eq!(regions.len(), 4);
+        let r = detect(&[f], &Cfg::default(), &TestsCfg::default());
+        assert!(!r.pairs.is_empty());
+        for p in &r.pairs {
+            for side in [&p.a, &p.b] {
+                assert!(!regions.iter().any(|t| side.start_line <= t.end_line && t.start_line <= side.end_line), "{p:?} overlaps {regions:?}");
+            }
+        }
+        let fc = &r.files["a.rs"];
+        assert!(fc.clone_ratio <= 1.0 && fc.clone_lines <= src.lines().count() - regions::inline_lines(&regions), "{fc:?}");
     }
 
     /// Twelve structurally different lines, so the body does not repeat itself.

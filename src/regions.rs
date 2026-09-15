@@ -36,15 +36,30 @@ impl TestRegion {
     }
 }
 
-/// Sum of the line spans of `regions` (expected to be merged, so no double counting).
+/// Lines covered by `regions` (sorted by start): the union of their line spans, so two
+/// regions sharing a line (`#[cfg(test)] use a; #[cfg(test)] use b;`) count it once.
 pub fn inline_lines(regions: &[TestRegion]) -> usize {
-    regions.iter().map(TestRegion::lines).sum()
+    let mut covered = 0usize;
+    let mut covered_to = 0usize;
+    for r in regions {
+        let s = r.start_line.max(covered_to + 1);
+        if r.end_line >= s {
+            covered += r.end_line - s + 1;
+            covered_to = r.end_line;
+        }
+    }
+    covered
+}
+
+/// Index of the region holding `byte`, if any, in the (sorted, merged) `regions`.
+pub fn index_of(regions: &[TestRegion], byte: usize) -> Option<usize> {
+    let i = regions.partition_point(|r| r.start_byte <= byte);
+    (i > 0 && byte < regions[i - 1].end_byte).then(|| i - 1)
 }
 
 /// True when `byte` lies inside one of the (sorted, merged) `regions`.
 pub fn contains(regions: &[TestRegion], byte: usize) -> bool {
-    let i = regions.partition_point(|r| r.start_byte <= byte);
-    i > 0 && byte < regions[i - 1].end_byte
+    index_of(regions, byte).is_some()
 }
 
 /// Test regions of a parsed Rust tree, sorted by start and merged so a region
@@ -196,6 +211,17 @@ mod odd {}
         );
         assert!(!contains(&rs, src.find("fn real").unwrap()));
         assert!(!contains(&rs, src.find("fn not_test").unwrap()));
+    }
+
+    #[test]
+    fn two_regions_on_one_line_count_it_once() {
+        let src = "#[cfg(test)] use a; #[cfg(test)] use b;\nfn f() {}\n#[cfg(test)]\nfn t() {\n}\n";
+        let rs = regions(src);
+        assert_eq!(rs.iter().map(|r| (r.start_line, r.end_line)).collect::<Vec<_>>(), vec![(1, 1), (1, 1), (4, 5)], "{rs:?}");
+        assert_eq!(inline_lines(&rs), 3);
+        assert_eq!(index_of(&rs, src.find("use b").unwrap()), Some(1));
+        assert_eq!(index_of(&rs, src.find("fn t").unwrap()), Some(2));
+        assert_eq!(index_of(&rs, src.find("fn f").unwrap()), None);
     }
 
     #[test]

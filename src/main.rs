@@ -215,10 +215,15 @@ fn main() -> Result<()> {
             println!("{} commits since {} ({} directory sweeps; lift >= {:.1} {} on {n} non-sweep commits)",
                 hist.commits_scanned, hist.window, hist.sweep_commits, cfg.history.min_lift,
                 if hist.lift_applied { "applied" } else { "not applied" });
-            println!("{} bot commits (not authors); {} fix-worded commits over the {}-file mass-edit cap not counted as fixes\n",
-                hist.bot_commits, hist.capped_fix_commits, cfg.history.max_cochange_commit_size);
+            let cap = if cfg.history.fix_mass_edit_cap {
+                format!("{} fix-worded commits over the {}-file mass-edit cap not counted as fixes", hist.capped_fix_commits, cfg.history.max_cochange_commit_size)
+            } else {
+                "fix cap off (every fix-worded commit is a fix)".to_string()
+            };
+            println!("{} bot commits (not authors); {cap}\n", hist.bot_commits);
             let mut rows: Vec<(&String, &history::FileHistory)> = hist.files.iter().collect();
-            rows.sort_by_key(|(_, h)| std::cmp::Reverse((h.commits, h.fix_commits)));
+            // Path last, so ties (the norm once the fix cap flattens fix counts) print in one order.
+            rows.sort_by(|(pa, a), (pb, b)| (b.commits, b.fix_commits).cmp(&(a.commits, a.fix_commits)).then_with(|| pa.cmp(pb)));
             println!("{:>7} {:>5} {:>7} {:>6} {:>4}  path", "commits", "fixes", "authors", "sweeps", "bots");
             for (p, h) in rows.iter().take(top) {
                 println!("{:>7} {:>5} {:>7} {:>6} {:>4}  {}", h.commits, h.fix_commits, h.authors, h.sweep_commits, h.bot_commits, p);
@@ -293,9 +298,12 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             funcs.sort_by_key(|f| std::cmp::Reverse((f.cognitive, f.lines)));
-            println!("{} functions in {} files; {} with cognitive > {}\n",
-                funcs.len(), file_metrics.len(),
-                funcs.iter().filter(|f| f.cognitive > cfg.metrics.cognitive_hard).count(),
+            // Source units, as `scan` and `files[].functions` count them; tagged units apart.
+            let in_tests = funcs.iter().filter(|f| f.in_test).count();
+            let tagged = if in_tests == 0 { String::new() } else { format!(" (+{in_tests} in inline tests)") };
+            println!("{} functions{tagged} in {} files; {} with cognitive > {}\n",
+                funcs.len() - in_tests, file_metrics.len(),
+                funcs.iter().filter(|f| !f.in_test && f.cognitive > cfg.metrics.cognitive_hard).count(),
                 cfg.metrics.cognitive_hard);
             println!("{:>4} {:>4} {:>4} {:>5} {:>3}  location", "cog", "cyc", "nest", "lines", "par");
             for f in funcs.iter().take(top) {

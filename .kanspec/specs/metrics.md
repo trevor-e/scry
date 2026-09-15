@@ -16,4 +16,4 @@ code: [src/metrics/**]
 - The AST walk is iterative (explicit stack), never recursive: a single deeply nested expression must not overflow a worker thread's stack and abort the scan.
 - The "hard to follow" threshold is `[metrics].cognitive_hard` in `scry.toml`.
 - A unit whose start lies inside an inline test region (see `regions`) stays in the functions list tagged `in_test = true` and `scry metrics` prints it with ` (in inline tests)`; file totals (`functions`, `total_cognitive`, `max_cognitive`, `max_nesting`, `complex_functions`) count only untagged units.
-- Every file reports `inline_test_lines` (lines spanned by its merged regions) and `test_regions[]` with kind and line range.
+- Every Rust file reports `test_regions[]` with kind and line range whatever `[tests].inline_modules` says, and `inline_test_lines` (the union of their line spans; 0 when the knob is off). `scry metrics` counts source units in its header, as `scan` does, and prints the tagged ones apart: `914 functions (+412 in inline tests) in 56 files; 37 with cognitive > 15`.

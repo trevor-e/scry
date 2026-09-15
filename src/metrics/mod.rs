@@ -165,14 +165,17 @@ pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetr
     let src = file.content.as_bytes();
     let mut funcs = Vec::new();
     let mut parse_errors = false;
+    // Regions are always detected on a Rust file, so `has_tests` sees an inline `mod tests`
+    // whatever the knob says; the knob gates their effects (unit tags, line counts).
     let mut test_regions = Vec::new();
     if let Some(tree) = parser.parse(src, None) {
         let root = tree.root_node();
         parse_errors = root.has_error();
-        if tests.inline_modules && file.lang == Language::Rust {
+        if file.lang == Language::Rust {
             test_regions = regions::test_regions(root, src);
         }
-        collect_units(root, file.lang, src, &file.path, &test_regions, &mut funcs);
+        let tagged = if tests.inline_modules { test_regions.as_slice() } else { &[] };
+        collect_units(root, file.lang, src, &file.path, tagged, &mut funcs);
     }
     // File totals describe the production code only; tagged units stay in the list.
     let source = || funcs.iter().filter(|f| !f.in_test);
@@ -184,7 +187,7 @@ pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetr
         max_nesting: source().map(|f| f.max_nesting).max().unwrap_or(0),
         complex_functions: source().filter(|f| f.cognitive > cfg.cognitive_hard).count(),
         parse_errors,
-        inline_test_lines: regions::inline_lines(&test_regions),
+        inline_test_lines: if tests.inline_modules { regions::inline_lines(&test_regions) } else { 0 },
         test_regions,
     };
     (fm, funcs)
@@ -545,12 +548,20 @@ mod tests {
         assert_eq!((fm.functions, fm.total_cognitive, fm.max_cognitive, fm.complex_functions), (1, 2, 2, 0), "{fm:?}");
         assert_eq!(fm.inline_test_lines, 5);
         assert_eq!(fm.test_regions.len(), 1);
-        // The knob turns the whole thing off.
+        // The knob turns the effects off: every unit is source and every line counts, but the
+        // region is still reported, so the report's `has_tests` does not change with the knob.
         let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
         let (fm, fs) = analyze_file(&f, &Cfg { cognitive_hard: 5 }, &off);
         assert!(fs.iter().all(|f| !f.in_test));
         assert_eq!((fm.functions, fm.complex_functions, fm.inline_test_lines), (2, 1, 0));
-        assert!(fm.test_regions.is_empty());
+        assert_eq!(fm.test_regions.len(), 1);
+    }
+
+    #[test]
+    fn rust_regions_sharing_a_line_are_counted_once() {
+        let src = "#[cfg(test)] use a; #[cfg(test)] use b;\nfn f() {}\n";
+        let (fm, _) = analyze_file(&file("t.rs", Language::Rust, src), &Cfg::default(), &TestsCfg::default());
+        assert_eq!((fm.test_regions.len(), fm.inline_test_lines), (2, 1), "{fm:?}");
     }
 
     #[test]

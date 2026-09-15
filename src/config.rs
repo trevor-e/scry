@@ -152,6 +152,8 @@ pub struct History {
     /// A commit is a directory sweep when, for some directory holding at least
     /// `sweep_min_dir_files` tracked Source files, it touches at least this share of them…
     pub sweep_fraction: f64,
+    /// …in a directory holding at least this many tracked Source files (smaller directories can
+    /// never qualify a sweep)…
     pub sweep_min_dir_files: usize,
     /// …and at least this many of them (a 2-file fix in a 4-file directory is not a sweep).
     /// Sweeps still count as churn (commits, fix commits, authors) but never toward pair counts.
@@ -274,15 +276,18 @@ pub struct Clones {
     pub max_files: usize,
     /// Hard cap on positions per fingerprint.
     pub max_locations: usize,
-    /// Drop a same-file run whose two ranges resolve to one smallest covering node (or nested
-    /// ones): the first half of a uniform `match` or array matching its second half.
+    /// Drop a same-file run whose two ranges sit in one container (or nested ones) whose
+    /// entries across both ranges are a uniform table: the first half of a `match`, array or
+    /// map matching its second half. Sibling items that merely copy each other are kept.
     pub drop_same_container_self_match: bool,
     /// A run's range resolves to the smallest node spanning it, then down into a child spanning
     /// at least this share of its bytes: a run that spills a few tokens past its own item still
     /// resolves to that item, while the two halves of one container resolve to the container.
+    /// The same share is what a table's entries must span of the run they are tagged on.
     pub dominant_child_share: f64,
     /// A run side is a table when its container has at least this many consecutive same-kind
-    /// named children under the run…
+    /// named children spanning at least `dominant_child_share` of the run (six imports at the
+    /// top of a copied file are under the run, not the run)…
     pub table_min_entries: usize,
     /// …the dominant entry shape (names, paths and literals collapsed) covers at least this
     /// share of them…
@@ -332,8 +337,10 @@ impl Default for Clones {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Tests {
-    /// Detect inline test regions: metrics units inside one are tagged `in_test` and left out of
-    /// file totals, and the clone tokenizer skips their bytes. Off means every line is source.
+    /// Apply inline test regions: metrics units inside one are tagged `in_test` and left out of
+    /// file totals, `inline_test_lines` come off the size signal, and the clone tokenizer skips
+    /// their bytes. Off means every line is source; regions are still detected and listed, so
+    /// `has_tests` sees an inline `mod tests` either way.
     pub inline_modules: bool,
     /// A hotspot whose inline test lines / file lines is at or above this gets
     /// `N in #[cfg(test)] mod at a-b` after its line count.
