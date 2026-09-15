@@ -929,18 +929,12 @@ pub struct Declared {
     pub manifest_globs: Vec<String>,
     /// Check `[dev-dependencies]` too (off: they count in the total, never as orphans).
     pub check_dev_dependencies: bool,
-    /// Python extras (reserved).
-    pub check_extras: bool,
     /// Report a `[dependencies]` entry only test code references, as `move it to
     /// [dev-dependencies]`.
     pub check_placement: bool,
     /// Globs of dependency names that are consumed without an import (linked, registered,
     /// enabled by a feature); never orphans.
     pub side_effect_deps: Vec<String>,
-    /// Distribution -> import name (reserved for the Python leg).
-    pub import_aliases: BTreeMap<String, String>,
-    /// Files whose text consumes a package name (reserved for the JavaScript leg).
-    pub tool_config_globs: Vec<String>,
     /// Docs searched for an orphan's name (`; mentioned in DESIGN.md:632`).
     pub doc_globs: Vec<String>,
     /// An orphan or dead feature whose manifest line is younger than this many commits is not
@@ -1013,11 +1007,8 @@ impl Default for Declared {
             languages: strings(&["rust"]),
             manifest_globs: strings(&["**/Cargo.toml", "**/package.json", "**/pyproject.toml"]),
             check_dev_dependencies: false,
-            check_extras: false,
             check_placement: false,
             side_effect_deps: strings(&["*-sys", "tikv-jemallocator", "openssl", "getrandom", "@vitest/coverage-*", "tslib", "core-js", "react"]),
-            import_aliases: [("pillow", "PIL"), ("beautifulsoup4", "bs4"), ("pyyaml", "yaml")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
-            tool_config_globs: strings(&["*.config.*", "**/tsconfig*.json", ".eslintrc*", ".github/workflows/*", "Dockerfile*", "Procfile", "Makefile", "justfile"]),
             doc_globs: strings(&["*.md", "docs/**"]),
             min_age_commits: 5,
             skip_lint_silenced_crates: false,
