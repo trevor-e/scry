@@ -240,21 +240,25 @@ fn collect<'t>(unit: Node<'t>, lang: Language, src: &[u8], cfg: &Cfg) -> Vec<Bin
     out
 }
 
-/// The `as` targets of a Python `with` statement.
-fn with_aliases(with: Node) -> Vec<Node> {
+/// The `with_item`s of a Python `with` statement.
+fn with_items(with: Node) -> Vec<Node> {
     let mut out = Vec::new();
     let mut c = with.walk();
     for clause in with.named_children(&mut c).filter(|n| n.kind() == "with_clause").collect::<Vec<_>>() {
         let mut cc = clause.walk();
-        for item in clause.named_children(&mut cc).filter(|n| n.kind() == "with_item").collect::<Vec<_>>() {
-            if let Some(v) = item.child_by_field_name("value").filter(|v| v.kind() == "as_pattern")
-                && let Some(alias) = v.child_by_field_name("alias")
-            {
-                out.push(alias);
-            }
-        }
+        out.extend(clause.named_children(&mut cc).filter(|n| n.kind() == "with_item"));
     }
     out
+}
+
+/// The `as` targets of a Python `with` statement.
+fn with_aliases(with: Node) -> Vec<Node> {
+    with_items(with).into_iter().filter_map(|item| item.child_by_field_name("value").filter(|v| v.kind() == "as_pattern")?.child_by_field_name("alias")).collect()
+}
+
+/// The context expressions of a Python `with` statement (`open(p)` in `with open(p) as p`).
+fn with_values(with: Node) -> Vec<Node> {
+    with_items(with).into_iter().filter_map(|item| { let v = item.child_by_field_name("value")?; if v.kind() == "as_pattern" { v.named_child(0) } else { Some(v) } }).collect()
 }
 
 /// The names a binding pattern introduces: the bare identifier, or with
@@ -320,13 +324,17 @@ fn pattern_names(pat: Node, lang: Language, src: &[u8], cfg: &Cfg) -> Vec<String
 }
 
 /// Does `pat` (a parameter list, match pattern, `let` pattern, comprehension target…) bind
-/// `name`? Any identifier of that text inside it counts; a constructor or field named by one
-/// letter is not worth a second walk.
+/// `name`? Any identifier of that text inside it counts, except under an attribute, member or
+/// subscript target (`self.p = …`, `d[p] = …` bind nothing); a constructor or field named by
+/// one letter is not worth a second walk.
 fn binds(pat: Node, name: &str, src: &[u8]) -> bool {
     let mut stack = vec![pat];
     while let Some(n) = stack.pop() {
         if matches!(n.kind(), "identifier" | "shorthand_property_identifier_pattern" | "shorthand_field_identifier") && text(n, src) == name {
             return true;
+        }
+        if matches!(n.kind(), "attribute" | "subscript" | "member_expression" | "subscript_expression") {
+            continue;
         }
         let mut c = n.walk();
         for ch in n.children(&mut c) {
@@ -354,38 +362,48 @@ fn field_binds(node: Node, field: &str, name: &str, src: &[u8]) -> bool {
     node.child_by_field_name(field).is_some_and(|f| binds(f, name, src))
 }
 
-/// `if let` / `while let` (and let chains): does some `let_condition` in the condition bind `name`?
-fn condition_binds(node: Node, name: &str, src: &[u8]) -> bool {
-    let Some(cond) = node.child_by_field_name("condition") else { return false };
-    let mut stack = vec![cond];
-    while let Some(n) = stack.pop() {
-        match n.kind() {
-            "let_condition" => {
-                if field_binds(n, "pattern", name, src) {
-                    return true;
-                }
+/// `if let` / `while let` (and let chains): when a `let_condition` in the condition binds
+/// `name`, the parts that still read the outer name: the values of the let conditions and the
+/// plain conditions up to the binding one (`if let Some(t) = t.next()` reads the outer `t` on
+/// its right), and the `else` branch. `None` when nothing in the condition binds it.
+fn outer_reads_of_condition<'t>(node: Node<'t>, name: &str, src: &[u8]) -> Option<Vec<Node<'t>>> {
+    let cond = node.child_by_field_name("condition")?;
+    let mut c = cond.walk();
+    let parts: Vec<Node> = if cond.kind() == "let_chain" { cond.named_children(&mut c).collect() } else { vec![cond] };
+    let mut out = Vec::new();
+    let mut bound = false;
+    for p in parts {
+        if p.kind() == "let_condition" {
+            out.extend(p.child_by_field_name("value"));
+            if field_binds(p, "pattern", name, src) {
+                bound = true;
+                break;
             }
-            "let_chain" | "parenthesized_expression" | "binary_expression" => {
-                let mut c = n.walk();
-                for ch in n.children(&mut c) {
-                    stack.push(ch);
-                }
-            }
-            _ => {}
+        } else {
+            out.push(p);
         }
     }
-    false
+    if !bound {
+        return None;
+    }
+    out.extend(node.child_by_field_name("alternative"));
+    Some(out)
 }
 
 fn step<'t>(node: Node<'t>, parent_id: usize, lang: Language, name: &str, src: &[u8]) -> Step<'t> {
     let kind = node.kind();
     let skip_if = |b: bool| if b { Step::Skip } else { Step::Descend };
+    // A loop rebinding the name: its iterable still reads the outer one; the body is the new name's.
+    let only_iter = |field: &str| if field_binds(node, field, name, src) { Step::Only(node.child_by_field_name(if field == "left" { "right" } else { "value" }).into_iter().collect()) } else { Step::Descend };
     match lang {
         Language::Rust => match kind {
             "closure_expression" => skip_if(field_binds(node, "parameters", name, src)),
             "match_arm" => skip_if(field_binds(node, "pattern", name, src)),
-            "if_expression" | "while_expression" => skip_if(condition_binds(node, name, src)),
-            "for_expression" => skip_if(field_binds(node, "pattern", name, src)),
+            "if_expression" | "while_expression" => match outer_reads_of_condition(node, name, src) {
+                Some(reads) => Step::Only(reads),
+                None => Step::Descend,
+            },
+            "for_expression" => only_iter("pattern"),
             "let_declaration" => {
                 if field_binds(node, "pattern", name, src) {
                     Step::Rebind(node.child_by_field_name("value").into_iter().collect(), parent_id)
@@ -399,13 +417,18 @@ fn step<'t>(node: Node<'t>, parent_id: usize, lang: Language, name: &str, src: &
             _ => Step::Descend,
         },
         Language::Python => match kind {
+            // A nested `def p` / `class p` rebinds the name like an assignment.
+            "function_definition" | "class_definition" if field_binds(node, "name", name, src) => Step::Rebind(Vec::new(), parent_id),
             "lambda" | "function_definition" => skip_if(field_binds(node, "parameters", name, src)),
             "list_comprehension" | "set_comprehension" | "dictionary_comprehension" | "generator_expression" => {
                 let mut c = node.walk();
                 skip_if(node.named_children(&mut c).any(|ch| ch.kind() == "for_in_clause" && field_binds(ch, "left", name, src)))
             }
-            "for_statement" => skip_if(field_binds(node, "left", name, src)),
-            "with_statement" => skip_if(with_aliases(node).into_iter().any(|a| binds(a, name, src))),
+            "for_statement" => only_iter("left"),
+            // `with open(p) as p`: the context expressions read the outer name; the body is the new one's.
+            "with_statement" => {
+                if with_aliases(node).into_iter().any(|a| binds(a, name, src)) { Step::Only(with_values(node)) } else { Step::Descend }
+            }
             "except_clause" => {
                 let mut c = node.walk();
                 skip_if(node.named_children(&mut c).any(|ch| ch.kind() == "as_pattern" && field_binds(ch, "alias", name, src)))
@@ -426,10 +449,11 @@ fn step<'t>(node: Node<'t>, parent_id: usize, lang: Language, name: &str, src: &
             _ => Step::Descend,
         },
         _ => match kind {
+            // A bare arrow parameter (`t => t.id`) is the `parameter` field, not `parameters`.
             "arrow_function" | "function_expression" | "function_declaration" | "generator_function" | "generator_function_declaration"
-            | "method_definition" => skip_if(field_binds(node, "parameters", name, src)),
+            | "method_definition" => skip_if(field_binds(node, "parameters", name, src) || field_binds(node, "parameter", name, src)),
             "catch_clause" => skip_if(field_binds(node, "parameter", name, src)),
-            "for_in_statement" => skip_if(field_binds(node, "left", name, src)),
+            "for_in_statement" => only_iter("left"),
             "lexical_declaration" | "variable_declaration" => {
                 let mut c = node.walk();
                 let decls: Vec<Node> = node.named_children(&mut c).filter(|d| d.kind() == "variable_declarator").collect();
@@ -569,6 +593,21 @@ mod tests {
     }
 
     #[test]
+    fn rust_if_let_while_let_and_for_rebinding_the_name_still_read_it_in_the_value_and_else() {
+        let cfg = Cfg::default();
+        let src = format!(
+            "fn f(s: &S) {{\n    let a = 1;\n    let b = 2;\n    let mut t = s.first();\n{}    if let Some(t) = t.next() {{ t.go(); }} else {{ t.reset(); }}\n{}    while let Some(t) = t.next() && t.ok() {{ t.go(); }}\n{}    for t in t.children() {{ t.go(); }}\n    t.done();\n}}\n",
+            pad(40), pad(20), pad(20)
+        );
+        let f = &units("a.rs", Language::Rust, &src, &cfg)[0];
+        let t = short(f, "t");
+        // Line 45: the `if let` value and the `else` branch (2 uses; the consequence is the new
+        // t's); line 66: the `while let` value (the chain's `t.ok()` is the new t's); line 87: the
+        // `for` iterable; line 88.
+        assert_eq!((t.decl_line, t.uses, t.last_line, t.max_gap, t.gap_from, t.gap_to), (4, 5, 88, 41, 4, 45), "{t:?}");
+    }
+
+    #[test]
     fn rust_accumulator_used_every_few_lines_scores_a_small_gap() {
         let cfg = Cfg::default();
         let body: String = (0..40).map(|i| format!("    h.push_str(\"{i}\");\n{}", pad(4))).collect();
@@ -647,10 +686,25 @@ mod tests {
     }
 
     #[test]
+    fn python_attribute_and_subscript_targets_and_loop_iterables_read_the_name_and_a_nested_def_rebinds() {
+        let cfg = Cfg::default();
+        let src = format!(
+            "def f(s, d):\n    a = 1\n    b = 2\n    p = s.first()\n{}    self.p = p\n    d[p] = 1\n    for p in p.items():\n        p.go()\n    with open(p) as p:\n        p.read()\n{}    p.done()\n    def p():\n        pass\n    p.after()\n",
+            pad(40), pad(20)
+        );
+        let f = &units("a.py", Language::Python, &src, &cfg)[0];
+        let p = short(f, "p");
+        // `self.p = p` and `d[p] = 1` (45, 46) bind nothing and read p; the `for` iterable (47) and
+        // the `with` value (49) read the outer p while their bodies are the new one's; `def p`
+        // (72) rebinds it, so `p.after()` is not a use.
+        assert_eq!((p.decl_line, p.uses, p.last_line, p.max_gap), (4, 5, 71, 41), "{p:?}");
+    }
+
+    #[test]
     fn ts_declarators_for_loops_and_arrow_params() {
         let cfg = Cfg::default();
         let src = format!(
-            "function f(s: S) {{\n  let h = 0;\n  const a = 1, b = 2;\n  for (let p = 0; p < 3; p++) {{\n{}    h += p;\n  }}\n  for (const t of s.items) {{ t.go(); }}\n  s.items.map((h) => h + 1);\n  try {{ }} catch (h) {{ h.x; }}\n  const o = {{ h, p: h }};\n  let h = 3;\n  return h;\n}}\n",
+            "function f(s: S) {{\n  let h = 0;\n  const a = 1, b = 2;\n  for (let p = 0; p < 3; p++) {{\n{}    h += p;\n  }}\n  for (const t of s.items) {{ t.go(); }}\n  s.items.map((h) => h + 1).filter(h => h.ok);\n  try {{ }} catch (h) {{ h.x; }}\n  const o = {{ h, p: h }};\n  let h = 3;\n  return h;\n}}\n",
             pad(35)
         );
         let f = &units("a.ts", Language::TypeScript, &src, &cfg)[0];
@@ -659,7 +713,8 @@ mod tests {
         assert_eq!((p.decl_line, p.uses, p.max_gap, p.block_lines), (4, 3, 36, 38), "{p:?}");
         let h = short(f, "h");
         // Uses: the loop body (40), the shorthand and the value in the object literal (45); the
-        // arrow parameter and the catch parameter rebind; `let h = 3` ends the range.
+        // arrow parameters (parenthesised and bare) and the catch parameter rebind; `let h = 3`
+        // ends the range.
         assert_eq!((h.decl_line, h.uses, h.last_line, h.max_gap), (2, 3, 45, 38), "{h:?}");
         assert_eq!(f.short_bindings.iter().filter(|s| s.name == "h").map(|s| s.decl_line).collect::<Vec<_>>(), vec![2, 46]);
     }

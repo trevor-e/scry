@@ -483,7 +483,6 @@ fn unmentioned_reason(unmentioned: &[Symbol], public: usize, listed: usize) -> S
     format!("{} of {public} public symbols are named by no test: {}{more}", unmentioned.len(), named.join(", "))
 }
 
-/// The short-name attribute lines of a file's production units (see `naming::unit_reason`):
 /// The brain-method label of a unit whose lines, cognitive and locals all reach the `[metrics]`
 /// floors: ` — brain method: 258 lines, cognitive 42, 34 local variables; longest-lived p (lines
 /// 690-884), o (lines 700-850), h (lines 710-800)` (see `metrics`).
@@ -496,6 +495,7 @@ fn brain_label(w: &FunctionMetrics) -> String {
     r
 }
 
+/// The short-name attribute lines of a file's production units (see `naming::unit_reason`):
 /// one per unit with a far-lived one-letter binding that is over `cognitive_hard`, among the
 /// file's `worst` units, or at least `min_unit_lines` long; widest gap first.
 fn short_name_lines(units: &[&FunctionMetrics], worst: &[&FunctionMetrics], cognitive_hard: u32, naming: &NamingCfg) -> Vec<String> {

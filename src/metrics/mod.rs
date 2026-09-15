@@ -202,12 +202,13 @@ fn rust_binding<'a>(node: Node<'_>, src: &'a [u8]) -> Option<&'a str> {
     }
 }
 
-/// Python: the plain assignment of a statement (`x = …`, `x: T = …`, `a, b = …`; never
-/// `self.x` / `xs[i]`, never `+=`), `for` targets, `with … as x`, walrus.
+/// Python: the plain assignment of a statement (`x = …`, `x: T = …`, `a, b = …`, every name
+/// of a chained `a = b = …`; never `self.x` / `xs[i]`, never `+=`), `for` targets, `with … as
+/// x`, walrus.
 fn python_binding<'a>(node: Node<'_>, src: &'a [u8]) -> Option<&'a str> {
     let target = |n: Node<'_>| matches!(n.kind(), "identifier" | "pattern_list" | "tuple_pattern" | "list_pattern");
     match node.kind() {
-        "assignment" if node.parent().is_some_and(|p| p.kind() == "expression_statement") => {
+        "assignment" if statement_assignment(node) => {
             node.child_by_field_name("left").filter(|l| target(*l)).map(|l| text(l, src))
         }
         "for_statement" => node.child_by_field_name("left").filter(|l| target(*l)).map(|l| text(l, src)),
@@ -220,6 +221,20 @@ fn python_binding<'a>(node: Node<'_>, src: &'a [u8]) -> Option<&'a str> {
         "named_expression" => node.child_by_field_name("name").map(|n| text(n, src)),
         _ => None,
     }
+}
+
+/// A Python `assignment` that is a statement: the child of an `expression_statement`, or the
+/// right-hand side of one that is (`a = b = 0` is two bindings).
+fn statement_assignment(node: Node) -> bool {
+    let mut n = node;
+    while let Some(p) = n.parent() {
+        match p.kind() {
+            "expression_statement" => return true,
+            "assignment" if p.child_by_field_name("right").is_some_and(|r| r.id() == n.id()) => n = p,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// JS/TS: every `variable_declarator` (`let` / `const` / `var`, a `for (let i…)` initializer
@@ -405,27 +420,34 @@ fn collect_units<'t>(root: Node<'t>, file: &SourceFile, test_regions: &[TestRegi
 const LONGEST_LOCALS_NAMED: usize = 3;
 
 /// The locals of a brain method with the longest live span: for a name the `naming` pass
-/// measured, its declaration-to-last-use span; for the rest, the first to the last mention of
-/// the name inside the unit (nested named units left out). A pattern binding has no single
-/// name to follow and is never listed.
+/// measured, its declaration-to-last-use span; for the rest, the first binding of the name
+/// inside the unit to its last mention (nested named units left out; a mention before the
+/// binding, the parameter that `let path = path.trim()` shadows, is not the local's). A
+/// pattern binding has no single name to follow and is never listed.
 fn longest_locals(unit: Node, prof: &Profile, lang: Language, src: &[u8], locals: &HashSet<&str>, short: &[crate::naming::ShortBinding]) -> Vec<LocalSpan> {
     let mut span: HashMap<&str, (usize, usize)> = HashMap::new();
+    // Document order, so a binding is met before the mentions that follow it.
     let mut stack: Vec<Node> = vec![unit];
     while let Some(node) = stack.pop() {
         if node.id() != unit.id() && is_nested_unit(node, lang) {
             continue;
         }
-        if prof.ident.contains(&node.kind()) {
-            let t = text(node, src);
-            if locals.contains(t) {
-                let line = node.start_position().row + 1;
-                let e = span.entry(t).or_insert((line, line));
-                e.0 = e.0.min(line);
-                e.1 = e.1.max(line);
-            }
+        let line = node.start_position().row + 1;
+        // A pattern (`(p, q)`, `a, b`) is a local with no single name to follow: never listed.
+        if let Some(name) = (prof.binding)(node, src)
+            && locals.contains(name)
+            && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            span.entry(name).or_insert((line, line));
+        }
+        if prof.ident.contains(&node.kind())
+            && let Some(e) = span.get_mut(text(node, src))
+        {
+            e.1 = e.1.max(line);
         }
         let mut c = node.walk();
-        for child in node.children(&mut c) {
+        let children: Vec<Node> = node.children(&mut c).collect();
+        for child in children.into_iter().rev() {
             stack.push(child);
         }
     }
@@ -864,12 +886,13 @@ def f(a):
     l = lambda y: (z := y)
     def g(): w = 1
     e = a = 3
+    u = v = w2 = 0
 ";
         let (_, fs) = analyze_file(&file("l.py", Language::Python, src), &Cfg::default(), &TestsCfg::default(), &NamingCfg::default(), &FallbackCfg::default());
         let by: Vec<(&str, usize)> = fs.iter().map(|f| (f.name.as_str(), f.locals)).collect();
-        // x, `a, b`, `i, j`, fh, n, l, z (lambda body folds in), e; `self.y`, `xs[0]`, `+=`, the
-        // chained inner `a = 3` and the nested def's w do not count.
-        assert_eq!(by, vec![("f", 8), ("g", 1)], "{by:?}");
+        // x, `a, b`, `i, j`, fh, n, l, z (lambda body folds in), and every name of the chained
+        // assignments: e, a, u, v, w2; `self.y`, `xs[0]`, `+=` and the nested def's w do not count.
+        assert_eq!(by, vec![("f", 12), ("g", 1)], "{by:?}");
     }
 
     #[test]
@@ -930,6 +953,24 @@ fn f(a: u8) -> u8 {
             let (_, fs) = analyze_file(&f, &cfg, &TestsCfg::default(), &NamingCfg::default(), &FallbackCfg::default());
             assert!(!fs[0].brain && fs[0].longest_locals.is_empty(), "{cfg:?}");
         }
+        // A local shadowing a parameter spans from its own binding, not from the parameter's
+        // mention on the signature line; the shorter `count` then outlives it.
+        let src = "\
+fn g(path: &str, n: u8) -> u8 {
+    let count = n;
+    let other = n;
+    let third = n;
+    if n > 1 { }
+    if n > 2 { }
+    let path = path.trim();
+    let _ = path;
+    let _ = count;
+    let _ = 0;
+}
+";
+        let (_, fs) = analyze_file(&file("s.rs", Language::Rust, src), &brain(10, 2, 4), &TestsCfg::default(), &NamingCfg::default(), &FallbackCfg::default());
+        let spans: Vec<(&str, usize, usize)> = fs[0].longest_locals.iter().map(|l| (l.name.as_str(), l.first_line, l.last_line)).collect();
+        assert_eq!(spans, vec![("count", 2, 9), ("path", 7, 8), ("other", 3, 3)], "{spans:?}");
         assert_eq!(Cfg::default(), Cfg { cognitive_hard: 15, brain_min_lines: 100, brain_min_cognitive: 15, brain_min_locals: 15 });
     }
 

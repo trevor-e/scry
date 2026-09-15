@@ -5,8 +5,10 @@
 //! line turns into author "" at timestamp 0 without a word: the failure is swallowed at the
 //! one site that could have reported it. The measure counts, per unit, the fallback sites
 //! whose receiver chain holds a syntactically fallible transform (`parse`, `split`, `next`,
-//! `get`…) and whose default is a literal or an empty constructor; an `unwrap_or` on a struct
-//! field has no call in its chain and never counts. Two such sites in one unit make a reason on
+//! `strip_prefix`…) and whose default is a literal or an empty constructor; an `unwrap_or` on
+//! a struct field has no call in its chain and never counts, nor does a map lookup with a
+//! default (`m.get(k).copied().unwrap_or(0)` defaults an absent key, the benign case) unless
+//! the map itself came out of a transform below. Two such sites in one unit make a reason on
 //! the hotspot; nothing here enters the score.
 
 use crate::config::Fallback as Cfg;
@@ -46,11 +48,14 @@ pub struct Site {
 }
 
 /// What a grammar-specific check found at a node: the default (literal text when it is one),
-/// the default's raw text, and where the receiver chain starts.
+/// the default's raw text, where the receiver chain starts, and the node whose line the site
+/// reports (the `unwrap_or` / `??` / `or` itself, not the head of a chain rustfmt broke over
+/// several lines).
 struct Found<'t> {
     literal: Option<String>,
     raw: String,
     chain: Node<'t>,
+    at: Node<'t>,
 }
 
 fn text<'a>(node: Node, src: &'a [u8]) -> &'a str {
@@ -116,7 +121,9 @@ fn transform_in_chain(start: Node, lang: Language, src: &[u8], cfg: &Cfg) -> Opt
         cur = match (lang, kind) {
             (Language::Rust, "field_expression") => n.child_by_field_name("value"),
             (Language::Rust, "generic_function") => n.child_by_field_name("function"),
-            (Language::Rust, "try_expression" | "parenthesized_expression" | "await_expression" | "reference_expression" | "unary_expression") => n.named_child(0),
+            // `&mut x` puts a `mutable_specifier` before the value.
+            (Language::Rust, "reference_expression") => n.child_by_field_name("value"),
+            (Language::Rust, "try_expression" | "parenthesized_expression" | "await_expression" | "unary_expression") => n.named_child(0),
             (Language::Python, "attribute") => n.child_by_field_name("object"),
             (Language::Python, "subscript") => n.child_by_field_name("value"),
             (Language::Python, "parenthesized_expression" | "await") => n.named_child(0),
@@ -139,7 +146,8 @@ fn rust_literal(arg: Node, src: &[u8], cfg: &Cfg) -> Option<String> {
             "integer_literal" | "float_literal" | "string_literal" | "raw_string_literal" | "char_literal" | "boolean_literal" | "unit_expression" => {
                 return Some(text(n, src).to_string());
             }
-            "reference_expression" | "parenthesized_expression" => n = n.named_child(0)?,
+            "reference_expression" => n = n.child_by_field_name("value")?,
+            "parenthesized_expression" => n = n.named_child(0)?,
             "unary_expression" => {
                 let inner = n.named_child(0)?;
                 return matches!(inner.kind(), "integer_literal" | "float_literal").then(|| text(n, src).to_string());
@@ -217,7 +225,8 @@ fn rust_site<'t>(node: Node<'t>, src: &[u8], cfg: &Cfg) -> Option<Found<'t>> {
             if f.kind() != "field_expression" {
                 return None;
             }
-            let method = text(f.child_by_field_name("field")?, src);
+            let field = f.child_by_field_name("field")?;
+            let method = text(field, src);
             if !cfg.methods_rust.iter().any(|m| m == method) {
                 return None;
             }
@@ -228,12 +237,12 @@ fn rust_site<'t>(node: Node<'t>, src: &[u8], cfg: &Cfg) -> Option<Found<'t>> {
                 // `unwrap_or_default` / `or_default`: the default is the type's.
                 (_, None) => (Some("Default::default()".to_string()), "Default::default()".to_string()),
             };
-            Some(Found { literal, raw, chain })
+            Some(Found { literal, raw, chain, at: field })
         }
         "try_expression" => {
             let inner = node.named_child(0).filter(|i| i.kind() == "call_expression")?;
             let f = inner.child_by_field_name("function").filter(|f| f.kind() == "field_expression")?;
-            (callee_name(f, src) == Some("ok")).then(|| Found { literal: None, raw: "?".to_string(), chain: f.child_by_field_name("value").unwrap_or(f) })
+            (callee_name(f, src) == Some("ok")).then(|| Found { literal: None, raw: "?".to_string(), chain: f.child_by_field_name("value").unwrap_or(f), at: f.child_by_field_name("field").unwrap_or(node) })
         }
         _ => None,
     }
@@ -251,21 +260,21 @@ fn python_site<'t>(node: Node<'t>, bare: &str, src: &[u8], cfg: &Cfg) -> Option<
             if !cfg.python_default_getters.iter().any(|g| g == name) {
                 return None;
             }
-            let (chain, default) = match f.kind() {
-                "attribute" if args.len() == 2 => (f.child_by_field_name("object")?, args[1]),
-                "identifier" if args.len() == 3 => (args[0], args[2]),
+            let (chain, default, at) = match f.kind() {
+                "attribute" if args.len() == 2 => (f.child_by_field_name("object")?, args[1], f.child_by_field_name("attribute").unwrap_or(f)),
+                "identifier" if args.len() == 3 => (args[0], args[2], f),
                 _ => return None,
             };
             let literal = python_literal(default, src)?;
-            Some(Found { raw: literal.clone(), literal: Some(literal), chain })
+            Some(Found { raw: literal.clone(), literal: Some(literal), chain, at })
         }
         "boolean_operator" => {
-            let op = node.child_by_field_name("operator").map(|o| text(o, src));
-            if op != Some("or") || cfg.python_skip_or_in.iter().any(|u| u == bare) {
+            let op = node.child_by_field_name("operator")?;
+            if text(op, src) != "or" || cfg.python_skip_or_in.iter().any(|u| u == bare) {
                 return None;
             }
             let literal = python_literal(node.child_by_field_name("right")?, src)?;
-            Some(Found { raw: literal.clone(), literal: Some(literal), chain: node.child_by_field_name("left")? })
+            Some(Found { raw: literal.clone(), literal: Some(literal), chain: node.child_by_field_name("left")?, at: op })
         }
         _ => None,
     }
@@ -276,19 +285,34 @@ fn python_site<'t>(node: Node<'t>, bare: &str, src: &[u8], cfg: &Cfg) -> Option<
 fn ts_site<'t>(node: Node<'t>, src: &[u8], cfg: &Cfg) -> Option<Found<'t>> {
     match node.kind() {
         "binary_expression" => {
-            let op = text(node.child_by_field_name("operator")?, src);
+            let op_node = node.child_by_field_name("operator")?;
+            let op = text(op_node, src);
             if !(cfg.ts_operators.iter().any(|o| o == op) || (cfg.ts_count_or && op == "||")) {
                 return None;
             }
             let literal = ts_literal(node.child_by_field_name("right")?, src)?;
-            Some(Found { raw: literal.clone(), literal: Some(literal), chain: node.child_by_field_name("left")? })
+            Some(Found { raw: literal.clone(), literal: Some(literal), chain: node.child_by_field_name("left")?, at: op_node })
         }
-        "member_expression" | "call_expression" | "subscript_expression" if cfg.count_optional_chain && node.child_by_field_name("optional_chain").is_some() => {
+        "member_expression" | "call_expression" | "subscript_expression" if cfg.count_optional_chain => {
+            let oc = node.child_by_field_name("optional_chain")?;
             let chain = node.child_by_field_name("object").or_else(|| node.child_by_field_name("function"))?;
-            Some(Found { literal: None, raw: "?.".to_string(), chain })
+            Some(Found { literal: None, raw: "?.".to_string(), chain, at: oc })
         }
         _ => None,
     }
+}
+
+/// A `mut_pattern` / `ref_pattern` (`let (mut a, b)`) stands for the identifier it wraps.
+fn pattern_name(p: Node) -> Node {
+    let mut n = p;
+    while matches!(n.kind(), "mut_pattern" | "ref_pattern") {
+        let mut c = n.walk();
+        match n.named_children(&mut c).find(|ch| ch.kind() != "mutable_specifier") {
+            Some(inner) => n = inner,
+            None => break,
+        }
+    }
+    n
 }
 
 /// The name a site's value lands in, found on the way up to the unit: a `let` pattern (the
@@ -314,9 +338,9 @@ fn binding_of(site: Node, unit: Node, lang: Language, src: &[u8]) -> Option<Stri
                 match (pat.kind(), tuple_idx) {
                     ("tuple_pattern", Some(i)) if prev.kind() == "tuple_expression" => {
                         let elems = named_args(pat);
-                        return elems.get(i).map(|e| cut(text(*e, src)));
+                        return elems.get(i).map(|e| cut(text(pattern_name(*e), src)));
                     }
-                    _ => Some(cut(text(pat, src))),
+                    _ => Some(cut(text(pattern_name(pat), src))),
                 }
             }
             (Language::Rust, "field_initializer") => field("field"),
@@ -362,7 +386,7 @@ pub fn unit_sites(unit: Node, name: &str, lang: Language, src: &[u8], cfg: &Cfg)
             let transform = transform_in_chain(f.chain, lang, src, cfg);
             let kind = if f.literal.is_some() && transform.is_some() { SiteKind::ParseDefault } else { SiteKind::Fallback };
             out.push(Site {
-                line: node.start_position().row + 1,
+                line: f.at.start_position().row + 1,
                 kind,
                 default: cut(&f.literal.unwrap_or(f.raw)),
                 transform,
@@ -377,12 +401,23 @@ pub fn unit_sites(unit: Node, name: &str, lang: Language, src: &[u8], cfg: &Cfg)
     out
 }
 
-/// The compiled `exempt_fn_patterns`; a pattern that does not compile is dropped.
+/// The compiled `exempt_fn_patterns`; a pattern that does not compile is dropped with a warning.
 pub struct Exempt(Vec<Regex>);
 
 impl Exempt {
     pub fn new(cfg: &Cfg) -> Self {
-        Exempt(cfg.exempt_fn_patterns.iter().filter_map(|p| Regex::new(p).ok()).collect())
+        Exempt(
+            cfg.exempt_fn_patterns
+                .iter()
+                .filter_map(|p| match Regex::new(p) {
+                    Ok(r) => Some(r),
+                    Err(e) => {
+                        eprintln!("warning: [fallback] exempt_fn_patterns {p:?} is not a valid regex ({e}); ignored");
+                        None
+                    }
+                })
+                .collect(),
+        )
     }
 
     fn matches(&self, name: &str) -> bool {
@@ -401,14 +436,21 @@ fn join_and(parts: &[String]) -> String {
 
 /// The reason for one unit: `parse swallows 5 parse failures with literal defaults (lines
 /// 157, 160, 161, 162, 163): a malformed line becomes header "", hash "", author "", ts 0 and
-/// subject ""`, listing every parse-default line and the distinct binding / default pairs in
-/// line order. `None` under `min_sites` or when the bare unit name matches an exempt pattern.
+/// subject ""`, listing every parse-default line (each once) and the distinct binding /
+/// default pairs in line order. `None` under `min_sites` or when the bare unit name matches
+/// an exempt pattern.
 pub fn unit_reason(u: &FunctionMetrics, cfg: &Cfg, exempt: &Exempt) -> Option<String> {
     if u.parse_defaults < cfg.min_sites || u.parse_defaults == 0 || exempt.matches(bare_name(&u.name)) {
         return None;
     }
     let sites: Vec<&Site> = u.fallback_sites.iter().filter(|s| s.kind == SiteKind::ParseDefault).collect();
-    let lines: Vec<String> = sites.iter().map(|s| s.line.to_string()).collect();
+    let mut lines: Vec<String> = Vec::new();
+    for s in &sites {
+        let l = s.line.to_string();
+        if !lines.contains(&l) {
+            lines.push(l);
+        }
+    }
     let mut becomes: Vec<String> = Vec::new();
     for s in &sites {
         let t = match &s.binding {
@@ -421,9 +463,10 @@ pub fn unit_reason(u: &FunctionMetrics, cfg: &Cfg, exempt: &Exempt) -> Option<St
     }
     let n = sites.len();
     Some(format!(
-        "{} swallows {n} parse failure{} with literal defaults (lines {}): a malformed line becomes {}",
+        "{} swallows {n} parse failure{} with literal defaults (line{} {}): a malformed line becomes {}",
         u.name,
         if n == 1 { "" } else { "s" },
+        if lines.len() == 1 { "" } else { "s" },
         lines.join(", "),
         join_and(&becomes)
     ))
@@ -487,6 +530,12 @@ fn parse(header: &str) -> (u64, String) {
     let r = s.parse::<u8>().ok()?;
     let e = it.next().unwrap_or(());
     *m.entry(k).or_default() += 1;
+    let s2 = line.split(':').nth(1).unwrap_or(\"\");
+    let (mut a2, b2) = (s.split(',').next().unwrap_or(\"\"), it.next().unwrap_or(\"\"));
+    let mm = it.next().unwrap_or(&mut 0);
+    let hash = fields
+        .next()
+        .unwrap_or(\"\");
     (0, String::new())
 }
 ";
@@ -503,9 +552,10 @@ fn parse(header: &str) -> (u64, String) {
             // A constructor path or a closure returning one is a literal default; no transform.
             (11, Fallback, "Vec::new()", None, Some("v")),
             (12, ParseDefault, "String::new()", Some("next"), Some("w")),
-            // A struct field has no call in its chain.
+            // A struct field has no call in its chain; a map lookup with a default is the
+            // benign case (`get` is no transform), unless the map came out of one below.
             (13, Fallback, "0", None, Some("z")),
-            (14, ParseDefault, "0", Some("get"), Some("g")),
+            (14, Fallback, "0", None, Some("g")),
             // The outer default is not a literal; the inner one is a site of its own.
             (15, Fallback, "b.next().unwrap_or(\"\")", None, Some("o")),
             (15, ParseDefault, "\"\"", Some("next"), Some("o")),
@@ -515,11 +565,20 @@ fn parse(header: &str) -> (u64, String) {
             (18, ParseDefault, "()", Some("next"), Some("e")),
             // A site inside an assignment's target has no binding.
             (19, Fallback, "Default::default()", None, None),
+            // `nth` is no transform, the `split` below it is.
+            (20, ParseDefault, "\"\"", Some("split"), Some("s2")),
+            // A `mut` element of a tuple pattern is its identifier; `&mut 0` is the literal 0.
+            (21, ParseDefault, "\"\"", Some("next"), Some("a2")),
+            (21, ParseDefault, "\"\"", Some("next"), Some("b2")),
+            (22, ParseDefault, "0", Some("next"), Some("mm")),
+            // A chain broken over lines reports the line of the default call.
+            (25, ParseDefault, "\"\"", Some("next"), Some("hash")),
         ];
         assert_eq!(rows(f), expect, "{:#?}", f.fallback_sites);
-        assert_eq!((f.parse_defaults, f.fallbacks), (10, 16));
+        assert_eq!((f.parse_defaults, f.fallbacks), (14, 21));
         let r = unit_reason(f, &cfg, &Exempt::new(&cfg)).unwrap();
-        assert_eq!(r, "parse swallows 10 parse failures with literal defaults (lines 4, 5, 6, 7, 9, 10, 12, 14, 15, 18): a malformed line becomes hash \"\", author \"\", ts 0, subject \"\", n 0, d Default::default(), w String::new(), g 0, o \"\" and e ()");
+        // Each line once (21 holds two sites), each binding / default pair once (hash "" twice).
+        assert_eq!(r, "parse swallows 14 parse failures with literal defaults (lines 4, 5, 6, 7, 9, 10, 12, 15, 18, 20, 21, 22, 25): a malformed line becomes hash \"\", author \"\", ts 0, subject \"\", n 0, d Default::default(), w String::new(), o \"\", e (), s2 \"\", a2 \"\", b2 \"\" and mm 0");
     }
 
     #[test]
@@ -539,9 +598,9 @@ mod tests {
         let exempt = Exempt::new(&cfg);
         let by: Vec<(&str, usize, bool)> = fs.iter().map(|f| (f.name.as_str(), f.parse_defaults, unit_reason(f, &cfg, &exempt).is_some())).collect();
         assert_eq!(by, vec![("one", 1, false), ("from_env", 2, false), ("D.default_two", 2, false), ("two", 2, true), ("t", 0, false)], "{by:?}");
-        assert_eq!(unit_reason(&fs[3], &cfg, &exempt).unwrap(), "two swallows 2 parse failures with literal defaults (lines 4, 4): a malformed line becomes 0 and 1");
+        assert_eq!(unit_reason(&fs[3], &cfg, &exempt).unwrap(), "two swallows 2 parse failures with literal defaults (line 4): a malformed line becomes 0 and 1");
         cfg.min_sites = 1;
-        assert_eq!(unit_reason(&fs[0], &cfg, &exempt).unwrap(), "one swallows 1 parse failure with literal defaults (lines 1): a malformed line becomes 0");
+        assert_eq!(unit_reason(&fs[0], &cfg, &exempt).unwrap(), "one swallows 1 parse failure with literal defaults (line 1): a malformed line becomes 0");
         // Per-file lines: most sites first, capped, the rest counted.
         cfg.max_reported_per_file = 1;
         let prod: Vec<&FunctionMetrics> = fs.iter().filter(|f| !f.in_test).collect();

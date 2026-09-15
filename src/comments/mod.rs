@@ -6,14 +6,14 @@
 //! labelled sections (P17), and phase comments inside a function over the cognitive threshold
 //! say where to cut it (P18). One walk feeds both; neither is a score input.
 
-use crate::config::{Comments as Cfg, Metrics as MetricsCfg};
+use crate::config::{Comments as Cfg, Metrics as MetricsCfg, Tests as TestsCfg};
 use crate::discover::SourceFile;
 use crate::lang::Language;
 use crate::metrics::{self, FunctionMetrics};
 use crate::regions::{self, TestRegion};
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tree_sitter::Node;
 
 /// One labelled section of a file: the lines between its banner and the next one.
@@ -23,8 +23,10 @@ pub struct Section {
     pub name: String,
     /// First line after the banner…
     pub start: usize,
-    /// …to the line before the next banner (or EOF).
+    /// …to the line before the next banner (or EOF), pulled back over a trailing inline test
+    /// region (a `#[cfg(test)] mod tests` closing the file is no part of the section).
     pub end: usize,
+    /// Lines of the span outside inline test regions.
     pub lines: usize,
     /// Metrics units whose start line lies in the section.
     pub functions: usize,
@@ -109,13 +111,18 @@ pub struct Totals {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct CommentsReport {
     pub totals: Totals,
-    pub files: HashMap<String, FileComments>,
+    pub files: BTreeMap<String, FileComments>,
 }
 
 /// The compiled patterns, built once per scan and shared by every file.
 pub struct Walker<'c> {
     cfg: &'c Cfg,
+    /// Units at or above this cognitive get their phases read: the knob, else one over
+    /// `[metrics].cognitive_hard`, the report's own "over cognitive" test.
     cognitive_min: u32,
+    /// `[tests].inline_modules`: inline test regions leave the size percentile and the
+    /// section spans, as they leave the report's size signal.
+    inline_modules: bool,
     /// `^\s*[rule]{n,}\s*(\S.*?)?\s*[rule]*$`: a rule with an optional inline title.
     rule: Option<Regex>,
     /// `^\s*(──|--|==)\s*(\S.*)$`: a short rule followed by text.
@@ -124,7 +131,7 @@ pub struct Walker<'c> {
 }
 
 impl<'c> Walker<'c> {
-    pub fn new(cfg: &'c Cfg, metrics: &MetricsCfg) -> Self {
+    pub fn new(cfg: &'c Cfg, metrics: &MetricsCfg, tests: &TestsCfg) -> Self {
         let b = &cfg.banners;
         let class = rule_class(&b.rule_chars);
         let rule = (!b.rule_chars.is_empty())
@@ -133,7 +140,8 @@ impl<'c> Walker<'c> {
         let phase = cfg.phases.patterns.iter().filter_map(|p| RegexBuilder::new(p).case_insensitive(true).build().ok()).collect();
         Walker {
             cfg,
-            cognitive_min: cfg.phases.cross_with_cognitive_min.unwrap_or(metrics.cognitive_hard),
+            cognitive_min: cfg.phases.cross_with_cognitive_min.unwrap_or(metrics.cognitive_hard.saturating_add(1)),
+            inline_modules: tests.inline_modules,
             rule,
             short: Regex::new(r"^\s*(──|--|==)\s*(\S.*)$").expect("static regex"),
             phase,
@@ -143,12 +151,14 @@ impl<'c> Walker<'c> {
     /// Banners at the file root and phase comments inside the over-threshold units, on the
     /// metrics tree: `funcs` and `nodes` are the file's units in the same order.
     pub fn file_side(&self, root: Option<Node>, f: &SourceFile, regions: &[TestRegion], funcs: &[FunctionMetrics], nodes: &[Node]) -> FileSide {
-        let mut side = FileSide { path: f.path.clone(), lines: f.lines, source_lines: f.lines.saturating_sub(regions::inline_lines(regions)), ..FileSide::default() };
+        // The regions the line arithmetic sees; `skip_test_modules` reads the raw list.
+        let counted: &[TestRegion] = if self.inline_modules { regions } else { &[] };
+        let mut side = FileSide { path: f.path.clone(), lines: f.lines, source_lines: f.lines.saturating_sub(regions::inline_lines(counted)), ..FileSide::default() };
         let Some(root) = root else { return side };
         let src = f.content.as_bytes();
         let lines = LineIndex::new(src);
         if self.cfg.banners.enabled {
-            self.banners(root, f.lang, src, &lines, funcs, &mut side);
+            self.banners(root, f, &lines, counted, funcs, &mut side);
         }
         for (fm, node) in funcs.iter().zip(nodes) {
             if fm.cognitive < self.cognitive_min || fm.lines < self.cfg.phases.min_span_lines {
@@ -166,7 +176,8 @@ impl<'c> Walker<'c> {
 
     // ---------- P17: banners ----------
 
-    fn banners(&self, root: Node, lang: Language, src: &[u8], lines: &LineIndex, funcs: &[FunctionMetrics], side: &mut FileSide) {
+    fn banners(&self, root: Node, f: &SourceFile, lines: &LineIndex, regions: &[TestRegion], funcs: &[FunctionMetrics], side: &mut FileSide) {
+        let (lang, src) = (f.lang, f.content.as_bytes());
         let b = &self.cfg.banners;
         let comment_kinds = comment_kinds(lang);
         // Top-level comments in order, banner or not, plus the first line of every other item.
@@ -241,16 +252,18 @@ impl<'c> Walker<'c> {
         side.sections = boundaries
             .iter()
             .enumerate()
-            .map(|(i, bd)| {
+            .filter_map(|(i, bd)| {
                 let start = bd.last_line + 1;
-                let end = boundaries.get(i + 1).map_or(total, |n| n.first_line - 1).max(bd.last_line);
-                Section {
+                let end = boundaries.get(i + 1).map_or(total, |n| n.first_line - 1);
+                // A banner on the file's last line, or right before the next one, heads nothing.
+                let (end, lines) = without_tests(start, end, regions);
+                (end >= start).then(|| Section {
                     name: bd.title.clone().unwrap_or_default(),
                     start,
                     end,
-                    lines: (end + 1).saturating_sub(start),
+                    lines,
                     functions: funcs.iter().filter(|f| !f.in_test && start <= f.start_line && f.start_line <= end).count(),
-                }
+                })
             })
             .collect();
     }
@@ -279,9 +292,11 @@ impl<'c> Walker<'c> {
         None
     }
 
+    /// Text starting with a `skip_markers` entry, or that is exactly one with its `#` dropped
+    /// (a bare `endregion`): an editor folding marker, never a banner or a title.
     fn skipped(&self, text: &str) -> bool {
         let t = text.trim_start_matches(|c: char| c == '/' || c == '*' || c.is_whitespace());
-        self.cfg.banners.skip_markers.iter().any(|m| t.starts_with(m.as_str()) || t.split_whitespace().next() == Some(m.trim_start_matches('#')))
+        self.cfg.banners.skip_markers.iter().any(|m| t.starts_with(m.as_str()) || t.trim() == m.trim_start_matches('#'))
     }
 
     // ---------- P18: phases ----------
@@ -304,8 +319,11 @@ impl<'c> Walker<'c> {
                         found.push((child, n));
                     }
                 } else if blocks.contains(&kind) {
-                    if depth < p.max_depth {
-                        stack.push((child, depth + 1));
+                    // A TS `switch_body` holds only cases, and a `case x: { … }` brace block only
+                    // that case's statements: neither is a nesting level of its own.
+                    let below = if transparent_block(lang, child, n) { depth } else { depth + 1 };
+                    if below <= p.max_depth {
+                        stack.push((child, below));
                     }
                 } else if !metrics::is_callable_kind(lang, kind) {
                     stack.push((child, depth));
@@ -449,7 +467,7 @@ pub fn analyze(sides: &[FileSide], cfg: &Cfg) -> CommentsReport {
     let b = &cfg.banners;
     let pct = crate::report::percentiles(&sides.iter().map(|s| s.source_lines).collect::<Vec<_>>());
     let mut totals = Totals { files: sides.len(), ..Totals::default() };
-    let mut files = HashMap::with_capacity(sides.len());
+    let mut files = BTreeMap::new();
     for (i, s) in sides.iter().enumerate() {
         let largest = s.sections.iter().max_by_key(|x| x.lines);
         let qualifies = b.enabled && s.lines >= b.min_file_lines && s.sections.len() >= b.min_sections && largest.is_some_and(|l| l.lines >= b.min_section_lines);
@@ -491,7 +509,7 @@ fn banner_reason(path: &str, sections: &[Section]) -> String {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let mark = if i == largest { format!(" ({} lines, {} fn{})", s.lines, s.functions, if s.functions == 1 { "" } else { "s" }) } else { String::new() };
+            let mark = if i == largest { format!(" ({} line{}, {} fn{})", s.lines, if s.lines == 1 { "" } else { "s" }, s.functions, if s.functions == 1 { "" } else { "s" }) } else { String::new() };
             format!("'{}' {}-{}{mark}", s.name, s.start, s.end)
         })
         .collect();
@@ -499,16 +517,32 @@ fn banner_reason(path: &str, sections: &[Section]) -> String {
     format!("{base} is cut into {} labelled sections: {} — extract the largest as {target}", sections.len(), names.join(", "))
 }
 
-/// A file stem for a section title: the first two words after a leading article, lower-case
-/// and alphanumeric (`The ladder's value types` → `ladder_value`).
+/// A file stem for a section title: its first two content words (articles, `of`, `and` and
+/// single letters left out), lower-case and alphanumeric (`The ladder's value types` →
+/// `ladder_value`, `Writes — the SAME rules` → `writes_same`).
 fn slug(title: &str) -> String {
     let words: Vec<String> = title.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect();
-    let mut it = words.iter().map(String::as_str).peekable();
-    if words.len() > 1 && matches!(it.peek().copied(), Some("the" | "a" | "an")) {
-        it.next();
-    }
-    let s: Vec<&str> = it.filter(|w| w.len() > 1).take(2).collect();
+    let s: Vec<&str> = words.iter().map(String::as_str).filter(|w| w.len() > 1 && !matches!(*w, "the" | "a" | "an" | "of" | "and")).take(2).collect();
     if s.is_empty() { words.first().cloned().unwrap_or_else(|| "section".to_string()) } else { s.join("_") }
+}
+
+/// A section's span with the inline test regions taken out: `end` is pulled back over a
+/// region that closes the span (the `mod tests` at the end of a file), and `lines` counts the
+/// span's lines outside every region (the union, as `regions::inline_lines`).
+fn without_tests(start: usize, mut end: usize, regions: &[TestRegion]) -> (usize, usize) {
+    while let Some(r) = regions.iter().find(|r| start < r.start_line && r.start_line <= end && end <= r.end_line) {
+        end = r.start_line - 1;
+    }
+    let (mut covered, mut covered_to) = (0usize, 0usize);
+    for r in regions {
+        let s = r.start_line.max(start).max(covered_to + 1);
+        let e = r.end_line.min(end);
+        if e >= s {
+            covered += e - s + 1;
+            covered_to = e;
+        }
+    }
+    (end, (end + 1).saturating_sub(start).saturating_sub(covered))
 }
 
 // ---------- shared helpers ----------
@@ -534,13 +568,18 @@ struct Boundary {
 pub struct LineIndex {
     /// Byte offset of every line start; `starts[0] == 0`.
     starts: Vec<usize>,
+    /// Lines in the file, the way `SourceFile.lines` (`str::lines`) counts them: a trailing
+    /// newline ends the last line rather than starting a new one, and a last line without
+    /// one still counts.
+    lines: usize,
 }
 
 impl LineIndex {
     pub fn new(src: &[u8]) -> Self {
         let mut starts = vec![0];
         starts.extend(src.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i + 1));
-        LineIndex { starts }
+        let lines = if src.is_empty() || src.ends_with(b"\n") { starts.len() - 1 } else { starts.len() };
+        LineIndex { starts, lines }
     }
 
     /// 1-based line holding `byte`.
@@ -548,10 +587,9 @@ impl LineIndex {
         self.starts.partition_point(|s| *s <= byte).max(1)
     }
 
-    /// Lines in the file, the way `SourceFile.lines` counts them (a trailing newline ends
-    /// the last line rather than starting a new one).
+    /// Lines in the file, as `SourceFile.lines` counts them.
     pub fn count(&self) -> usize {
-        self.starts.len() - 1
+        self.lines
     }
 
     /// Non-blank lines in `start..=end` (1-based, inclusive).
@@ -632,6 +670,13 @@ fn block_kinds(lang: Language) -> &'static [&'static str] {
     }
 }
 
+/// A block that adds no nesting level of its own: a TS `switch_body` (cases only, no
+/// statements) and the brace block of a `case x: { … }` / `default: { … }`.
+fn transparent_block(lang: Language, block: Node, parent: Node) -> bool {
+    !matches!(lang, Language::Rust | Language::Python)
+        && (block.kind() == "switch_body" || (block.kind() == "statement_block" && matches!(parent.kind(), "switch_case" | "switch_default")))
+}
+
 fn ident_kinds(lang: Language) -> &'static [&'static str] {
     match lang {
         Language::Rust | Language::Python => &["identifier"],
@@ -692,8 +737,12 @@ mod tests {
     }
 
     fn side_with(f: &SourceFile, cfg: &Cfg, metrics: &MetricsCfg) -> FileSide {
-        let w = Walker::new(cfg, metrics);
-        let (_, _, mut out) = metrics::analyze_all_with(std::slice::from_ref(f), metrics, &TestsCfg::default(), &crate::config::Naming::default(), &crate::config::Fallback::default(), |root, f, regions, funcs, nodes| w.file_side(root, f, regions, funcs, nodes));
+        side_with_tests(f, cfg, metrics, &TestsCfg::default())
+    }
+
+    fn side_with_tests(f: &SourceFile, cfg: &Cfg, metrics: &MetricsCfg, tests: &TestsCfg) -> FileSide {
+        let w = Walker::new(cfg, metrics, tests);
+        let (_, _, mut out) = metrics::analyze_all_with(std::slice::from_ref(f), metrics, tests, &crate::config::Naming::default(), &crate::config::Fallback::default(), |root, f, regions, funcs, nodes| w.file_side(root, f, regions, funcs, nodes));
         out.remove(0)
     }
 
@@ -714,8 +763,29 @@ mod tests {
         let s = side(&file("scan.rs", Language::Rust, &src));
         assert_eq!(s.banners, 5, "{:?}", s.sections);
         let got: Vec<(&str, usize, usize, usize, usize)> = s.sections.iter().map(|x| (x.name.as_str(), x.start, x.end, x.lines, x.functions)).collect();
-        assert_eq!(got, vec![("The seals", 6, 12, 7, 2), ("The ladder", 14, 17, 4, 2), ("The override", 21, 29, 9, 1)], "{got:?}");
-        // The unit inside `mod tests` is not counted; the doc-comment rule is not a boundary.
+        // The last section ends where `mod tests` begins (line 23 is the attribute, line 24
+        // the module); neither its unit nor its lines count. The doc-comment rule is not a boundary.
+        assert_eq!(got, vec![("The seals", 6, 12, 7, 2), ("The ladder", 14, 17, 4, 2), ("The override", 21, 23, 3, 1)], "{got:?}");
+        // With `[tests].inline_modules` off the regions are source, as in the report's size signal.
+        let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
+        let s = side_with_tests(&file("scan.rs", Language::Rust, &src), &Cfg::default(), &MetricsCfg::default(), &off);
+        assert_eq!(s.sections.last().map(|x| (x.start, x.end, x.lines, x.functions)), Some((21, 29, 9, 2)), "{:?}", s.sections);
+        assert_eq!(s.source_lines, s.lines);
+    }
+
+    #[test]
+    fn inline_test_regions_leave_the_sections_and_the_size_percentile() {
+        // A test module in the middle of a section is subtracted; one closing it pulls the end back.
+        let src = "// ==== one ====\nfn a() {}\n#[cfg(test)]\nmod t1 {\n    fn x() {}\n}\nfn b() {}\n// ==== two ====\nfn c() {}\n#[cfg(test)]\nmod t2 {\n    fn y() {}\n    fn z() {}\n}\n";
+        let s = side(&file("r.rs", Language::Rust, src));
+        let got: Vec<(&str, usize, usize, usize, usize)> = s.sections.iter().map(|x| (x.name.as_str(), x.start, x.end, x.lines, x.functions)).collect();
+        // A region starts at its item, so the `#[cfg(test)]` line before `mod t2` stays in 'two'.
+        assert_eq!(got, vec![("one", 2, 7, 3, 2), ("two", 9, 10, 2, 1)], "{got:?}");
+        assert_eq!((s.lines, s.source_lines), (14, 7));
+        assert_eq!(without_tests(1, 10, &[]), (10, 10));
+        // A banner on the last line heads no section.
+        let s = side(&file("e.rs", Language::Rust, "// ==== one ====\nfn a() {}\n// ==== two ====\n"));
+        assert_eq!(s.sections.iter().map(|x| (x.name.as_str(), x.start, x.end)).collect::<Vec<_>>(), vec![("one", 2, 2)], "{:?}", s.sections);
     }
 
     #[test]
@@ -730,13 +800,16 @@ mod tests {
 
     #[test]
     fn editor_markers_and_untitled_rules_are_not_boundaries_unless_asked() {
-        let src = "// #region Foo\nfunction a() {}\n// #endregion\n// %% cell\n// ==========\nfunction b() {}\n// ====== #endregion ======\nfunction c() {}\n";
+        let src = "// #region Foo\nfunction a() {}\n// #endregion\n// %% cell\n// ==========\nfunction b() {}\n// ====== #endregion ======\nfunction c() {}\n// ====== endregion ======\nfunction d() {}\n";
         let s = side(&file("a.ts", Language::TypeScript, src));
         assert!(s.sections.is_empty(), "{:?}", s.sections);
         let mut cfg = Cfg::default();
         cfg.banners.require_title = false;
         let s = side_with(&file("a.ts", Language::TypeScript, src), &cfg, &MetricsCfg::default());
         assert_eq!(s.sections.iter().map(|x| (x.name.as_str(), x.start)).collect::<Vec<_>>(), vec![("", 6)], "{:?}", s.sections);
+        // A title that merely starts with a marker's word is a title.
+        let s = side(&file("b.ts", Language::TypeScript, "// ====== region handling ======\nfunction a() {}\n// ====== Regions of interest ======\nfunction b() {}\n"));
+        assert_eq!(s.sections.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), vec!["region handling", "Regions of interest"], "{:?}", s.sections);
     }
 
     #[test]
@@ -761,6 +834,13 @@ mod tests {
         assert_eq!(s.sections.iter().map(|x| (x.name.as_str(), x.start, x.end)).collect::<Vec<_>>(), vec![("Título ünïcode", 3, 3)], "{:?}", s.sections);
         let li = LineIndex::new(src.as_bytes());
         assert_eq!((li.count(), li.line_of(0), li.line_of(src.len() - 1)), (3, 1, 3));
+        // No trailing newline: the last line still counts, as `str::lines` counts it.
+        let bare = "fn a() {}\n// ==== two ====\nfn b() {}\nfn c() {}";
+        let li = LineIndex::new(bare.as_bytes());
+        assert_eq!((li.count(), li.line_of(bare.len() - 1), li.non_blank(bare.as_bytes(), 1, 4)), (4, 4, 4));
+        assert_eq!(LineIndex::new(b"").count(), 0);
+        let s = side(&file("n.rs", Language::Rust, bare));
+        assert_eq!(s.sections.iter().map(|x| (x.start, x.end, x.lines, x.functions)).collect::<Vec<_>>(), vec![(3, 4, 2, 2)], "{:?}", s.sections);
     }
 
     #[test]
@@ -773,9 +853,10 @@ mod tests {
         let body = "fn x() {}\n".repeat(4);
         let big = format!("// ==== one ====\n{body}{body}// ==== two ====\n{body}// ==== three ====\n{body}");
         let files = [file("big.rs", Language::Rust, &big), file("small.rs", Language::Rust, "// ==== one ====\nfn a() {}\n// ==== two ====\nfn b() {}\n"), file("mid.rs", Language::Rust, &"fn y() {}\n".repeat(20))];
-        let w = Walker::new(&cfg, &MetricsCfg::default());
+        let w = Walker::new(&cfg, &MetricsCfg::default(), &TestsCfg::default());
         let (_, _, sides) = metrics::analyze_all_with(&files, &MetricsCfg::default(), &TestsCfg::default(), &crate::config::Naming::default(), &crate::config::Fallback::default(), |root, f, regions, funcs, nodes| w.file_side(root, f, regions, funcs, nodes));
         let r = analyze(&sides, &cfg);
+        assert_eq!(r.files.keys().map(String::as_str).collect::<Vec<_>>(), vec!["big.rs", "mid.rs", "small.rs"], "sorted for a diffable --json");
         let big = &r.files["big.rs"];
         assert!(big.qualifies && !big.above_size_percentile, "{big:?}");
         assert_eq!(big.banner_reason.as_deref(), Some("big.rs is cut into 3 labelled sections: 'one' 2-9 (8 lines, 8 fns), 'two' 11-14, 'three' 16-19 — extract the largest as one.rs"));
@@ -836,6 +917,13 @@ mod tests {
         assert!(side_with(&f, &cfg, &m).units.is_empty());
         cfg.phases.cross_with_cognitive_min = None;
         assert!(side_with(&f, &cfg, &MetricsCfg { cognitive_hard: 30, ..MetricsCfg::default() }).units.is_empty());
+        // Unset, the gate is the report's: over cognitive_hard, so a unit exactly at it (25) has
+        // no reason line to ride on and gets no phases; the explicit knob is "at or above".
+        assert!(side_with(&f, &cfg, &MetricsCfg { cognitive_hard: 25, ..MetricsCfg::default() }).units.is_empty());
+        assert_eq!(side_with(&f, &cfg, &MetricsCfg { cognitive_hard: 24, ..MetricsCfg::default() }).units.len(), 1);
+        cfg.phases.cross_with_cognitive_min = Some(25);
+        assert_eq!(side_with(&f, &cfg, &MetricsCfg { cognitive_hard: 25, ..MetricsCfg::default() }).units.len(), 1);
+        cfg.phases.cross_with_cognitive_min = None;
         // Span floor and phase count floor.
         cfg.phases.min_span_lines = 100;
         assert!(side_with(&f, &cfg, &m).units.is_empty());
@@ -886,6 +974,14 @@ mod tests {
         assert_eq!(s.units.len(), 1, "{:?}", s.units);
         // The switch-body phase sits one level below the body and ends with the switch.
         assert_eq!(s.units[0].phases.iter().map(|p| (p.label.as_str(), p.start, p.end)).collect::<Vec<_>>(), vec![("step 1", 3, 18), ("2. in the switch body", 10, 16)]);
+        // Case clauses are where phase labels are written: the `switch_body` and a case's brace
+        // block are transparent, so a clause is one level below the body (max_depth = 1).
+        let ts = format!("function work(a: number, b: number) {{\n  let out = 0;\n  switch (a) {{\n    case 1: {{\n      // step 1\n{pad}      break;\n    }}\n    case 2:\n      // step 2\n{pad}      break;\n    default:\n      // step 3\n{pad}  }}\n  return out;\n}}\n");
+        let s = side_with(&file("c.ts", Language::TypeScript, &ts), &cfg, &m);
+        assert_eq!(s.units.len(), 1, "{:?}", s.units);
+        assert_eq!(s.units[0].phases.iter().map(|p| (p.label.as_str(), p.start, p.end)).collect::<Vec<_>>(), vec![("step 1", 5, 11), ("step 2", 13, 18), ("step 3", 20, 24)]);
+        cfg.phases.max_depth = 0;
+        assert!(side_with(&file("c.ts", Language::TypeScript, &ts), &cfg, &m).units.is_empty());
     }
 
     #[test]
@@ -899,6 +995,8 @@ mod tests {
     fn a_mod_file_is_named_by_its_directory_and_constructors_are_not_locals() {
         let secs = vec![Section { name: "The walk".into(), start: 2, end: 300, lines: 299, functions: 3 }, Section { name: "x".into(), start: 302, end: 310, lines: 9, functions: 0 }];
         assert!(banner_reason("src/dead/mod.rs", &secs).starts_with("dead/mod.rs is cut into 2 labelled sections: 'The walk' 2-300 (299 lines, 3 fns), 'x' 302-310 — extract the largest as walk.rs"), "{}", banner_reason("src/dead/mod.rs", &secs));
+        let one = vec![Section { name: "x".into(), start: 2, end: 2, lines: 1, functions: 1 }];
+        assert!(banner_reason("a.rs", &one).contains("'x' 2-2 (1 line, 1 fn)"), "{}", banner_reason("a.rs", &one));
         assert!(banner_reason("pkg/__init__.py", &secs).starts_with("pkg/__init__.py is cut"));
         assert!(banner_reason("a/b/index.ts", &secs).ends_with("walk.ts"));
         let pad = "        if a > 1 { b += 1; }\n".repeat(8);
@@ -914,6 +1012,7 @@ mod tests {
         assert_eq!(slug("The ladder"), "ladder");
         assert_eq!(slug("The ladder's value types"), "ladder_value");
         assert_eq!(slug("the clock, read from the snapshot"), "clock_read");
+        assert_eq!(slug("Writes — the SAME rules"), "writes_same");
         assert_eq!(slug("drop"), "drop");
         assert_eq!(slug("A"), "a");
         assert_eq!(slug("---"), "section");

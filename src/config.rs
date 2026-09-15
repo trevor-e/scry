@@ -1127,7 +1127,9 @@ pub struct Phases {
     pub patterns: Vec<String>,
     /// Skip units inside a Rust `#[cfg(test)]` region.
     pub skip_test_modules: bool,
-    /// Units at or above this cognitive are checked; unset follows `[metrics].cognitive_hard`.
+    /// Units at or above this cognitive are checked; unset, the units over
+    /// `[metrics].cognitive_hard` are (the report's own test, so a unit exactly at the
+    /// threshold gets no phases: it has no "over cognitive" reason to ride on).
     pub cross_with_cognitive_min: Option<u32>,
     /// Estimate each phase's cognitive as a helper: the walker re-run over its statements
     /// with nesting re-based to 0.
@@ -1211,6 +1213,9 @@ pub struct Fallback {
     pub methods_rust: Vec<String>,
     /// Rust call names that are fallible transforms (`.parse()`, `.next()`, `from_utf8(…)`): a
     /// site whose receiver chain holds one is a parse default. Arguments are not the chain.
+    /// `get` is left out on purpose: `m.get(k).copied().unwrap_or(0)` defaults an absent key,
+    /// the benign case, and a `get` on the output of a transform (`s.split(':').nth(1)`) is
+    /// caught by the transform below it in the chain.
     pub parse_calls: Vec<String>,
     /// Rust constructor paths that count as a literal default, called (`String::new()`) or
     /// passed bare to `unwrap_or_else`; literal tokens, `()`, `[]` and `None` always do.
@@ -1245,7 +1250,7 @@ impl Default for Fallback {
     fn default() -> Self {
         Self {
             methods_rust: strings(&["unwrap_or", "unwrap_or_default", "unwrap_or_else", "or_default"]),
-            parse_calls: strings(&["parse", "split", "next", "strip_prefix", "from_utf8", "get", "splitn", "split_once", "trim_start_matches"]),
+            parse_calls: strings(&["parse", "split", "next", "strip_prefix", "from_utf8", "splitn", "split_once", "trim_start_matches"]),
             empty_constructors: strings(&["String::new", "Vec::new", "Default::default"]),
             python_default_getters: strings(&["get", "getattr", "pop", "setdefault"]),
             parse_calls_python: strings(&["split", "rsplit", "partition", "rpartition", "splitlines", "readline", "int", "float"]),

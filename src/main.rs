@@ -450,7 +450,7 @@ fn main() -> Result<()> {
             let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
                 files.into_iter().filter(|f| f.kind == discover::FileKind::Source).collect();
-            let walker = comments::Walker::new(&cfg.comments, &cfg.metrics);
+            let walker = comments::Walker::new(&cfg.comments, &cfg.metrics, &cfg.tests);
             let (_, _, sides) = metrics::analyze_all_with(&src, &cfg.metrics, &cfg.tests, &cfg.naming, &cfg.fallback, |root, f, regions, funcs, nodes| walker.file_side(root, f, regions, funcs, nodes));
             let r = comments::analyze(&sides, &cfg.comments);
             if json {
@@ -482,8 +482,9 @@ fn main() -> Result<()> {
             println!("{bindings} bindings, {short} one-letter ({share:.1}%), {far} with a use gap of {}+ lines", cfg.naming.short_name_min_gap);
             // Brain methods: long, complex and binding many locals at once (see `metrics`).
             let brains: Vec<&metrics::FunctionMetrics> = funcs.iter().filter(|f| !f.in_test && f.brain).collect();
-            let named: Vec<String> = brains.iter().map(|f| format!("{}:{} {} ({} lines, cognitive {}, {} locals)", f.file, f.start_line, f.name, f.lines, f.cognitive, f.locals)).collect();
-            println!("{} brain method(s) (>= {} lines, cognitive >= {}, locals >= {}){}{}", brains.len(), cfg.metrics.brain_min_lines, cfg.metrics.brain_min_cognitive, cfg.metrics.brain_min_locals, if named.is_empty() { "" } else { ": " }, named.join(", "));
+            let named: Vec<String> = brains.iter().take(top).map(|f| format!("{}:{} {} ({} lines, cognitive {}, {} locals)", f.file, f.start_line, f.name, f.lines, f.cognitive, f.locals)).collect();
+            let more = if brains.len() > named.len() { format!(", +{} more", brains.len() - named.len()) } else { String::new() };
+            println!("{} brain method(s) (>= {} lines, cognitive >= {}, locals >= {}){}{}{more}", brains.len(), cfg.metrics.brain_min_lines, cfg.metrics.brain_min_cognitive, cfg.metrics.brain_min_locals, if named.is_empty() { "" } else { ": " }, named.join(", "));
             // Parse defaults: literal defaults on fallible transforms (see `fallback`).
             let exempt = fallback::Exempt::new(&cfg.fallback);
             let (sites, parse_defaults): (usize, usize) = funcs.iter().filter(|f| !f.in_test).fold((0, 0), |a, f| (a.0 + f.fallbacks, a.1 + f.parse_defaults));
@@ -555,7 +556,7 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
     let swalker = strings::Walker::new(&cfg.strings);
     let cwalker = clumps::Walker::new(&cfg.clumps);
     let dwalker = declared::Walker::new(&cfg.declared);
-    let mwalker = comments::Walker::new(&cfg.comments, &cfg.metrics);
+    let mwalker = comments::Walker::new(&cfg.comments, &cfg.metrics, &cfg.tests);
     let (file_metrics, functions, per_file) =
         metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, &cfg.naming, &cfg.fallback, |root, f, regions, funcs, nodes| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions), hwalker.file_side(root, f, regions), swalker.file_side(root, f, regions), cwalker.file_side(root, f, regions), dwalker.file_side(root, f, regions), mwalker.file_side(root, f, regions, funcs, nodes)));
     let (mut sides, mut indexes, mut helper_sides, mut string_sides, mut clump_sides, mut declared_sides, mut comment_sides) = (Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()));
