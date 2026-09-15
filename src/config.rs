@@ -28,6 +28,7 @@ pub struct Config {
     pub helpers: Helpers,
     pub strings: Strings,
     pub clumps: Clumps,
+    pub declared: Declared,
 }
 
 impl Config {
@@ -906,6 +907,112 @@ impl Default for Clumps {
             weight: 0.0,
             max_reported_per_file: 3,
             max_sites_listed: 8,
+        }
+    }
+}
+
+// ---------- declared ----------
+
+/// The declared-but-unconsumed pass: orphaned dependencies, dead feature flags, unread config
+/// knobs. Cargo only in this version; the JavaScript and Python knobs are reserved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Declared {
+    /// Languages whose manifests are checked; only `rust` is implemented (`javascript`,
+    /// `python` are accepted and ignored until their legs land).
+    pub languages: Vec<String>,
+    /// Manifest files, found by glob; only `Cargo.toml` is parsed, the others are counted.
+    pub manifest_globs: Vec<String>,
+    /// Check `[dev-dependencies]` too (off: they count in the total, never as orphans).
+    pub check_dev_dependencies: bool,
+    /// Python extras (reserved).
+    pub check_extras: bool,
+    /// Report a `[dependencies]` entry only test code references, as `move it to
+    /// [dev-dependencies]`.
+    pub check_placement: bool,
+    /// Globs of dependency names that are consumed without an import (linked, registered,
+    /// enabled by a feature); never orphans.
+    pub side_effect_deps: Vec<String>,
+    /// Distribution -> import name (reserved for the Python leg).
+    pub import_aliases: BTreeMap<String, String>,
+    /// Files whose text consumes a package name (reserved for the JavaScript leg).
+    pub tool_config_globs: Vec<String>,
+    /// Docs searched for an orphan's name (`; mentioned in DESIGN.md:632`).
+    pub doc_globs: Vec<String>,
+    /// An orphan or dead feature whose manifest line is younger than this many commits is not
+    /// reported (needs git).
+    pub min_age_commits: usize,
+    /// Skip crates whose root file carries `#![allow(warnings)]` / `#![allow(unused)]` (off:
+    /// their orphans print with a note that the crate silences warnings).
+    pub skip_lint_silenced_crates: bool,
+    /// Orphans and dead features enriched from git (birth commit, last consumer), most first.
+    pub max_git_lookups: usize,
+    /// List `x = []` features nothing consumes.
+    pub report_noop_features: bool,
+    /// List dead features gating no dependency (they enable only other dead features).
+    pub report_bare_dead_features: bool,
+    /// CI and build files grepped for a feature name: `consumed only by CI` downgrades the
+    /// line, never suppresses it.
+    pub feature_ci_globs: Vec<String>,
+    /// Files whose `Deserialize` structs are config (`config.rs`, `settings.py`, …).
+    pub config_file_regex: String,
+    /// Struct names that are config wherever they live.
+    pub config_struct_regex: String,
+    /// Format crates whose deserialise targets (`toml::from_str::<T>`, `let c: T =
+    /// toml::from_str(…)`) are config wherever they live; JSON and YAML targets are usually
+    /// payloads and frontmatter, so they need the file or name rule unless listed here.
+    pub config_formats: Vec<String>,
+    /// Methods of an `impl` block named like the write side of a config (`render`, `to_toml`,
+    /// `serialize`, …): their field reads are the Serialize path, never a read.
+    pub serialize_fn_regex: String,
+    /// The config structs are public API: check lib-only crates too.
+    pub config_is_public_api: bool,
+    /// Skip crates with no `[[bin]]` / `src/main.rs` unless `config_is_public_api`.
+    pub require_bin_target: bool,
+    /// Report an unread knob only when a sibling field of its struct is read or the knob is
+    /// documented (`public_doc_globs`).
+    pub require_sibling_read_or_doc: bool,
+    /// Docs whose TOML / YAML fences document a knob (`documented at docs/config.md:91-93`).
+    pub public_doc_globs: Vec<String>,
+    /// A field name shorter than this is skipped only when another candidate struct declares
+    /// the same name.
+    pub min_field_name_len: usize,
+    /// Knob names a line lists before `+N more`.
+    pub max_knobs_listed: usize,
+    /// Score weight of the percentile of `unread_knobs` (0: the section and reasons print,
+    /// the ranking ignores them).
+    pub weight: f64,
+}
+
+impl Default for Declared {
+    fn default() -> Self {
+        Self {
+            languages: strings(&["rust"]),
+            manifest_globs: strings(&["**/Cargo.toml", "**/package.json", "**/pyproject.toml"]),
+            check_dev_dependencies: false,
+            check_extras: false,
+            check_placement: false,
+            side_effect_deps: strings(&["*-sys", "tikv-jemallocator", "openssl", "getrandom", "@vitest/coverage-*", "tslib", "core-js", "react"]),
+            import_aliases: [("pillow", "PIL"), ("beautifulsoup4", "bs4"), ("pyyaml", "yaml")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            tool_config_globs: strings(&["*.config.*", "**/tsconfig*.json", ".eslintrc*", ".github/workflows/*", "Dockerfile*", "Procfile", "Makefile", "justfile"]),
+            doc_globs: strings(&["*.md", "docs/**"]),
+            min_age_commits: 5,
+            skip_lint_silenced_crates: false,
+            max_git_lookups: 50,
+            report_noop_features: false,
+            report_bare_dead_features: false,
+            feature_ci_globs: strings(&[".github/workflows/*", "Makefile", "justfile", "**/*.sh"]),
+            config_file_regex: r"(^|/)(config|settings|cfg|options)[^/]*\.(rs|py|ts|tsx|js)$".into(),
+            config_struct_regex: "(Cfg|Config|Settings|Options)$".into(),
+            config_formats: strings(&["toml"]),
+            serialize_fn_regex: "^(render|to_toml|to_yaml|to_json|to_string|serialize|dump|write_to|save)$".into(),
+            config_is_public_api: false,
+            require_bin_target: true,
+            require_sibling_read_or_doc: true,
+            public_doc_globs: strings(&["README*", "docs/**", "*.1", "man/**"]),
+            min_field_name_len: 3,
+            max_knobs_listed: 8,
+            weight: 0.0,
         }
     }
 }

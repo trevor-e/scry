@@ -6,7 +6,7 @@ and explain why in terms an LLM (or a person) can act on.
 ```
 scry scan <repo>            # ranked hotspots with reasons + cycles, hidden coupling, clones
 scry scan <repo> --json     # the same, machine-readable
-scry files | history | metrics | deps | clones | mentions | dead | helpers | strings | clumps <repo>   # one signal at a time
+scry files | history | metrics | deps | clones | mentions | dead | helpers | strings | clumps | declared <repo>   # one signal at a time
 scry plan <file> [--root <repo>]   # one file's refactor plan (the scan pipeline, one file's output)
 scry ast <file> [--errors]  # tree-sitter debugging aid
 ```
@@ -30,6 +30,7 @@ language is one grammar crate plus a node-kind table.
 | helpers | top-level helpers grouped by name across files and classed verbatim / similar / different contract on a helper-specific normalizer (only bound names anonymised; callees, fields, macros and literals kept), each copy attributed to its introducing commit and `Claude-Session`; deliberate twins (same basename, re-export wrappers, per-adapter dirs, `#[cfg]` gates) suppressed; and small helper bodies (12-40 tokens) found as exact token sequences in other files, with `hoist and call` when the helper is private | each session writes the utility it needs without grepping for it: kanspec's `plural` is byte-identical in `cmd/flow.rs` and `cmd/status.rs` and re-typed with a second parameter in `cmd/proposal.rs`, three commits from two sessions; `io_err` and `render` twice each; the clones pass cannot see a 12-token idiom re-derived in place, and the same tool run on ripgrep and fd finds no verbatim family at all |
 | strings | string literals in a message role (`format!` / `println!` / `anyhow!` / `bail!` arguments, `print` / `console.*` / `logger.*` calls, `raise` / `throw`, `return` / `Err` values; docstrings, attributes, asserts, imports, JSX attributes and gettext ids excluded) masked (`{id}`, `${x}`, `%s`, digits) and grouped by exact text across files; config literals (strftime patterns, ALL_CAPS env names, paths, URLs, MIME types, numbers >= 100 in one config role) grouped by text with the named constant, when one exists, pointed at; near-duplicate messages as information | every session hand-writes the same next-step hint and error phrasing without knowing which module owns the constant: kanspec formats one timestamp as `"%Y-%m-%dT%H:%MZ"` in four files while `logentry.rs` already names it `TS_FMT`, scrubs `GIT_WORK_TREE` in three files, and, once its own `fix!` macro is listed in `message_macros`, spells `kanspec show {id}` by hand in ten files (23x); ripgrep, fd, click and hono share almost no message text |
 | clumps | every function's named parameters (receivers out) with their type text; every 3- and 4-name combination grouped repo-wide, reported at 4 functions or 2 files when at least 2 slots agree on type, collapsed into the largest tuple the members share, with the slots no member reads (`_`-prefixed or unreferenced in the body) counted per clump and the one caller they all have named; trait / override methods, callbacks and protocol tuples (`(ctx, param, value)`) skipped; weight 0 | agents extend a family by copying the last sibling's signature and keep the dead slot: kanspec's five `plan_*` functions carry `(s: &Snapshot, f, a, _m: &Minter)` with `_m` unused in all five (`plan_decide` alone reads its `m`), while fd's `(stdout, entry, config)` recurs in six `print_entry*` functions with every slot read; clump frequency is similar in human and LLM code, the silenced slot is what separates them |
+| declared | Cargo manifests parsed (workspace deps resolved to the member, `package` renames, optional flags, `[features]`, `required-features`); every crate reference in the manifest's scope (`use` trees, `x::` paths in type and value position, `extern crate`, every token tree) counted, so a dependency nothing references is an orphan with its birth commit, age, whether history ever imported it and the doc that promised it; a feature with no `cfg(feature = …)` / build-script / `required-features` consumer that gates only orphaned deps is dead, with the commit that removed its last consumer; a `Deserialize` struct in a config file (or a `toml::from_str` target) whose field no code reads outside `impl Default` / the serialize path / tests is an unread knob, rolled up to its `[section]` with the doc that documents it; weight 0 | agents declare the stack a design doc lists and never build it, and a cleanup pass deletes the last consumer and leaves the manifest behind: kanspec's `pulldown-cmark` was declared in the root commit and never imported in 101 commits, its `ci-homerunner` feature lost its only `#[cfg]` in 9f2f0f7 and still gates `rusqlite`, and `[ci.homerunner]` (4 knobs, documented) is accepted under `deny_unknown_fields` and read by nothing; ripgrep, fd, scry and the 16 human features have one orphan each at most (`fst` in an `#![allow(warnings)]` crate, fd's `libc`) and no dead feature |
 | report | percentile-normalised composite, reasons per file | one ranked list, no thresholds to tune per language |
 
 The headline score is the hotspot idea from Tornhill's *Your Code as a Crime
@@ -58,7 +59,7 @@ scry config <repo> > scry.toml   # dump the effective settings, edit what you ne
 
 Sections match the passes: `[discover]`, `[history]`, `[metrics]`, `[deps]`,
 `[clones]`, `[report]`, `[tests]`, `[plan]`, `[dead.symbols]`, `[dead.test_only]`,
-`[dead.shapes]`, `[helpers]`, `[strings]`, `[clumps]`. A file only has to name what it changes:
+`[dead.shapes]`, `[helpers]`, `[strings]`, `[clumps]`, `[declared]`. A file only has to name what it changes:
 
 ```toml
 [discover]
@@ -114,6 +115,13 @@ min_functions = 5                        # a one-file clump needs this many memb
 min_typed_slots = 1                      # slots that must agree on type (default 2; a tuple nobody annotates needs min_functions + 1 members)
 protocol_tuples = [["c", "next"], ["ctx", "param", "value"], ["self", "request"]]   # callback shapes never analysed
 weight = 0.02                            # rank on clump membership too (default 0.0: section and reasons only)
+
+[declared]
+check_dev_dependencies = true            # check [dev-dependencies] for orphans too (default false: counted, never reported)
+side_effect_deps = ["*-sys", "openssl", "libc"]   # names consumed without an import (default adds tikv-jemallocator, getrandom, …)
+report_noop_features = true              # list `x = []` features nothing consumes (default false: counted in a note)
+config_formats = ["toml", "serde_yaml"]  # deserialise calls whose targets are config wherever they live (default ["toml"])
+require_sibling_read_or_doc = false      # report an unread knob even when no sibling is read and no doc names it
 
 [report.with_history]
 hotspot = 0.5                            # other weights keep their defaults

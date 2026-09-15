@@ -2,6 +2,7 @@ mod clones;
 mod clumps;
 mod config;
 mod dead;
+mod declared;
 mod deps;
 mod discover;
 mod helpers;
@@ -138,6 +139,16 @@ enum Cmd {
         #[arg(long, default_value_t = 20)]
         top: usize,
     },
+    /// Declared dependencies no file imports, feature flags nothing checks, config knobs no
+    /// code reads (Cargo)
+    Declared {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+    },
     /// Per-function cognitive/cyclomatic complexity for source files
     Metrics {
         #[arg(default_value = ".")]
@@ -182,7 +193,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = match &cli.cmd {
         Cmd::Scan { path, .. } | Cmd::Files { path, .. } | Cmd::History { path, .. } | Cmd::Clones { path, .. }
-        | Cmd::Deps { path, .. } | Cmd::Mentions { path, .. } | Cmd::Dead { path, .. } | Cmd::Helpers { path, .. } | Cmd::Strings { path, .. } | Cmd::Clumps { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
+        | Cmd::Deps { path, .. } | Cmd::Mentions { path, .. } | Cmd::Dead { path, .. } | Cmd::Helpers { path, .. } | Cmd::Strings { path, .. } | Cmd::Clumps { path, .. } | Cmd::Declared { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
         Cmd::Plan { root, .. } => root.clone(),
         Cmd::Ast { .. } => PathBuf::from("."),
     };
@@ -413,6 +424,15 @@ fn main() -> Result<()> {
             }
             print!("{}", clumps::render(&r, top, &cfg.clumps.unused_prefix));
         }
+        Cmd::Declared { path, json, top } => {
+            let files = discover::walk(&path, &cfg.discover)?;
+            let r = declared::analyze(&declared::index_all(&files, &cfg.declared), &path, true, &cfg.declared, &cfg.discover.vendor_dirs);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+                return Ok(());
+            }
+            print!("{}", declared::render(&r, top));
+        }
         Cmd::Metrics { path, json, top } => {
             let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
@@ -484,22 +504,24 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
             }
         }
     };
-    // The mentions, dead, helpers, strings and clumps passes read symbols, inline test units,
-    // references, helper bodies, literals and parameter lists off the metrics trees; Test files
-    // are parsed once here for the ones that need them.
+    // The mentions, dead, helpers, strings, clumps and declared passes read symbols, inline test
+    // units, references, helper bodies, literals, parameter lists and crate / feature / field
+    // references off the metrics trees; Test files are parsed once here for the ones that need them.
     let walker = dead::Walker::new(&cfg.dead);
     let hwalker = helpers::Walker::new(&cfg.helpers);
     let swalker = strings::Walker::new(&cfg.strings);
     let cwalker = clumps::Walker::new(&cfg.clumps);
+    let dwalker = declared::Walker::new(&cfg.declared);
     let (file_metrics, functions, per_file) =
-        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions), hwalker.file_side(root, f, regions), swalker.file_side(root, f, regions), cwalker.file_side(root, f, regions)));
-    let (mut sides, mut indexes, mut helper_sides, mut string_sides, mut clump_sides) = (Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()));
-    for (m, d, h, s, c) in per_file {
+        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions), hwalker.file_side(root, f, regions), swalker.file_side(root, f, regions), cwalker.file_side(root, f, regions), dwalker.file_side(root, f, regions)));
+    let (mut sides, mut indexes, mut helper_sides, mut string_sides, mut clump_sides, mut declared_sides) = (Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()));
+    for (m, d, h, s, c, x) in per_file {
         sides.push(m);
         indexes.push(d);
         helper_sides.push(h);
         string_sides.push(s);
         clump_sides.push(c);
+        declared_sides.push(x);
     }
     let graph = deps::build(&files, &cfg.deps);
     let clone_report = clones::detect(&source, &cfg.clones, &cfg.tests, cfg.plan.symbol_fallback);
@@ -517,6 +539,8 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
     let helpers_report = helpers::analyze(&helper_sides, &symbols, &graph, history.as_ref().map(|_| path), &cfg.helpers);
     let strings_report = strings::analyze(&string_sides, &cfg.strings);
     let clumps_report = clumps::analyze(&clump_sides, &cfg.clumps);
+    declared_sides.extend(declared::index_tests(&tests, &cfg.declared));
+    let declared_report = declared::analyze(&declared_sides, path, history.is_some(), &cfg.declared, &cfg.discover.vendor_dirs);
     Ok(report::build(
         report::Inputs {
             root: path.canonicalize()?.display().to_string(),
@@ -534,6 +558,8 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
             clumps: &clumps_report,
             clumps_weight: cfg.clumps.weight,
             clumps_prefix: &cfg.clumps.unused_prefix,
+            declared: &declared_report,
+            declared_weight: cfg.declared.weight,
             cognitive_hard: cfg.metrics.cognitive_hard,
             tests: &cfg.tests,
             list_tables_separately: cfg.clones.list_tables_separately,
