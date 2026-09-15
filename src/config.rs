@@ -26,6 +26,7 @@ pub struct Config {
     pub plan: Plan,
     pub dead: Dead,
     pub helpers: Helpers,
+    pub strings: Strings,
 }
 
 impl Config {
@@ -715,6 +716,121 @@ impl Default for Helpers {
     }
 }
 
+// ---------- strings ----------
+
+/// The repeated-literals pass: message strings spelled in several files (exact families on the
+/// masked text), config literals (time formats, env names, paths, URLs, MIME types, numbers in
+/// a config role) duplicated with no shared constant, and near-duplicate message pairs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Strings {
+    /// A message literal is prose when its masked text has at least this many characters…
+    pub min_len: usize,
+    /// …and at least this many whitespace-separated words (it must contain whitespace).
+    pub exact_min_words: usize,
+    /// An exact message family needs sites in at least this many distinct Source files…
+    pub min_files: usize,
+    /// …and a config-literal family in at least this many.
+    pub config_min_files: usize,
+    /// Only literals in a message role are prose: an argument of a `message_macros` macro or a
+    /// `message_calls` call, a `raise` / `throw` value, or a `return` / `Err(...)` value. Off,
+    /// every prose-shaped literal counts.
+    pub require_message_role: bool,
+    /// Rust macros (last path segment) whose string arguments are messages.
+    pub message_macros: Vec<String>,
+    /// Callee name pieces (`console.log`, `logger.info`, `log::warn!`, `warnings.warn`, `print`)
+    /// whose string arguments are messages; `raise` and `throw` here make those statements
+    /// message roles.
+    pub message_calls: Vec<String>,
+    /// Two distinct message texts with word-set Jaccard at or above this (and below 1) are a
+    /// near-duplicate pair…
+    pub near_jaccard: f64,
+    /// …when both have at least this many words…
+    pub min_words: usize,
+    /// …compared inside buckets of texts sharing a word seen in at most this many distinct texts.
+    pub rare_word_df: usize,
+    /// Near pairs print as information and never count toward `family_literals`.
+    pub near_info_only: bool,
+    /// Collect Rust raw string literals too.
+    pub include_raw: bool,
+    /// Drop strings inside assert-family macros, calls and statements (`assert!`, `assert_eq!`,
+    /// `self.assertEqual`, `expect(...)`, `assert x, "msg"`).
+    pub exclude_assert_calls: bool,
+    /// Drop Python docstrings (the first statement of a module, class or function body).
+    pub exclude_docstrings: bool,
+    /// Drop strings inside Rust attributes and TS decorators (`#[serde(rename = "x")]`).
+    pub exclude_attributes: bool,
+    /// Drop JSX attribute values (`className="…"`).
+    pub exclude_jsx_attributes: bool,
+    /// Calls whose direct string argument is a translation id, never a message.
+    pub gettext_calls: Vec<String>,
+    /// Regexes; a literal matching one (as written, or masked) is never collected. A repo that
+    /// prints one hint from ten commands on purpose lists it here.
+    pub ignore_patterns: Vec<String>,
+    /// A literal matching this (as written) is never prose: format strings, ALL_CAPS names,
+    /// paths, URLs and header-like `content-type` words route to the config classes instead.
+    pub nonprose_regex: String,
+    /// Config classes checked, in order; the first match wins. `number` covers numeric literals.
+    pub config_classes: Vec<String>,
+    /// The regex per string class (`strftime`, `env_name`, `url`, `mime`, `path`), matched
+    /// against the literal as written, in any position.
+    pub config_patterns: BTreeMap<String, String>,
+    /// An integer literal is a config candidate from this value up (floats always are)…
+    pub number_min: i64,
+    /// …unless it is one of these. A number needs a config role (const / static, struct field
+    /// initializer, object pair, keyword argument, default parameter, top-level const, builder
+    /// call) and forms a family only with the same folded role name in another file.
+    pub ignore_numbers: Vec<i64>,
+    /// Reason lines per file (the message line, then config families); the rest are counted.
+    pub max_reported_per_file: usize,
+    /// Sites a family line lists before `+N more`; `sites[]` in `--json` has them all.
+    pub max_sites_listed: usize,
+    /// Literal text is cut to this many characters in lines and reasons.
+    pub display_text_len: usize,
+}
+
+impl Default for Strings {
+    fn default() -> Self {
+        Self {
+            min_len: 20,
+            exact_min_words: 2,
+            min_files: 3,
+            config_min_files: 2,
+            require_message_role: true,
+            message_macros: strings(&["format", "println", "eprintln", "write", "writeln", "anyhow", "bail", "panic", "assert", "assert_eq", "assert_ne", "debug_assert", "debug_assert_eq", "debug_assert_ne"]),
+            message_calls: strings(&["print", "console", "logger", "logging", "log", "warnings", "tracing", "raise", "throw"]),
+            near_jaccard: 0.8,
+            min_words: 3,
+            rare_word_df: 40,
+            near_info_only: true,
+            include_raw: true,
+            exclude_assert_calls: true,
+            exclude_docstrings: true,
+            exclude_attributes: true,
+            exclude_jsx_attributes: true,
+            gettext_calls: strings(&["_", "gettext", "ngettext", "pgettext", "dgettext", "t", "i18n"]),
+            ignore_patterns: vec![],
+            nonprose_regex: "^(%|[A-Z_]{4,}$|[./~]|https?://|[a-z]+(-[a-z]+)+$)".into(),
+            config_classes: strings(&["strftime", "env_name", "url", "mime", "path", "number"]),
+            config_patterns: [
+                ("strftime", "%[YmdHMS]"),
+                ("env_name", "^[A-Z][A-Z0-9_]{5,}$"),
+                ("url", r"^[a-z][a-z0-9+.-]*://\S+$"),
+                ("mime", r"^(application|text|image|audio|video|multipart|message|font|model)/[a-z0-9.+*-]+$"),
+                ("path", r"^(\.{1,2}/|~/|/)?[\w.@+-]+(/[\w.@+-]+)+/?$"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+            number_min: 100,
+            ignore_numbers: vec![0, 1, 2, 10, 100, 1024],
+            max_reported_per_file: 3,
+            max_sites_listed: 8,
+            display_text_len: 80,
+        }
+    }
+}
+
 // ---------- report ----------
 
 /// Partial `[report.with_history]` tables are filled from the defaults by the
@@ -732,6 +848,10 @@ pub struct Weights {
     /// Percentile of `dead_ratio`: lines of exported symbols with no production reference
     /// outside their file, over source lines (see `dead`).
     pub dead: f64,
+    /// Percentile of `family_literals`: the file's literals in exact message or config
+    /// families (see `strings`). 0 by default: the section and reasons print, the ranking
+    /// ignores them.
+    pub strings: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -764,8 +884,8 @@ pub struct Report {
 impl Default for Report {
     fn default() -> Self {
         Self {
-            with_history: Weights { hotspot: 0.45, fixes: 0.15, complexity: 0.15, coupling: 0.10, clones: 0.10, size: 0.05, dead: 0.05 },
-            without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.55, coupling: 0.15, clones: 0.15, size: 0.15, dead: 0.05 },
+            with_history: Weights { hotspot: 0.45, fixes: 0.15, complexity: 0.15, coupling: 0.10, clones: 0.10, size: 0.05, dead: 0.05, strings: 0.0 },
+            without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.55, coupling: 0.15, clones: 0.15, size: 0.15, dead: 0.05, strings: 0.0 },
             no_tests_multiplier: 1.15,
             complexity_max_share: 0.6,
             cycle_coupling: 0.6,
