@@ -526,7 +526,7 @@ mod tests {
     }
 
     fn units(path: &str, lang: Language, src: &str, cfg: &Cfg) -> Vec<FunctionMetrics> {
-        let (_, fs) = metrics::analyze_file(&file(path, lang, src), &MetricsCfg::default(), &TestsCfg::default(), cfg);
+        let (_, fs) = metrics::analyze_file(&file(path, lang, src), &MetricsCfg::default(), &TestsCfg::default(), cfg, &crate::config::Fallback::default());
         fs
     }
 

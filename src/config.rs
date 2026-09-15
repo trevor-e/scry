@@ -31,6 +31,7 @@ pub struct Config {
     pub declared: Declared,
     pub comments: Comments,
     pub naming: Naming,
+    pub fallback: Fallback,
 }
 
 impl Config {
@@ -1193,6 +1194,69 @@ impl Default for Naming {
             min_unit_lines: 100,
             emit_short_binding_share: true,
             weight_into_complexity: 0.0,
+        }
+    }
+}
+
+// ---------- fallback ----------
+
+/// Parse-default fallbacks (see `fallback`): a literal default applied to the result of a
+/// fallible transform, counted per unit on the metrics walk and reported as a reason from
+/// `min_sites` up. Never a score input.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Fallback {
+    /// Rust methods that apply a default (`x.unwrap_or(0)`, `x.or_default()`); every call is a
+    /// fallback site, a parse default when the chain and the default qualify.
+    pub methods_rust: Vec<String>,
+    /// Rust call names that are fallible transforms (`.parse()`, `.next()`, `from_utf8(…)`): a
+    /// site whose receiver chain holds one is a parse default. Arguments are not the chain.
+    pub parse_calls: Vec<String>,
+    /// Rust constructor paths that count as a literal default, called (`String::new()`) or
+    /// passed bare to `unwrap_or_else`; literal tokens, `()`, `[]` and `None` always do.
+    pub empty_constructors: Vec<String>,
+    /// Python methods (`d.get(k, lit)`, `d.pop(k, lit)`) and builtins (`getattr(o, k, lit)`)
+    /// whose literal last argument is a default.
+    pub python_default_getters: Vec<String>,
+    /// Python call names that are fallible transforms.
+    pub parse_calls_python: Vec<String>,
+    /// Python units (bare name) in which `x or []` is never a site: a constructor defaulting an
+    /// optional argument.
+    pub python_skip_or_in: Vec<String>,
+    /// TS binary operators whose literal right operand is a default.
+    pub ts_operators: Vec<String>,
+    /// Count `a || lit` too.
+    pub ts_count_or: bool,
+    /// Count `a?.b` / `a?.()` / `a?.[i]` as fallback sites (never parse defaults). Off: it
+    /// multiplied hono's count 2.7x with nothing real behind it.
+    pub count_optional_chain: bool,
+    /// TS call names that are fallible transforms (`parse` covers `JSON.parse`).
+    pub parse_calls_ts: Vec<String>,
+    /// Parse-default sites one unit needs for the reason.
+    pub min_sites: usize,
+    /// Regexes; a unit whose bare name (owner stripped) matches one never gets the reason: a
+    /// defaults / config assembler swallows on purpose.
+    pub exempt_fn_patterns: Vec<String>,
+    /// Reason lines per file, most sites first; the rest are counted.
+    pub max_reported_per_file: usize,
+}
+
+impl Default for Fallback {
+    fn default() -> Self {
+        Self {
+            methods_rust: strings(&["unwrap_or", "unwrap_or_default", "unwrap_or_else", "or_default"]),
+            parse_calls: strings(&["parse", "split", "next", "strip_prefix", "from_utf8", "get", "splitn", "split_once", "trim_start_matches"]),
+            empty_constructors: strings(&["String::new", "Vec::new", "Default::default"]),
+            python_default_getters: strings(&["get", "getattr", "pop", "setdefault"]),
+            parse_calls_python: strings(&["split", "rsplit", "partition", "rpartition", "splitlines", "readline", "int", "float"]),
+            python_skip_or_in: strings(&["__init__", "__post_init__"]),
+            ts_operators: strings(&["??"]),
+            ts_count_or: false,
+            count_optional_chain: false,
+            parse_calls_ts: strings(&["split", "match", "exec", "parseInt", "parseFloat", "parse", "shift", "pop"]),
+            min_sites: 2,
+            exempt_fn_patterns: strings(&["^default", "^from_env", "^with_", "^parse_args", "^from_matches", "^configure", "^__init__$"]),
+            max_reported_per_file: 3,
         }
     }
 }
