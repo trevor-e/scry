@@ -1,5 +1,6 @@
 mod clones;
 mod config;
+mod dead;
 mod deps;
 mod discover;
 mod history;
@@ -96,6 +97,16 @@ enum Cmd {
         #[arg(long, default_value_t = 15)]
         top: usize,
     },
+    /// Exported symbols nothing outside their file uses, test-only symbols, never-read fields
+    /// and never-constructed variants
+    Dead {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+    },
     /// Per-function cognitive/cyclomatic complexity for source files
     Metrics {
         #[arg(default_value = ".")]
@@ -140,7 +151,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = match &cli.cmd {
         Cmd::Scan { path, .. } | Cmd::Files { path, .. } | Cmd::History { path, .. } | Cmd::Clones { path, .. }
-        | Cmd::Deps { path, .. } | Cmd::Mentions { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
+        | Cmd::Deps { path, .. } | Cmd::Mentions { path, .. } | Cmd::Dead { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
         Cmd::Plan { root, .. } => root.clone(),
         Cmd::Ast { .. } => PathBuf::from("."),
     };
@@ -332,6 +343,16 @@ fn main() -> Result<()> {
                 println!("  {p} ({} of {}): {}", m.unmentioned.len(), m.public_symbols, names.join(", "));
             }
         }
+        Cmd::Dead { path, json, top } => {
+            let files = discover::walk(&path, &cfg.discover)?;
+            let idx = dead::index_all(&files, &cfg.dead);
+            let r = dead::analyze(&idx, &path, &cfg.dead);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+                return Ok(());
+            }
+            print!("{}", dead::render(&r, top));
+        }
         Cmd::Metrics { path, json, top } => {
             let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
@@ -403,12 +424,22 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
             }
         }
     };
-    // The mentions pass reads symbols and inline test units off the metrics trees.
+    // The mentions and dead passes read symbols, inline test units and references off the
+    // metrics trees; Test files are parsed once here for both.
+    let walker = dead::Walker::new(&cfg.dead);
     let (file_metrics, functions, sides) =
-        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| mentions::source_side(root, f, regions, &cfg.tests));
+        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions)));
+    let (sides, mut indexes): (Vec<_>, Vec<_>) = sides.into_iter().unzip();
     let graph = deps::build(&files, &cfg.deps);
     let clone_report = clones::detect(&source, &cfg.clones, &cfg.tests, cfg.plan.symbol_fallback);
-    let mentions = mentions::index(&files, &sides, &cfg.tests);
+    let tests: Vec<(&discover::SourceFile, Option<tree_sitter::Tree>)> = {
+        use rayon::prelude::*;
+        files.par_iter().filter(|f| f.kind == discover::FileKind::Test).map(|f| (f, f.lang.parser().parse(f.content.as_bytes(), None))).collect()
+    };
+    let mentions = mentions::index_parsed(&sides, &tests, &cfg.tests);
+    indexes.extend(dead::index_tests(&tests, &cfg.dead));
+    let symbols = dead::SymbolIndex::build(indexes);
+    let dead_report = dead::analyze(&symbols, path, &cfg.dead);
     Ok(report::build(
         report::Inputs {
             root: path.canonicalize()?.display().to_string(),
@@ -419,6 +450,7 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
             deps: &graph,
             clones: &clone_report,
             mentions: &mentions,
+            dead: &dead_report,
             cognitive_hard: cfg.metrics.cognitive_hard,
             tests: &cfg.tests,
             list_tables_separately: cfg.clones.list_tables_separately,

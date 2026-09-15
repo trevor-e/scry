@@ -105,9 +105,14 @@ fn parse_source<'a>(file: &'a SourceFile, cfg: &Cfg) -> SourceSide<'a> {
 /// The test units of a Test file: its outermost metrics units and top-level macro calls, or
 /// the whole file when it has neither.
 fn test_units<'a>(file: &'a SourceFile, cfg: &Cfg) -> Vec<HashSet<&'a str>> {
+    let tree = file.lang.parser().parse(file.content.as_bytes(), None);
+    test_units_on(tree.as_ref().map(|t| t.root_node()), file, cfg)
+}
+
+/// `test_units` on an already-parsed tree (`None`: a failed parse has no units).
+fn test_units_on<'a>(root: Option<Node>, file: &'a SourceFile, cfg: &Cfg) -> Vec<HashSet<&'a str>> {
     let src = file.content.as_bytes();
-    let Some(tree) = file.lang.parser().parse(src, None) else { return Vec::new() };
-    let root = tree.root_node();
+    let Some(root) = root else { return Vec::new() };
     let idents = identifiers(root, file.lang, src, cfg.min_name_len);
     let units = outermost_units(root, file.lang);
     let mut ranges: Vec<(usize, usize)> = unit_ranges(root, &units, file.lang).into_iter().map(|(_, range)| range).collect();
@@ -170,6 +175,17 @@ fn macro_calls(root: Node<'_>) -> Vec<Node<'_>> {
 pub fn index<'a>(files: &'a [SourceFile], sides: &[SourceSide<'a>], cfg: &Cfg) -> MentionIndex {
     let test_file_units: Vec<Vec<HashSet<&str>>> =
         files.par_iter().filter(|f| f.kind == FileKind::Test).map(|f| test_units(f, cfg)).collect();
+    index_units(sides, test_file_units)
+}
+
+/// `index` on Test files `scan` already parsed (the dead pass walks the same trees).
+pub fn index_parsed<'a>(sides: &[SourceSide<'a>], tests: &[(&'a SourceFile, Option<tree_sitter::Tree>)], cfg: &Cfg) -> MentionIndex {
+    let test_file_units: Vec<Vec<HashSet<&str>>> =
+        tests.par_iter().map(|(f, t)| test_units_on(t.as_ref().map(|t| t.root_node()), f, cfg)).collect();
+    index_units(sides, test_file_units)
+}
+
+fn index_units<'a>(sides: &[SourceSide<'a>], test_file_units: Vec<Vec<HashSet<&'a str>>>) -> MentionIndex {
 
     // Symbol name -> the Source files defining it. A name shared by two files marks both.
     let mut defined: HashMap<&str, Vec<usize>> = HashMap::new();

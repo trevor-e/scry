@@ -8,6 +8,7 @@ description = "Find the parts of a codebase most likely to need refactoring or t
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 ignore = "0.4"
+globset = "0.4"
 petgraph = "0.8"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }

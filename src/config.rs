@@ -24,6 +24,7 @@ pub struct Config {
     pub report: Report,
     pub tests: Tests,
     pub plan: Plan,
+    pub dead: Dead,
 }
 
 impl Config {
@@ -426,6 +427,193 @@ impl Default for Plan {
     }
 }
 
+// ---------- dead ----------
+
+/// `auto` reads the manifests; `library` exempts plain `pub` / `export` (only restricted
+/// visibility is checked); `application` checks every exported symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeadMode {
+    Auto,
+    Library,
+    Application,
+}
+
+/// The dead-surface pass: exported symbols nothing outside their file uses (`[dead.symbols]`),
+/// symbols only tests keep alive (`[dead.test_only]`), and Rust fields nothing reads / variants
+/// nothing constructs (`[dead.shapes]`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Dead {
+    pub symbols: DeadSymbols,
+    pub test_only: DeadTestOnly,
+    pub shapes: DeadShapes,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DeadSymbols {
+    /// Off: the index is still built (other passes read it) but nothing is categorised.
+    pub enabled: bool,
+    /// `auto` resolves the nearest manifest per file: a Cargo.toml with `[lib]` and no `[[bin]]`
+    /// (nor `src/main.rs`) is a library, so is a package.json with `exports` and a pyproject
+    /// without `[project.scripts]`; anything else is an application. A library exempts plain
+    /// `pub` / `export` and checks only `pub(crate)` / `pub(super)`.
+    pub mode: DeadMode,
+    /// Files whose exported symbols are a library's public API: exempt in library mode. Globs
+    /// match the repo-relative path and the manifest-relative path.
+    pub api_roots: Vec<String>,
+    /// Files whose exported symbols are never candidates (a binary's `main.rs` has no caller);
+    /// their references still count.
+    pub entrypoints: Vec<String>,
+    /// Read Cargo.toml `[[bin]]` / `[lib]`, package.json `exports` / `main` / `module` / `types` /
+    /// `bin` (by target, `dist/` remapped to `src/`, wildcards as globs) and pyproject
+    /// `[project.scripts]` for the mode and for extra api roots and entrypoints.
+    pub read_manifests: bool,
+    /// A Rust item under one of these attributes (`#[test]`, `#[tokio::test]` by its last
+    /// segment, `#[no_mangle]`) is never a candidate: something outside the crate calls it.
+    pub skip_attrs: Vec<String>,
+    /// Python decorators (exact, or a `prefix.*` glob) that mark a definition framework-called.
+    pub skip_decorators: Vec<String>,
+    /// Names never reported (JSX namespace conventions).
+    pub skip_names: Vec<String>,
+    /// Names starting with one of these are never reported.
+    pub skip_name_prefixes: Vec<String>,
+    /// TS exports a framework calls by convention (`default`, Next's `metadata`, Remix's
+    /// `loader`): never candidates.
+    pub ts_framework_exports: Vec<String>,
+    /// TS calls whose arguments are test context (`describe('x', () => …)`).
+    pub ts_test_calls: Vec<String>,
+    /// A string literal references `name` when a dot- or colon-separated segment of it equals
+    /// `name` (`'app.apps.AppConfig'`, `'pkg.mod:func'`) or it holds `{name}` / `{name:` (a
+    /// Rust 2021 inline format argument, which is string content inside a `token_tree`).
+    pub string_refs: bool,
+    /// Items spanning fewer lines are never candidates (a one-line `pub const`).
+    pub min_lines: usize,
+    /// Symbol classes checked: `fn` (functions, methods), `type` (structs, enums, unions,
+    /// traits, type aliases, classes, interfaces), `const` (consts, statics, variables), `mod`.
+    pub kinds: Vec<String>,
+    /// `rust`, `typescript` (also tsx and javascript), `python`. TypeScript is checked only under
+    /// an explicit `mode = "application"`; otherwise the section says to run knip. Python never
+    /// gets an in-file-only line.
+    pub languages: Vec<String>,
+    /// The `N of M pub items are referenced only inside this file` line needs at least this many
+    /// candidates in the file…
+    pub overexported_min_items: usize,
+    /// …and at least this share of them referenced only in-file.
+    pub overexported_min_share: f64,
+    /// Per-symbol reason lines per file (dead before test-only, longest first); the rest are
+    /// counted, and `dead_symbols[]` in `--json` has them all. Also how many in-file-only
+    /// symbols the per-file line names.
+    pub max_reported_per_file: usize,
+}
+
+impl Default for DeadSymbols {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            mode: DeadMode::Auto,
+            api_roots: strings(&["src/lib.rs", "**/index.ts", "**/__init__.py"]),
+            entrypoints: strings(&["src/main.rs", "src/bin/**", "build.rs", "benches/**", "examples/**", "fuzz/**", "**/__main__.py", "conftest.py", "build/**", "scripts/**", "*.config.ts"]),
+            read_manifests: true,
+            skip_attrs: strings(&["test", "bench", "no_mangle", "wasm_bindgen", "pyfunction", "tauri::command", "proc_macro"]),
+            skip_decorators: strings(&["pytest.fixture", "app.route", "router.*"]),
+            skip_names: strings(&["IntrinsicAttributes", "ElementChildrenAttribute", "ElementType", "IntrinsicElements"]),
+            skip_name_prefixes: strings(&["_", "test_"]),
+            ts_framework_exports: strings(&["default", "metadata", "generateStaticParams", "loader", "action", "config"]),
+            ts_test_calls: strings(&["describe", "it", "test"]),
+            string_refs: true,
+            min_lines: 2,
+            kinds: strings(&["fn", "type", "const"]),
+            languages: strings(&["rust"]),
+            overexported_min_items: 4,
+            overexported_min_share: 0.5,
+            max_reported_per_file: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DeadTestOnly {
+    pub enabled: bool,
+    /// A symbol with no production reference is test-only once its test references (own file
+    /// and others together) reach this; fewer, and it is not reported at all.
+    pub min_external_test_refs: usize,
+    /// Off: references from files matching `bench_globs` are test context.
+    pub treat_benches_as_prod: bool,
+    /// Benchmarks, examples and fuzz targets: test context unless `treat_benches_as_prod`.
+    pub bench_globs: Vec<String>,
+    /// Files that are test context whatever discovery classified them as.
+    pub extra_test_globs: Vec<String>,
+    /// Test-only reason lines per file.
+    pub max_reported_per_file: usize,
+}
+
+impl Default for DeadTestOnly {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_external_test_refs: 2,
+            treat_benches_as_prod: false,
+            bench_globs: strings(&["benches/**", "examples/**", "fuzz/**"]),
+            extra_test_globs: strings(&["**/testutil*.rs", "**/test_utils*", "**/fixtures/**"]),
+            max_reported_per_file: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DeadShapes {
+    pub enabled: bool,
+    /// Only `rust` is implemented.
+    pub languages: Vec<String>,
+    /// A struct or enum is a candidate only when every derive is in this list (a derive outside
+    /// it may read fields or construct variants on its own)…
+    pub allow_derives: Vec<String>,
+    /// …or in this one: derives that read every field but construct nothing, so a struct
+    /// deriving one has no never-read field while an enum deriving one is still checked for
+    /// never-constructed variants.
+    pub serializing_derives: Vec<String>,
+    /// A type under one of these attributes (`#[repr]`: layout is the point) is never a candidate.
+    pub skip_attrs: Vec<String>,
+    /// `#[non_exhaustive]` always hides "never constructed or matched"; on, it also hides
+    /// "matched but never constructed".
+    pub non_exhaustive_hides_handled: bool,
+    /// An `impl Trait for Enum` with one of these traits (or `#[derive(Default)]`) constructs
+    /// variants the walk cannot see: every variant of that enum is exempt.
+    pub exempt_impl_traits: Vec<String>,
+    /// `{name}` format captures inside macro strings count as field reads and variant
+    /// constructions (path segments never do: `"index.db"` is a file name, not a read of `db`).
+    pub string_refs: bool,
+    /// Report a variant that is matched somewhere but constructed nowhere.
+    pub report_handled_never_produced: bool,
+    /// Only types with a production reference outside their file are checked: a dead type's
+    /// fields are noise on top of the type.
+    pub require_type_reachable: bool,
+    /// Shape reason lines per file.
+    pub max_reported_per_file: usize,
+}
+
+impl Default for DeadShapes {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            languages: strings(&["rust"]),
+            allow_derives: strings(&["Debug", "Clone", "Copy", "PartialEq", "Eq", "Hash", "Default", "PartialOrd", "Ord"]),
+            serializing_derives: strings(&["Serialize"]),
+            skip_attrs: strings(&["repr"]),
+            non_exhaustive_hides_handled: false,
+            exempt_impl_traits: strings(&["FromStr", "TryFrom", "From", "Default", "Deref"]),
+            string_refs: true,
+            report_handled_never_produced: true,
+            require_type_reachable: true,
+            max_reported_per_file: 5,
+        }
+    }
+}
+
 // ---------- report ----------
 
 /// Partial `[report.with_history]` tables are filled from the defaults by the
@@ -440,6 +628,9 @@ pub struct Weights {
     pub coupling: f64,
     pub clones: f64,
     pub size: f64,
+    /// Percentile of `dead_ratio`: lines of exported symbols with no production reference
+    /// outside their file, over source lines (see `dead`).
+    pub dead: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -472,8 +663,8 @@ pub struct Report {
 impl Default for Report {
     fn default() -> Self {
         Self {
-            with_history: Weights { hotspot: 0.45, fixes: 0.15, complexity: 0.15, coupling: 0.10, clones: 0.10, size: 0.05 },
-            without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.55, coupling: 0.15, clones: 0.15, size: 0.15 },
+            with_history: Weights { hotspot: 0.45, fixes: 0.15, complexity: 0.15, coupling: 0.10, clones: 0.10, size: 0.05, dead: 0.05 },
+            without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.55, coupling: 0.15, clones: 0.15, size: 0.15, dead: 0.05 },
             no_tests_multiplier: 1.15,
             complexity_max_share: 0.6,
             cycle_coupling: 0.6,
