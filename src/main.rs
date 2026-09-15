@@ -478,11 +478,16 @@ fn main() -> Result<()> {
             // The one-letter share of the production bindings and the far-lived ones (see `naming`).
             let (bindings, short, far): (usize, usize, usize) = file_metrics.iter().fold((0, 0, 0), |a, f| (a.0 + f.bindings, a.1 + f.short_bindings, a.2 + f.long_short_bindings));
             let share = if bindings == 0 { 0.0 } else { 100.0 * short as f64 / bindings as f64 };
-            println!("{bindings} bindings, {short} one-letter ({share:.1}%), {far} with a use gap of {}+ lines\n", cfg.naming.short_name_min_gap);
-            println!("{:>4} {:>4} {:>4} {:>5} {:>3}  location", "cog", "cyc", "nest", "lines", "par");
+            println!("{bindings} bindings, {short} one-letter ({share:.1}%), {far} with a use gap of {}+ lines", cfg.naming.short_name_min_gap);
+            // Brain methods: long, complex and binding many locals at once (see `metrics`).
+            let brains: Vec<&metrics::FunctionMetrics> = funcs.iter().filter(|f| !f.in_test && f.brain).collect();
+            let named: Vec<String> = brains.iter().map(|f| format!("{}:{} {} ({} lines, cognitive {}, {} locals)", f.file, f.start_line, f.name, f.lines, f.cognitive, f.locals)).collect();
+            println!("{} brain method(s) (>= {} lines, cognitive >= {}, locals >= {}){}{}\n", brains.len(), cfg.metrics.brain_min_lines, cfg.metrics.brain_min_cognitive, cfg.metrics.brain_min_locals, if named.is_empty() { "" } else { ": " }, named.join(", "));
+            println!("{:>4} {:>4} {:>4} {:>5} {:>3} {:>4}  location", "cog", "cyc", "nest", "lines", "par", "loc");
             for f in funcs.iter().take(top) {
                 let tag = if f.in_test { " (in inline tests)" } else { "" };
-                println!("{:>4} {:>4} {:>4} {:>5} {:>3}  {}:{}  {}{tag}", f.cognitive, f.cyclomatic, f.max_nesting, f.lines, f.params, f.file, f.start_line, f.name);
+                let brain = if f.brain { " (brain method)" } else { "" };
+                println!("{:>4} {:>4} {:>4} {:>5} {:>3} {:>4}  {}:{}  {}{brain}{tag}", f.cognitive, f.cyclomatic, f.max_nesting, f.lines, f.params, f.locals, f.file, f.start_line, f.name);
             }
             let broken: Vec<&str> = file_metrics.iter().filter(|f| f.parse_errors).map(|f| f.path.as_str()).collect();
             if !broken.is_empty() {

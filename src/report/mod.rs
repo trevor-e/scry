@@ -481,6 +481,18 @@ fn unmentioned_reason(unmentioned: &[Symbol], public: usize, listed: usize) -> S
 }
 
 /// The short-name attribute lines of a file's production units (see `naming::unit_reason`):
+/// The brain-method label of a unit whose lines, cognitive and locals all reach the `[metrics]`
+/// floors: ` — brain method: 258 lines, cognitive 42, 34 local variables; longest-lived p (lines
+/// 690-884), o (lines 700-850), h (lines 710-800)` (see `metrics`).
+fn brain_label(w: &FunctionMetrics) -> String {
+    let mut r = format!(" — brain method: {} lines, cognitive {}, {} local variables", w.lines, w.cognitive, w.locals);
+    if !w.longest_locals.is_empty() {
+        let named: Vec<String> = w.longest_locals.iter().map(|l| format!("{} (lines {}-{})", l.name, l.first_line, l.last_line)).collect();
+        r.push_str(&format!("; longest-lived {}", named.join(", ")));
+    }
+    r
+}
+
 /// one per unit with a far-lived one-letter binding that is over `cognitive_hard`, among the
 /// file's `worst` units, or at least `min_unit_lines` long; widest gap first.
 fn short_name_lines(units: &[&FunctionMetrics], worst: &[&FunctionMetrics], cognitive_hard: u32, naming: &NamingCfg) -> Vec<String> {
@@ -597,9 +609,10 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
     for f in inp.functions.iter().filter(|f| !f.in_test) {
         units.entry(f.file.as_str()).or_default().push(f);
     }
+    // The worst unit is chosen by cognitive, then locals, then lines (see `metrics`).
     let mut worst: HashMap<&str, Vec<&FunctionMetrics>> = units.clone();
     for v in worst.values_mut() {
-        v.sort_by_key(|f| std::cmp::Reverse(f.cognitive));
+        v.sort_by_key(|f| std::cmp::Reverse((f.cognitive, f.locals, f.lines)));
         v.truncate(3);
     }
 
@@ -670,7 +683,10 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 let w = worst.get(f.path.as_str()).and_then(|v| v.first());
                 let mut r = format!("{} function(s) over cognitive {}", s.complex_functions, inp.cognitive_hard);
                 if let Some(w) = w {
-                    r.push_str(&format!("; worst {} at {} (lines {}-{}, nesting {})", w.name, w.cognitive, w.start_line, w.end_line, w.max_nesting));
+                    r.push_str(&format!("; worst {} at {} (lines {}-{}, nesting {}, {} locals)", w.name, w.cognitive, w.start_line, w.end_line, w.max_nesting, w.locals));
+                    if w.brain {
+                        r.push_str(&brain_label(w));
+                    }
                 }
                 // Sub-lines: the phases each over-threshold unit already labels (see `comments`),
                 // then the short-name attributes.
@@ -953,6 +969,53 @@ mod tests {
     }
 
     #[test]
+    fn locals_ride_the_cognitive_reason_and_a_brain_method_is_a_label_only() {
+        use crate::metrics::LocalSpan;
+        let sf = |p: &str, lines: usize| SourceFile {
+            path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines, bytes: 0, content: String::new(),
+        };
+        let unit = |file: &str, name: &str, s: usize, lines: usize, cognitive: u32, locals: usize, brain: bool| FunctionMetrics {
+            file: file.into(), name: name.into(), start_line: s, end_line: s + lines - 1, lines, params: 0, cyclomatic: 1, cognitive, max_nesting: 3, in_test: false,
+            phases: Vec::new(), bindings: locals, short_bindings: Vec::new(), long_short_bindings: 0, locals, brain,
+            longest_locals: if brain { vec![LocalSpan { name: "p".into(), first_line: 690, last_line: 884 }, LocalSpan { name: "o".into(), first_line: 700, last_line: 850 }] } else { Vec::new() },
+        };
+        // a.rs: the brain method. b.rs: two units tied on cognitive, the one with more locals
+        // heads the reason; c.rs: tied on cognitive and locals, the longer one heads it.
+        let files = vec![sf("a.rs", 1000), sf("b.rs", 400), sf("c.rs", 400)];
+        let fm = vec![fmetrics("a.rs", 42, 42, 1), fmetrics("b.rs", 40, 20, 2), fmetrics("c.rs", 40, 20, 2)];
+        let functions = vec![
+            unit("a.rs", "close", 687, 258, 42, 34, true),
+            unit("b.rs", "few", 10, 50, 20, 3, false),
+            unit("b.rs", "many", 100, 50, 20, 9, false),
+            unit("c.rs", "short", 10, 50, 20, 5, false),
+            unit("c.rs", "long", 100, 80, 20, 5, false),
+        ];
+        let deps = DepGraph::default();
+        let clones = CloneReport::default();
+        let mentions = MentionIndex::default();
+        let tests = TestsCfg::default();
+        let hcfg = HistoryCfg::default();
+        let pcfg = PlanCfg::default();
+        let weights = Weights { hotspot: 0.0, fixes: 0.0, complexity: 1.0, coupling: 0.0, clones: 0.0, size: 0.0, dead: 0.0, strings: 0.0 };
+        let cx = Cfg { with_history: weights.clone(), without_history: weights, no_tests_multiplier: 1.0, ..Cfg::default() };
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &cx, &td());
+        let hot = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap();
+        assert_eq!(hot("a.rs").reasons[0], "1 function(s) over cognitive 15; worst close at 42 (lines 687-944, nesting 3, 34 locals) — brain method: 258 lines, cognitive 42, 34 local variables; longest-lived p (lines 690-884), o (lines 700-850)", "{:?}", hot("a.rs").reasons);
+        assert_eq!(hot("b.rs").reasons[0], "2 function(s) over cognitive 15; worst many at 20 (lines 100-149, nesting 3, 9 locals)", "{:?}", hot("b.rs").reasons);
+        assert_eq!(hot("c.rs").reasons[0], "2 function(s) over cognitive 15; worst long at 20 (lines 100-179, nesting 3, 5 locals)", "{:?}", hot("c.rs").reasons);
+        assert_eq!(hot("b.rs").worst_functions.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), vec!["many", "few"]);
+        // The label moves nothing: the score is the complexity percentile alone, so b and c tie
+        // whatever their locals, and no section names a brain method.
+        assert_eq!(hot("b.rs").score, hot("c.rs").score);
+        let text = render(&r, 10);
+        assert!(text.contains("worst close at 42 (lines 687-944, nesting 3, 34 locals) — brain method: 258 lines"), "{text}");
+        assert!(!text.contains("BRAIN"), "{text}");
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"locals\":34,\"brain\":true,\"longest_locals\":[{\"name\":\"p\",\"first_line\":690,\"last_line\":884}"), "{json}");
+        assert!(json.contains("\"locals\":9}"), "no brain / longest_locals keys on a plain unit: {json}");
+    }
+
+    #[test]
     fn short_name_attribute_rides_the_functions_reason_and_weighs_nothing_by_default() {
         use crate::naming::ShortBinding;
         let sf = |p: &str, lines: usize| SourceFile {
@@ -962,7 +1025,7 @@ mod tests {
         let near = |name: &str, decl: usize| ShortBinding { name: name.into(), decl_line: decl, last_line: decl + 10, uses: 4, max_gap: 4, gap_from: decl, gap_to: decl + 4, span: 10, block_lines: 100 };
         let unit = |file: &str, name: &str, s: usize, lines: usize, cognitive: u32, short: Vec<ShortBinding>| {
             let long = short.iter().filter(|b| b.max_gap >= 30).count();
-            FunctionMetrics { file: file.into(), name: name.into(), start_line: s, end_line: s + lines - 1, lines, params: 0, cyclomatic: 1, cognitive, max_nesting: 1, in_test: false, phases: Vec::new(), bindings: 6, short_bindings: short, long_short_bindings: long }
+            FunctionMetrics { file: file.into(), name: name.into(), start_line: s, end_line: s + lines - 1, lines, params: 0, cyclomatic: 1, cognitive, max_nesting: 1, in_test: false, phases: Vec::new(), bindings: 6, short_bindings: short, long_short_bindings: long, locals: 0, brain: false, longest_locals: Vec::new() }
         };
         // a.rs: an over-threshold unit with two far bindings and a near one. b.rs: nothing over
         // the threshold, a 120-line unit (>= min_unit_lines). c.rs: four short units, the far
@@ -997,7 +1060,7 @@ mod tests {
         assert_eq!((hot("a.rs").signals.long_short_bindings, hot("a.rs").signals.short_binding_share), (2, Some(0.5)));
         // a.rs: a sub-line of the functions reason, worst binding first, both far ones listed.
         let a = hot("a.rs");
-        assert_eq!(a.reasons[0], "1 function(s) over cognitive 15; worst close at 32 (lines 687-944, nesting 1)\nclose (lines 687-944): this block is too long to carry a one-letter name: p (declared line 690, last used line 770, 3 uses, widest gap 50 lines between lines 695 and 745, in a 100-line block); 2 one-letter bindings have a use gap of 30+ lines: p, o", "{:?}", a.reasons);
+        assert_eq!(a.reasons[0], "1 function(s) over cognitive 15; worst close at 32 (lines 687-944, nesting 1, 0 locals)\nclose (lines 687-944): this block is too long to carry a one-letter name: p (declared line 690, last used line 770, 3 uses, widest gap 50 lines between lines 695 and 745, in a 100-line block); 2 one-letter bindings have a use gap of 30+ lines: p, o", "{:?}", a.reasons);
         assert!(a.worst_functions[0].short_bindings.iter().any(|b| b.name == "f"), "raw bindings ride the unit in JSON");
         // b.rs: no functions reason to ride on, so a lines-based one heads it.
         let b = hot("b.rs");
@@ -1010,7 +1073,7 @@ mod tests {
         assert!(!c.reasons.iter().any(|r| r.contains("fourth")), "{:?}", c.reasons);
         // The text renderer indents the sub-line under the reason and never says rename.
         let text = render(&r, 10);
-        assert!(text.contains("        - 1 function(s) over cognitive 15; worst close at 32 (lines 687-944, nesting 1)\n            close (lines 687-944): this block is too long"), "{text}");
+        assert!(text.contains("        - 1 function(s) over cognitive 15; worst close at 32 (lines 687-944, nesting 1, 0 locals)\n            close (lines 687-944): this block is too long"), "{text}");
         assert!(!text.contains("rename"));
         // The share percentile enters the score only through the weight.
         static WEIGHTED: std::sync::OnceLock<NamingCfg> = std::sync::OnceLock::new();
@@ -1029,7 +1092,7 @@ mod tests {
         // because it is in the printed list. c.rs: qualifies but is not printed at --top 2.
         let files = vec![sf("a.rs", 1400), sf("b.rs", 900), sf("c.rs", 800)];
         let fm = vec![fmetrics("a.rs", 30, 30, 1), fmetrics("b.rs", 2, 2, 0), fmetrics("c.rs", 1, 1, 0)];
-        let functions = vec![FunctionMetrics { file: "a.rs".into(), name: "ladder".into(), start_line: 405, end_line: 656, lines: 252, params: 1, cyclomatic: 9, cognitive: 32, max_nesting: 5, in_test: false, phases: Vec::new(), bindings: 0, short_bindings: Vec::new(), long_short_bindings: 0 }];
+        let functions = vec![FunctionMetrics { file: "a.rs".into(), name: "ladder".into(), start_line: 405, end_line: 656, lines: 252, params: 1, cyclomatic: 9, cognitive: 32, max_nesting: 5, in_test: false, phases: Vec::new(), bindings: 0, short_bindings: Vec::new(), long_short_bindings: 0, locals: 0, brain: false, longest_locals: Vec::new() }];
         let phase = |label: &str, start, end| Phase { label: label.into(), start, end, lines: end - start + 1, est_cognitive: Some(1), shared_locals: vec![] };
         let unit = UnitPhases { unit: "ladder".into(), start_line: 405, end_line: 656, cognitive: 32, phases: vec![phase("rung 1", 471, 497), phase("rung 2", 498, 656)], shared_locals: vec!["git".into()], reason: "ladder (lines 405-656, cognitive 32) already labels 2 phases: rung 1 471-497, rung 2 498-656 — extract each as a helper (est. cognitive 1 / 1; 1 local shared: git)".into() };
         let section = |name: &str, start, end| Section { name: name.into(), start, end, lines: end - start + 1, functions: 1 };
@@ -1047,7 +1110,7 @@ mod tests {
         let a = &r.hotspots[0];
         assert_eq!(a.path, "a.rs");
         // The phase sub-line is part of the metrics reason; the banner line is its own reason.
-        assert_eq!(a.reasons[0], "1 function(s) over cognitive 15; worst ladder at 32 (lines 405-656, nesting 5)\nladder (lines 405-656, cognitive 32) already labels 2 phases: rung 1 471-497, rung 2 498-656 — extract each as a helper (est. cognitive 1 / 1; 1 local shared: git)");
+        assert_eq!(a.reasons[0], "1 function(s) over cognitive 15; worst ladder at 32 (lines 405-656, nesting 5, 0 locals)\nladder (lines 405-656, cognitive 32) already labels 2 phases: rung 1 471-497, rung 2 498-656 — extract each as a helper (est. cognitive 1 / 1; 1 local shared: git)");
         assert!(a.reasons.iter().any(|x| x.starts_with("a.rs is cut into 3 labelled sections")), "{:?}", a.reasons);
         assert_eq!(a.sections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["one", "two", "three"]);
         assert_eq!(a.worst_functions[0].phases.iter().map(|p| p.label.as_str()).collect::<Vec<_>>(), vec!["rung 1", "rung 2"]);
@@ -1059,7 +1122,7 @@ mod tests {
         // Scores come from size alone: the annotations moved nothing.
         assert!(a.score > b.score);
         let text = render(&r, 2);
-        assert!(text.contains("        - 1 function(s) over cognitive 15; worst ladder at 32 (lines 405-656, nesting 5)\n            ladder (lines 405-656, cognitive 32) already labels 2 phases"), "{text}");
+        assert!(text.contains("        - 1 function(s) over cognitive 15; worst ladder at 32 (lines 405-656, nesting 5, 0 locals)\n            ladder (lines 405-656, cognitive 32) already labels 2 phases"), "{text}");
         assert!(text.contains("        - a.rs is cut into 3 labelled sections: 'one' 2-300, 'two' 302-900 (599 lines, 1 fn), 'three' 902-1400 — extract the largest as two.rs\n"), "{text}");
         assert!(serde_json::to_string(&r).unwrap().contains("\"phases\":[{\"label\":\"rung 1\""));
     }
@@ -1080,8 +1143,8 @@ mod tests {
         c.test_regions = vec![region(RegionKind::CfgTestMod, 6, 100)];
         let fm = vec![a, fmetrics("b.rs", 1, 1, 0), c];
         let functions = vec![
-            FunctionMetrics { file: "a.rs".into(), name: "src".into(), start_line: 1, end_line: 2, lines: 2, params: 0, cyclomatic: 1, cognitive: 1, max_nesting: 0, in_test: false, phases: Vec::new(), bindings: 0, short_bindings: Vec::new(), long_short_bindings: 0 },
-            FunctionMetrics { file: "a.rs".into(), name: "tst".into(), start_line: 1300, end_line: 1360, lines: 61, params: 0, cyclomatic: 1, cognitive: 40, max_nesting: 3, in_test: true, phases: Vec::new(), bindings: 0, short_bindings: Vec::new(), long_short_bindings: 0 },
+            FunctionMetrics { file: "a.rs".into(), name: "src".into(), start_line: 1, end_line: 2, lines: 2, params: 0, cyclomatic: 1, cognitive: 1, max_nesting: 0, in_test: false, phases: Vec::new(), bindings: 0, short_bindings: Vec::new(), long_short_bindings: 0, locals: 0, brain: false, longest_locals: Vec::new() },
+            FunctionMetrics { file: "a.rs".into(), name: "tst".into(), start_line: 1300, end_line: 1360, lines: 61, params: 0, cyclomatic: 1, cognitive: 40, max_nesting: 3, in_test: true, phases: Vec::new(), bindings: 0, short_bindings: Vec::new(), long_short_bindings: 0, locals: 0, brain: false, longest_locals: Vec::new() },
         ];
         let deps = DepGraph::default();
         let clones = CloneReport::default();

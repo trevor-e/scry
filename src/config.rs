@@ -209,11 +209,18 @@ impl Default for History {
 pub struct Metrics {
     /// Functions above this cognitive complexity are "hard to follow".
     pub cognitive_hard: u32,
+    /// A unit is a brain method when it is at least this many lines long…
+    pub brain_min_lines: usize,
+    /// …with at least this cognitive complexity…
+    pub brain_min_cognitive: u32,
+    /// …and at least this many distinct local bindings (`locals` on the function). The label
+    /// is text on the cognitive reason only: no section, no score weight.
+    pub brain_min_locals: usize,
 }
 
 impl Default for Metrics {
     fn default() -> Self {
-        Self { cognitive_hard: 15 }
+        Self { cognitive_hard: 15, brain_min_lines: 100, brain_min_cognitive: 15, brain_min_locals: 15 }
     }
 }
 

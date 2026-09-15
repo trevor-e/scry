@@ -796,7 +796,7 @@ mod tests {
 
     #[test]
     fn rust_phases_span_to_the_next_label_estimate_cognitive_and_find_shared_locals() {
-        let m = MetricsCfg { cognitive_hard: 5 };
+        let m = MetricsCfg { cognitive_hard: 5, ..MetricsCfg::default() };
         let mut cfg = Cfg::default();
         cfg.phases.min_span_lines = 10;
         cfg.phases.min_phase_lines = 3;
@@ -821,7 +821,7 @@ mod tests {
     #[test]
     fn phase_floors_depth_and_the_cognitive_gate_drop_units() {
         let f = file("w.rs", Language::Rust, &phased_rust());
-        let m = MetricsCfg { cognitive_hard: 5 };
+        let m = MetricsCfg { cognitive_hard: 5, ..MetricsCfg::default() };
         // The arm banner is 4 lines: min_phase_lines = 8 drops the unit; max_depth = 0 hides it.
         let mut cfg = Cfg::default();
         cfg.phases.min_span_lines = 10;
@@ -835,7 +835,7 @@ mod tests {
         cfg.phases.cross_with_cognitive_min = Some(40);
         assert!(side_with(&f, &cfg, &m).units.is_empty());
         cfg.phases.cross_with_cognitive_min = None;
-        assert!(side_with(&f, &cfg, &MetricsCfg { cognitive_hard: 30 }).units.is_empty());
+        assert!(side_with(&f, &cfg, &MetricsCfg { cognitive_hard: 30, ..MetricsCfg::default() }).units.is_empty());
         // Span floor and phase count floor.
         cfg.phases.min_span_lines = 100;
         assert!(side_with(&f, &cfg, &m).units.is_empty());
@@ -858,7 +858,7 @@ mod tests {
         let body = format!("    // --flag prose is not a phase\n    // == neither is this\n    // Finally, nor this\n    // 1) numbered\n{pad}    // Step 2 numbered word\n{pad}    b\n");
         let src = format!("fn f(a: u8, mut b: u8) -> u8 {{\n{body}}}\n#[cfg(test)]\nmod tests {{\n    fn t(a: u8, mut b: u8) -> u8 {{\n{body}    }}\n}}\n");
         let f = file("p.rs", Language::Rust, &src);
-        let m = MetricsCfg { cognitive_hard: 5 };
+        let m = MetricsCfg { cognitive_hard: 5, ..MetricsCfg::default() };
         let mut cfg = Cfg::default();
         cfg.phases.min_span_lines = 10;
         let s = side_with(&f, &cfg, &m);
@@ -872,7 +872,7 @@ mod tests {
     fn python_and_typescript_phases_use_their_own_blocks_and_binders() {
         let pad = "        if a > 1:\n            b += 1\n".repeat(4);
         let py = format!("def work(a, b):\n    out = 0\n    # ── phase 1 ──\n{pad}    out += a\n    # phase 2: second\n{pad}    out += b\n    return out\n");
-        let m = MetricsCfg { cognitive_hard: 4 };
+        let m = MetricsCfg { cognitive_hard: 4, ..MetricsCfg::default() };
         let mut cfg = Cfg::default();
         cfg.phases.min_span_lines = 10;
         cfg.phases.min_phase_lines = 3;
@@ -905,7 +905,7 @@ mod tests {
         let src = format!("fn f(a: u8, mut b: u8) -> u8 {{\n    let Some(fact) = Some(a) else {{ return 0 }};\n    // ── step 1 ──\n{pad}    b += fact;\n    // ── step 2 ──\n{pad}    b + fact\n}}\n");
         let mut cfg = Cfg::default();
         cfg.phases.min_span_lines = 10;
-        let s = side_with(&file("c.rs", Language::Rust, &src), &cfg, &MetricsCfg { cognitive_hard: 5 });
+        let s = side_with(&file("c.rs", Language::Rust, &src), &cfg, &MetricsCfg { cognitive_hard: 5, ..MetricsCfg::default() });
         assert_eq!(s.units[0].shared_locals, vec!["a", "b", "fact"], "{:?}", s.units[0].shared_locals);
     }
 
