@@ -6,7 +6,7 @@ and explain why in terms an LLM (or a person) can act on.
 ```
 scry scan <repo>            # ranked hotspots with reasons + cycles, hidden coupling, clones
 scry scan <repo> --json     # the same, machine-readable
-scry files | history | metrics | deps | clones | mentions | dead <repo>   # one signal at a time
+scry files | history | metrics | deps | clones | mentions | dead | helpers <repo>   # one signal at a time
 scry plan <file> [--root <repo>]   # one file's refactor plan (the scan pipeline, one file's output)
 scry ast <file> [--errors]  # tree-sitter debugging aid
 ```
@@ -27,6 +27,7 @@ language is one grammar crate plus a node-kind table.
 | mentions | test units (functions in test files, tests inside inline `#[cfg(test)]` regions) that name a source file's symbols as identifier tokens, never in strings; the public symbols no test names | "a test file imports it" is false for CLI-style suites that drive the binary: kanspec's `cmd/status.rs` is imported by no test and named by 51 test functions; the no-tests multiplier now needs zero naming units, and a file most of whose public symbols no test names says which ones, with line ranges |
 | plan | per-hotspot refactor steps from findings already made: every clone run resolved to the metrics unit holding its start line (else the preceding top-level item), one `canonicalise_clone` step per pair naming both symbols (`park (932-962) duplicates drop_ticket (1010-1036), 239 tokens: keep one`), clone runs inside `#[cfg(test)]` folded into one step naming the region, an `extract` step per unit over the cognitive threshold, the cycle's cheapest cut when this file is its source; `scry plan <file>` prints one | a CLONES line with two line ranges and no names is a lookup the agent has to do itself; a step that names the symbol on both sides is something it can act on, and a predicted score would be fake precision under a percentile table |
 | dead | a symbol index (every definition, every identifier reference by bare name, split into production and test context) built on the trees already parsed; exported symbols referenced nowhere (DEAD), only by tests (TESTONLY, strict: no production use even in-file, named with the test files), or only inside their own file (one per-file percentile line, never per-symbol advice); Rust struct fields nothing reads and enum variants nothing constructs; mode auto/library/application from the manifests, so a library's public API is exempt | LLM sessions write `pub fn` / `export` by default and never narrow visibility, so rustc's `dead_code` goes silent behind an all-`pub mod` lib.rs: kanspec's `hooks::install` has no caller in 81 files, `Git::is_ignored` lives only for two integration tests, and 154 of its 708 pub items are used only in their own file; a Rust 2021 `format!("{BIN_ENV}")` is a use, so string contents count |
+| helpers | top-level helpers grouped by name across files and classed verbatim / similar / different contract on a helper-specific normalizer (only bound names anonymised; callees, fields, macros and literals kept), each copy attributed to its introducing commit and `Claude-Session`; deliberate twins (same basename, re-export wrappers, per-adapter dirs, `#[cfg]` gates) suppressed; and small helper bodies (12-40 tokens) found as exact token sequences in other files, with `hoist and call` when the helper is private | each session writes the utility it needs without grepping for it: kanspec's `plural` is byte-identical in `cmd/flow.rs` and `cmd/status.rs` and re-typed with a second parameter in `cmd/proposal.rs`, three commits from two sessions; `io_err` and `render` twice each; the clones pass cannot see a 12-token idiom re-derived in place, and the same tool run on ripgrep and fd finds no verbatim family at all |
 | report | percentile-normalised composite, reasons per file | one ranked list, no thresholds to tune per language |
 
 The headline score is the hotspot idea from Tornhill's *Your Code as a Crime
@@ -55,7 +56,7 @@ scry config <repo> > scry.toml   # dump the effective settings, edit what you ne
 
 Sections match the passes: `[discover]`, `[history]`, `[metrics]`, `[deps]`,
 `[clones]`, `[report]`, `[tests]`, `[plan]`, `[dead.symbols]`, `[dead.test_only]`,
-`[dead.shapes]`. A file only has to name what it changes:
+`[dead.shapes]`, `[helpers]`. A file only has to name what it changes:
 
 ```toml
 [discover]
@@ -92,6 +93,13 @@ min_lines = 1                            # also check one-line items (default 2)
 
 [dead.test_only]
 min_external_test_refs = 3               # a symbol touched by fewer test references is not test-only (default 2)
+
+[helpers]
+min_name_len = 6                         # names shorter than this never form a same-name family (default 4)
+report_divergent = true                  # also list same-signature families whose bodies differ (default false)
+min_tokens = 8                           # smallest helper body searched for as an inlined idiom (default 12)
+allow_one_wildcard = true                # one parameter slot may match any expression at the hit (default false)
+attribute_commits = false                # skip the per-copy `git log -S` lookups (default true, capped at 50)
 
 [report.with_history]
 hotspot = 0.5                            # other weights keep their defaults

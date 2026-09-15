@@ -9,6 +9,7 @@ use crate::clones::{CloneKind, CloneReport, ClonePair, Loc, TableRef};
 use crate::config::{History as HistoryCfg, Plan as PlanCfg, Report as Cfg, Tests as TestsCfg, Weights};
 use crate::dead::{self, DeadReport, FileDead, Shape, SymbolReport};
 use crate::deps::{Cycle, DepGraph};
+use crate::helpers::{self, Family, HelpersReport, Inlined};
 use crate::discover::{FileKind, SourceFile};
 use crate::history::{CoChange, History};
 use crate::mentions::{MentionIndex, Symbol};
@@ -52,6 +53,11 @@ pub struct Signals {
     pub dead_lines: usize,
     /// …over `lines - inline_test_lines`. Percentile-ranked, weight `[report.weights] dead`.
     pub dead_ratio: f64,
+    /// This file's top-level definitions in a reported same-name family (see `helpers`)…
+    pub helper_copies: usize,
+    /// …and inline copies of some helper's body in it. Their sum is percentile-ranked with
+    /// weight `[helpers].weight`.
+    pub inlined_idioms: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,6 +81,10 @@ pub struct Hotspot {
     pub dead_symbols: Vec<SymbolReport>,
     /// Never-read fields and never-constructed variants (Rust).
     pub dead_shapes: Vec<Shape>,
+    /// Names of the same-name families this file defines a copy in (see `helpers`).
+    pub helper_copies: Vec<String>,
+    /// `(helper name, line)` of every helper body inlined in this file.
+    pub inlined_idioms: Vec<(String, usize)>,
 }
 
 /// A co-change pair with no import between its members. In `hidden_coupling` when nothing
@@ -141,6 +151,17 @@ pub struct Report {
     pub directories: Vec<DirSummary>,
     /// Repo totals and the top files by dead lines (see `dead`).
     pub dead: DeadSurface,
+    /// Same-name helper families and inlined helper bodies (see `helpers`).
+    pub helpers: HelpersSection,
+}
+
+/// The HELPERS section: totals, notes, the top families and the top inlined helpers.
+#[derive(Debug, Default, Serialize)]
+pub struct HelpersSection {
+    pub totals: helpers::Totals,
+    pub notes: Vec<String>,
+    pub families: Vec<Family>,
+    pub inlined: Vec<Inlined>,
 }
 
 /// The DEAD SURFACE section: totals, notes and the files with the most dead lines.
@@ -173,6 +194,9 @@ pub struct Inputs<'a> {
     pub clones: &'a CloneReport,
     pub mentions: &'a MentionIndex,
     pub dead: &'a DeadReport,
+    pub helpers: &'a HelpersReport,
+    /// `[helpers].weight`.
+    pub helpers_weight: f64,
     pub cognitive_hard: u32,
     pub tests: &'a TestsCfg,
     /// `[clones].list_tables_separately`.
@@ -406,6 +430,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let c = inp.clones.files.get(&f.path);
             let mn = inp.mentions.files.get(&f.path);
             let dd = inp.dead.files.get(&f.path);
+            let hp = inp.helpers.files.get(&f.path);
             // An importing test file or a same-stem test is evidence too: worth one unit.
             let other_evidence = d.is_some_and(|d| d.test_refs > 0) || stem_tested(&tstems, f);
             Signals {
@@ -429,6 +454,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 public_symbols: mn.map_or(0, |m| m.public_symbols),
                 dead_lines: dd.map_or(0, |d| d.dead_lines),
                 dead_ratio: dd.map_or(0.0, |d| d.dead_ratio),
+                helper_copies: hp.map_or(0, |h| h.helper_copies),
+                inlined_idioms: hp.map_or(0, |h| h.inlined_idioms),
             }
         })
         .collect();
@@ -441,6 +468,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
     let p_fanin = percentiles(&signals.iter().map(|s| s.fan_in).collect::<Vec<_>>());
     let p_clone = percentiles(&signals.iter().map(|s| s.clone_lines).collect::<Vec<_>>());
     let p_dead = percentiles(&signals.iter().map(|s| s.dead_ratio).collect::<Vec<_>>());
+    let p_helpers = percentiles(&signals.iter().map(|s| s.helper_copies + s.inlined_idioms).collect::<Vec<_>>());
     // Commits that touched none of our files (a subdirectory scan of a larger
     // repo, a shallow clone) are not history we can rank on.
     let have_history = !hist.files.is_empty();
@@ -499,7 +527,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let fix = if s.fix_commits == 0 { 0.0 } else { p_fix[i] };
             let w: &Weights = if have_history { &cfg.with_history } else { &cfg.without_history };
             let dead_p = if s.dead_lines == 0 { 0.0 } else { p_dead[i] };
-            let base = w.hotspot * hotspot + w.fixes * fix + w.complexity * cx + w.coupling * coupling + w.clones * clone + w.size * p_lines[i] + w.dead * dead_p;
+            let helpers_p = if s.helper_copies + s.inlined_idioms == 0 { 0.0 } else { p_helpers[i] };
+            let base = w.hotspot * hotspot + w.fixes * fix + w.complexity * cx + w.coupling * coupling + w.clones * clone + w.size * p_lines[i] + w.dead * dead_p + inp.helpers_weight * helpers_p;
             let score = 100.0 * base * if s.test_units > 0 { 1.0 } else { cfg.no_tests_multiplier };
 
             let mut reasons = Vec::new();
@@ -553,6 +582,9 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let empty_dead = FileDead::default();
             let dead_file = inp.dead.files.get(&f.path).unwrap_or(&empty_dead);
             reasons.extend(dead_file.reasons.iter().cloned());
+            // Helpers: same-name families this file defines a copy in, helper bodies it inlines.
+            let helper_file = inp.helpers.files.get(&f.path);
+            reasons.extend(helper_file.into_iter().flat_map(|h| h.reasons.iter().cloned()));
             if s.commits >= cfg.reason_bus_factor_min_commits {
                 match s.authors {
                     1 => reasons.push("single author over the window (bus factor 1)".to_string()),
@@ -589,6 +621,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 plan_more,
                 dead_symbols: dead_file.symbols.clone(),
                 dead_shapes: dead_file.shapes.clone(),
+                helper_copies: helper_file.map(|h| h.families.clone()).unwrap_or_default(),
+                inlined_idioms: helper_file.map(|h| h.idioms.clone()).unwrap_or_default(),
             }
         })
         .collect();
@@ -647,6 +681,12 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 overexported_count: d.overexported_count, dead_lines: d.dead_lines, dead_ratio: d.dead_ratio,
             }).collect(),
         },
+        helpers: HelpersSection {
+            totals: inp.helpers.totals.clone(),
+            notes: inp.helpers.notes.clone(),
+            families: inp.helpers.families.iter().take(top).cloned().collect(),
+            inlined: inp.helpers.inlined.iter().take(top).cloned().collect(),
+        },
     }
 }
 
@@ -670,6 +710,11 @@ mod tests {
     fn nodead() -> &'static DeadReport {
         static NODEAD: std::sync::OnceLock<DeadReport> = std::sync::OnceLock::new();
         NODEAD.get_or_init(DeadReport::default)
+    }
+
+    fn nohelpers() -> &'static HelpersReport {
+        static NOHELPERS: std::sync::OnceLock<HelpersReport> = std::sync::OnceLock::new();
+        NOHELPERS.get_or_init(HelpersReport::default)
     }
 
     fn fmetrics(path: &str, total: u32, max: u32, complex: usize) -> FileMetrics {
@@ -714,7 +759,7 @@ mod tests {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 1.0, dead: 0.0 },
             ..Cfg::default()
         };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 }, 10, &size_only, &td());
         let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["b.rs", "a.rs"], "{r:?}");
         let a = &r.hotspots[1];
@@ -731,19 +776,19 @@ mod tests {
         assert!(text.contains("b.rs  (1500 lines)"), "{text}");
         // Below the ratio knob the note is absent; the inline unit still counts.
         let strict = TestsCfg { report_inline_ratio_above: 0.9, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &strict, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &strict, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 }, 10, &size_only, &td());
         assert!(r.hotspots[1].inline_test_note.is_none());
         assert_eq!(r.hotspots[1].signals.test_units, 1);
         // The inline_modules knob gates line counts and tags, not the mention index.
         let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &off, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &off, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 }, 10, &size_only, &td());
         assert_eq!(r.hotspots.iter().find(|h| h.path == "a.rs").unwrap().signals.test_units, 1);
         // Knob off, the metrics pass lists the regions but counts 0 inline test lines: no note,
         // even when the ratio threshold would always show one.
         let mut fm_off = fm.clone();
         fm_off.iter_mut().for_each(|m| m.inline_test_lines = 0);
         let always = TestsCfg { inline_modules: false, report_inline_ratio_above: 0.0, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm_off, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &always, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm_off, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &always, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 }, 10, &size_only, &td());
         let a = r.hotspots.iter().find(|h| h.path == "a.rs").unwrap();
         assert!(a.inline_test_note.is_none() && a.test_regions.len() == 1, "{:?}", a.inline_test_note);
         // Many regions: the largest one's kind and range, the rest counted.
@@ -770,7 +815,7 @@ mod tests {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 0.0, dead: 1.0 },
             ..Cfg::default()
         };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: &dead }, 10, &dead_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: &dead, helpers: nohelpers(), helpers_weight: 0.0 }, 10, &dead_only, &td());
         let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["b.rs", "a.rs", "c.rs"], "{r:?}");
         let a = &r.hotspots[1];
@@ -785,8 +830,47 @@ mod tests {
         assert!(text.contains("\nDEAD SURFACE  (exported symbols with no production use outside their file; fields never read, variants never constructed)\n  2 pub items checked in 3 files: 1 dead, 0 test-only, 0 referenced only in-file (0% with no external production use); 0 dead shapes\n  lines ratio  d/t/i of items  path\n     20   20%      0/0/1 of 1  b.rs\n      5    5%      1/0/0 of 1  a.rs\n"), "{text}");
         assert!(text.contains("        - pub fn install (a.rs 143-147) is called nowhere in 3 files (5 doc mentions)\n"), "{text}");
         // Nothing indexed: the section says none.
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() }, 10, &dead_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 }, 10, &dead_only, &td());
         assert!(render(&r, 10).contains("DEAD SURFACE  (exported symbols with no production use outside their file; fields never read, variants never constructed)\n  none\n"));
+    }
+
+    #[test]
+    fn helper_signals_are_weighted_by_the_helpers_knob_and_the_section_prints() {
+        use crate::helpers::{Family, FamilyClass, FileHelpers, Hit, Inlined, Totals};
+        let sf = |p: &str| SourceFile { path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines: 100, bytes: 0, content: String::new() };
+        let files = vec![sf("a.rs"), sf("b.rs"), sf("c.rs")];
+        let fm: Vec<FileMetrics> = files.iter().map(|f| fmetrics(&f.path, 1, 1, 0)).collect();
+        let (deps, clones, tests, hcfg, mentions, pcfg) = (DepGraph::default(), CloneReport::default(), TestsCfg::default(), hcfg(), MentionIndex::default(), pcfg());
+        let mut h = HelpersReport { totals: Totals { definitions: 12, files: 3, multi_file_names: 1, verbatim: 1, families: 1, small_helpers: 4, inlined_helpers: 1, inlined_share: 0.25, git_lookups: 2, ..Totals::default() }, notes: vec!["attribution: 2 git lookups".into()], ..HelpersReport::default() };
+        h.families.push(Family { name: "plural".into(), kind: "fn", class: FamilyClass::Verbatim, best_jaccard: 1.0, files: 2, copies: vec![], pairs: vec![], commits: 2, sessions: 2, annotation: None, inlined: None, line: "plural  2 copies in 2 files, verbatim (Jaccard 1.00): a.rs:1-3, c.rs:5-7 (verbatim); from 2 commits / 2 sessions".into() });
+        h.inlined.push(Inlined { name: "io_err".into(), file: "c.rs".into(), start_line: 20, end_line: 22, visibility: crate::dead::Visibility::Private, tokens: 18, also_defined: vec![], hits: vec![Hit { file: "b.rs".into(), line: 9, reachable: false }, Hit { file: "b.rs".into(), line: 30, reachable: false }], files: 1, line: "body of io_err (c.rs:20-22, 18 tokens) is inlined 2 times in 1 file: b.rs:9, b.rs:30 - io_err is private; hoist and call".into() });
+        h.files.insert("a.rs".into(), FileHelpers { helper_copies: 1, families: vec!["plural".into()], reasons: vec!["defines plural (lines 1-3), also defined verbatim in c.rs:5 - 2 copies from 2 commits / 2 sessions; hoist one".into()], ..FileHelpers::default() });
+        h.files.insert("b.rs".into(), FileHelpers { inlined_idioms: 2, idioms: vec![("io_err".into(), 9), ("io_err".into(), 30)], reasons: vec!["body of io_err (c.rs:20-22) is inlined 2 times in 1 file: b.rs:9, b.rs:30 - io_err is private; hoist and call".into()], ..FileHelpers::default() });
+        let none = Cfg {
+            without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 0.0, dead: 0.0 },
+            ..Cfg::default()
+        };
+        let inputs = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: &h, helpers_weight: w };
+        let r = build(inputs(1.0), 10, &none, &td());
+        let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
+        assert_eq!(paths, vec!["b.rs", "a.rs", "c.rs"], "{r:?}");
+        let b = &r.hotspots[0];
+        assert_eq!((b.signals.helper_copies, b.signals.inlined_idioms, b.inlined_idioms.len()), (0, 2, 2));
+        assert_eq!(b.reasons.last().unwrap(), "body of io_err (c.rs:20-22) is inlined 2 times in 1 file: b.rs:9, b.rs:30 - io_err is private; hoist and call");
+        let a = &r.hotspots[1];
+        assert_eq!((a.signals.helper_copies, a.helper_copies.as_slice()), (1, &["plural".to_string()][..]));
+        assert_eq!(a.reasons.last().unwrap(), "defines plural (lines 1-3), also defined verbatim in c.rs:5 - 2 copies from 2 commits / 2 sessions; hoist one");
+        assert!(r.hotspots[0].score > r.hotspots[1].score && r.hotspots[1].score > 0.0 && r.hotspots[2].score == 0.0);
+        // Weight 0 (the default): the reasons and the section stay, the score ignores them.
+        let r0 = build(inputs(0.0), 10, &none, &td());
+        assert!(r0.hotspots.iter().all(|h| h.score == 0.0));
+        assert!(r0.hotspots.iter().find(|h| h.path == "a.rs").unwrap().reasons.iter().any(|x| x.starts_with("defines plural")));
+        let text = render(&r, 10);
+        assert!(text.contains("\nHELPERS  (same-name helpers defined in several files; small helper bodies inlined instead of called)\n  1 names defined in 2+ files: 1 verbatim, 0 similar, 0 different contract; 1 of 4 small helpers inlined elsewhere (25.0%)\n  attribution: 2 git lookups\n  plural  2 copies in 2 files, verbatim (Jaccard 1.00): a.rs:1-3, c.rs:5-7 (verbatim); from 2 commits / 2 sessions\n  INLINED  (helper bodies found as exact token sequences elsewhere)\n  body of io_err (c.rs:20-22, 18 tokens) is inlined 2 times in 1 file: b.rs:9, b.rs:30 - io_err is private; hoist and call\n"), "{text}");
+        assert_eq!(r.helpers.families.len(), 1);
+        // Nothing indexed: the section says none.
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 }, 10, &none, &td());
+        assert!(render(&r, 10).contains("HELPERS  (same-name helpers defined in several files; small helper bodies inlined instead of called)\n  none\n"));
     }
 
     #[test]
@@ -803,7 +887,7 @@ mod tests {
             hist.files.insert(p.into(), fh);
         }
         let (deps, clones, tests, hcfg, mentions, pcfg) = (DepGraph::default(), CloneReport::default(), TestsCfg::default(), hcfg(), MentionIndex::default(), pcfg());
-        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() }, 10, &Cfg::default(), &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 }, 10, &Cfg::default(), &td());
         let reasons = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.clone();
         assert!(reasons("bot.rs").contains(&"9 commits in the last 6 months (0 fix commits, 0 authors (all bot commits))".to_string()), "{:?}", reasons("bot.rs"));
         assert!(reasons("bot.rs").contains(&"no non-bot author over the window (bus factor 0)".to_string()));
@@ -831,7 +915,7 @@ mod tests {
         let hcfg = hcfg();
         let pcfg = pcfg();
         let mentions = MentionIndex::default();
-        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: sep, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() };
+        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: sep, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 };
         let r = build(inputs(true), 10, &Cfg::default(), &td());
         assert_eq!((r.clones.len(), r.tables.len()), (1, 1));
         assert_eq!(r.clones[0].kind, CloneKind::Logic);
@@ -879,7 +963,7 @@ mod tests {
         };
         let (deps, tests, hcfg, mentions, pcfg) = (DepGraph::default(), TestsCfg::default(), hcfg(), MentionIndex::default(), pcfg());
         fn constrain<'a, F: Fn(&'a PlanCfg) -> Inputs<'a>>(f: F) -> F { f }
-        let inputs = constrain(|pcfg| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: pcfg, dead: nodead() });
+        let inputs = constrain(|pcfg| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 });
         let r = build(inputs(&pcfg), 10, &Cfg::default(), &td());
         assert!(r.hotspots.iter().all(|h| h.path != "c.rs"));
         let a = r.hotspots.iter().find(|h| h.path == "a.rs").unwrap();
@@ -942,7 +1026,7 @@ mod tests {
         let pcfg = pcfg();
         let strict = HistoryCfg { explained_min_share: 0.9, ..HistoryCfg::default() };
         fn constrain<'a, F: Fn(&'a HistoryCfg) -> Inputs<'a>>(f: F) -> F { f }
-        let inputs = constrain(|hcfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() });
+        let inputs = constrain(|hcfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 });
         let r = build(inputs(&dflt), 10, &Cfg::default(), &td());
         assert_eq!(r.hidden_coupling.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.together, h.together_nonsweep)).collect::<Vec<_>>(), vec![("a.rs", "b.rs", 6, 4), ("a.rs", "e.rs", 3, 3)]);
         assert!(r.hidden_coupling.iter().all(|h| h.explained_by.is_none()));
@@ -976,7 +1060,7 @@ mod tests {
         hist.sweep_commits = 0;
         hist.sweeps.clear();
         hist.co_changes.retain(|c| c.a == "c.rs");
-        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &dflt, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() }, 10, &Cfg::default(), &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &dflt, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 }, 10, &Cfg::default(), &td());
         let text = render(&r, 10);
         assert!(r.sweep_note.is_none() && !text.contains("directory-sweep"));
         assert!(r.hidden_coupling.is_empty() && r.explained_coupling.len() == 1);
@@ -1014,7 +1098,7 @@ mod tests {
         let hcfg = hcfg();
         let pcfg = pcfg();
         let mentions = MentionIndex::default();
-        let inputs = |dedupe: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: dedupe, plan: &pcfg, dead: nodead() };
+        let inputs = |dedupe: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: dedupe, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 };
         let r = build(inputs(true), 10, &Cfg::default(), &td());
         let reason = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.iter().find(|x| x.contains("cycle")).cloned().unwrap_or_default();
         assert_eq!(reason("src/paths.rs"), "in the 4-file src cycle (cut: paths.rs -> plan.rs, EntityRef)");
@@ -1062,7 +1146,7 @@ mod tests {
         let hcfg = hcfg();
         let pcfg = pcfg();
         fn constrain<'a, F: Fn(&'a TestsCfg) -> Inputs<'a>>(f: F) -> F { f }
-        let inputs = constrain(|tests| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, mentions: &mentions, cognitive_hard: 15, tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() });
+        let inputs = constrain(|tests| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, mentions: &mentions, cognitive_hard: 15, tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 });
         let r = build(inputs(&tests), 10, &Cfg::default(), &td());
         let hot = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap();
         let units = |p: &str| hot(p).signals.test_units;
@@ -1113,7 +1197,7 @@ mod tests {
         let hcfg = hcfg();
         let pcfg = pcfg();
         let mentions = MentionIndex::default();
-        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead() };
+        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0 };
         let by_default = build(inputs(), 10, &Cfg::default(), &td());
         assert_eq!(by_default.hotspots[0].path, "small.py");
         let size_only = Cfg {
@@ -1298,6 +1382,25 @@ pub fn render_with(r: &Report, top: usize, plans: bool) -> String {
     }
     for d in r.dead.files.iter().take(top) {
         let _ = writeln!(o, "  {:>5} {:>4.0}%  {:>14}  {}", d.dead_lines, d.dead_ratio * 100.0, format!("{}/{}/{} of {}", d.dead_count, d.test_only_count, d.overexported_count, d.pub_items), d.path);
+    }
+
+    let _ = writeln!(o, "\nHELPERS  (same-name helpers defined in several files; small helper bodies inlined instead of called)");
+    if r.helpers.totals.definitions == 0 {
+        let _ = writeln!(o, "  none");
+    } else {
+        let _ = writeln!(o, "  {}", helpers::totals_line(&HelpersReport { totals: r.helpers.totals.clone(), ..HelpersReport::default() }));
+    }
+    for n in &r.helpers.notes {
+        let _ = writeln!(o, "  {n}");
+    }
+    for f in r.helpers.families.iter().take(top) {
+        let _ = writeln!(o, "  {}", f.line);
+    }
+    if !r.helpers.inlined.is_empty() {
+        let _ = writeln!(o, "  INLINED  (helper bodies found as exact token sequences elsewhere)");
+        for i in r.helpers.inlined.iter().take(top) {
+            let _ = writeln!(o, "  {}", i.line);
+        }
     }
 
     let _ = writeln!(o, "\nDIRECTORIES  (by source lines)");

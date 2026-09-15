@@ -25,6 +25,7 @@ pub struct Config {
     pub tests: Tests,
     pub plan: Plan,
     pub dead: Dead,
+    pub helpers: Helpers,
 }
 
 impl Config {
@@ -609,6 +610,106 @@ impl Default for DeadShapes {
             string_refs: true,
             report_handled_never_produced: true,
             require_type_reachable: true,
+            max_reported_per_file: 5,
+        }
+    }
+}
+
+// ---------- helpers ----------
+
+/// The helpers pass: same-name helpers defined in several files (`min_files`, twin
+/// suppression, attribution) and small helper bodies inlined where the helper should have been
+/// called (`min_tokens` .. `max_helper_tokens`, `min_occurrences`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Helpers {
+    /// A name family needs definitions in at least this many distinct Source files; an inlined
+    /// helper needs hits in at least this many files.
+    pub min_files: usize,
+    /// Two bodies are `similar` when the 5-gram Jaccard of their helper-normalized tokens is at
+    /// least this (1.0 is `verbatim`); below it with an equal signature they are `divergent`.
+    pub min_body_jaccard: f64,
+    /// Names shorter than this never form a family (single-letter TypeVars, `V`, `R`).
+    pub min_name_len: usize,
+    /// Report families whose copies share a signature but whose bodies fall under
+    /// `min_body_jaccard` (noise in every corpus tried); they are section-only info either way.
+    pub report_divergent: bool,
+    /// Compare consts and statics on their raw value text: a const whose value is one literal
+    /// would otherwise look verbatim with every other string const.
+    pub compare_consts_raw: bool,
+    /// Also group inherent-impl methods, keyed `Type::name` (produces `read` / `write` twins).
+    pub include_inherent_methods: bool,
+    /// Also group definitions in test context (Test files, `#[cfg(test)]` regions).
+    pub include_test_helpers: bool,
+    /// Attribute each reported copy to its introducing commit (`git log -S'fn name' -- file`,
+    /// oldest hit) and the `Claude-Session` trailer of that commit; the reason counts commits
+    /// and distinct sessions. Needs git history (`--no-history` turns it off).
+    pub attribute_commits: bool,
+    /// Copies attributed per scan; the rest print without commits.
+    pub max_git_lookups: usize,
+    /// Names that never form a family (trait-method conventions, entrypoints).
+    pub ignore_names: Vec<String>,
+    /// A definition, or a whole `mod`, under `#[cfg(...)]` naming one of these (or `test`) is
+    /// a platform / feature twin, not a re-implementation, and never joins a family.
+    pub cfg_gate_attrs: Vec<String>,
+    /// A family with a defining file matching one of these globs is a deliberate per-adapter
+    /// twin and is dropped.
+    pub sibling_dir_globs: Vec<String>,
+    /// Drop a family when two defining files share a basename in different directories
+    /// (`jsx/base.ts` vs `jsx/dom/base.ts`): a server / DOM or enabled / disabled pair.
+    pub suppress_path_suffix_twins: bool,
+    /// Drop a family when one defining file imports the family's name (or everything) from
+    /// another: a re-export wrapper, not a copy.
+    pub suppress_import_linked: bool,
+    /// Score weight of the percentile of `helper_copies + inlined_idioms` (0: the section and
+    /// reasons print, the ranking ignores them).
+    pub weight: f64,
+    /// Inlined idioms: a helper is a candidate when its normalized body has this many tokens…
+    pub min_tokens: usize,
+    /// …up to this many.
+    pub max_helper_tokens: usize,
+    /// Inline copies (outside any definition of the same name) needed to report a helper…
+    pub min_occurrences: usize,
+    /// …with at least this many distinct normalized tokens in its body, one keyword or operator
+    /// among them and one kept name or literal.
+    pub min_distinct_kinds: usize,
+    /// One bound-name (`ID`) slot of the helper may match any single expression node at the
+    /// hit (`n == 1` matching `e.rules == 1`); off, hits are exact token sequences.
+    pub allow_one_wildcard: bool,
+    /// Only report hits in files that can call the helper (not private; same crate or package,
+    /// or already importing its file).
+    pub require_reachable: bool,
+    /// Helpers never searched for as inlined idioms.
+    pub inline_ignore_names: Vec<String>,
+    /// Helper reason lines per file (families first, then inlined idioms); the rest are counted.
+    pub max_reported_per_file: usize,
+}
+
+impl Default for Helpers {
+    fn default() -> Self {
+        Self {
+            min_files: 2,
+            min_body_jaccard: 0.5,
+            min_name_len: 4,
+            report_divergent: false,
+            compare_consts_raw: true,
+            include_inherent_methods: false,
+            include_test_helpers: false,
+            attribute_commits: true,
+            max_git_lookups: 50,
+            ignore_names: strings(&["new", "default", "main", "fmt", "from", "parse", "run", "read", "write", "get", "set", "len", "is_empty", "from_str"]),
+            cfg_gate_attrs: strings(&["unix", "windows", "target_os", "target_family", "feature"]),
+            sibling_dir_globs: strings(&["**/adapter/*/**"]),
+            suppress_path_suffix_twins: true,
+            suppress_import_linked: true,
+            weight: 0.0,
+            min_tokens: 12,
+            max_helper_tokens: 40,
+            min_occurrences: 2,
+            min_distinct_kinds: 3,
+            allow_one_wildcard: false,
+            require_reachable: false,
+            inline_ignore_names: strings(&["main", "new", "default"]),
             max_reported_per_file: 5,
         }
     }

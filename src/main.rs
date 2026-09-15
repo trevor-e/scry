@@ -3,6 +3,7 @@ mod config;
 mod dead;
 mod deps;
 mod discover;
+mod helpers;
 mod history;
 mod lang;
 mod mentions;
@@ -107,6 +108,15 @@ enum Cmd {
         #[arg(long, default_value_t = 20)]
         top: usize,
     },
+    /// Same-name helpers defined in several files, and helper bodies inlined instead of called
+    Helpers {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+    },
     /// Per-function cognitive/cyclomatic complexity for source files
     Metrics {
         #[arg(default_value = ".")]
@@ -151,7 +161,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = match &cli.cmd {
         Cmd::Scan { path, .. } | Cmd::Files { path, .. } | Cmd::History { path, .. } | Cmd::Clones { path, .. }
-        | Cmd::Deps { path, .. } | Cmd::Mentions { path, .. } | Cmd::Dead { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
+        | Cmd::Deps { path, .. } | Cmd::Mentions { path, .. } | Cmd::Dead { path, .. } | Cmd::Helpers { path, .. } | Cmd::Metrics { path, .. } | Cmd::Config { path } => path.clone(),
         Cmd::Plan { root, .. } => root.clone(),
         Cmd::Ast { .. } => PathBuf::from("."),
     };
@@ -353,6 +363,17 @@ fn main() -> Result<()> {
             }
             print!("{}", dead::render(&r, top));
         }
+        Cmd::Helpers { path, json, top } => {
+            let files = discover::walk(&path, &cfg.discover)?;
+            let (sides, symbols) = helpers::index_all(&files, &cfg.helpers, &cfg.dead);
+            let graph = deps::build(&files, &cfg.deps);
+            let r = helpers::analyze(&sides, &symbols, &graph, Some(&path), &cfg.helpers);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+                return Ok(());
+            }
+            print!("{}", helpers::render(&r, top));
+        }
         Cmd::Metrics { path, json, top } => {
             let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
@@ -424,12 +445,14 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
             }
         }
     };
-    // The mentions and dead passes read symbols, inline test units and references off the
-    // metrics trees; Test files are parsed once here for both.
+    // The mentions, dead and helpers passes read symbols, inline test units, references and
+    // helper bodies off the metrics trees; Test files are parsed once here for all of them.
     let walker = dead::Walker::new(&cfg.dead);
+    let hwalker = helpers::Walker::new(&cfg.helpers);
     let (file_metrics, functions, sides) =
-        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions)));
-    let (sides, mut indexes): (Vec<_>, Vec<_>) = sides.into_iter().unzip();
+        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions), hwalker.file_side(root, f, regions)));
+    let (sides, rest): (Vec<_>, Vec<_>) = sides.into_iter().map(|(m, d, h)| (m, (d, h))).unzip();
+    let (mut indexes, mut helper_sides): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
     let graph = deps::build(&files, &cfg.deps);
     let clone_report = clones::detect(&source, &cfg.clones, &cfg.tests, cfg.plan.symbol_fallback);
     let tests: Vec<(&discover::SourceFile, Option<tree_sitter::Tree>)> = {
@@ -440,6 +463,10 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
     indexes.extend(dead::index_tests(&tests, &cfg.dead));
     let symbols = dead::SymbolIndex::build(indexes);
     let dead_report = dead::analyze(&symbols, path, &cfg.dead);
+    if cfg.helpers.include_test_helpers {
+        helper_sides.extend(tests.iter().map(|(f, t)| hwalker.file_side(t.as_ref().map(|t| t.root_node()), f, &[])));
+    }
+    let helpers_report = helpers::analyze(&helper_sides, &symbols, &graph, history.as_ref().map(|_| path), &cfg.helpers);
     Ok(report::build(
         report::Inputs {
             root: path.canonicalize()?.display().to_string(),
@@ -451,6 +478,8 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
             clones: &clone_report,
             mentions: &mentions,
             dead: &dead_report,
+            helpers: &helpers_report,
+            helpers_weight: cfg.helpers.weight,
             cognitive_hard: cfg.metrics.cognitive_hard,
             tests: &cfg.tests,
             list_tables_separately: cfg.clones.list_tables_separately,
