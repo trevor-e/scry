@@ -29,6 +29,7 @@ pub struct Config {
     pub strings: Strings,
     pub clumps: Clumps,
     pub declared: Declared,
+    pub comments: Comments,
 }
 
 impl Config {
@@ -1033,6 +1034,111 @@ impl Default for Declared {
             setter_file_globs: strings(&[".github/**", "Dockerfile*", "Makefile", "justfile", "docker-compose*", ".env*"]),
             include_compile_time_env: false,
             weight: 0.0,
+        }
+    }
+}
+
+// ---------- comments ----------
+
+/// Comments as structure (see `comments`): top-level banners that partition a file into
+/// labelled sections, and phase labels inside a function over the cognitive threshold.
+/// Annotations on findings the report already makes; never a score input.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Comments {
+    pub banners: Banners,
+    pub phases: Phases,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Banners {
+    /// Partition files by their top-level banner comments (off: no `sections`, no reason).
+    pub enabled: bool,
+    /// Rule characters (from `rule_chars`, counted as characters, never bytes: `──` is two)
+    /// a rule line needs; a shorter `──` / `--` / `==` followed by text is a banner too.
+    pub min_rule_len: usize,
+    /// The characters a rule is drawn with.
+    pub rule_chars: String,
+    /// Banners this many lines apart or closer merge into one boundary, so a rule / title /
+    /// rule triple is one; the title is the rule's inline text, else the comment line between
+    /// the pair.
+    pub pair_gap: usize,
+    /// A file is reported at this many labelled sections or more…
+    pub min_sections: usize,
+    /// …when its largest section has at least this many lines…
+    pub min_section_lines: usize,
+    /// …and the file has at least this many lines…
+    pub min_file_lines: usize,
+    /// …and its size percentile among Source files (0-100, on lines minus inline test lines)
+    /// is at least this, or it is in the printed hotspot list.
+    pub min_size_percentile: f64,
+    /// A boundary on lines 1-3 whose next non-comment item is an import is a license or file
+    /// header: skipped, together with the closing rule of its pair.
+    pub skip_top_of_file: bool,
+    /// Comment text starting with one of these (editor folding markers) is never a banner.
+    pub skip_markers: Vec<String>,
+    /// A boundary with no title (no inline text, no comment line inside the pair) is dropped.
+    pub require_title: bool,
+}
+
+impl Default for Banners {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_rule_len: 6,
+            rule_chars: "-=─═━*#_".into(),
+            pair_gap: 2,
+            min_sections: 3,
+            min_section_lines: 100,
+            min_file_lines: 400,
+            min_size_percentile: 80.0,
+            skip_top_of_file: true,
+            skip_markers: strings(&["#region", "#endregion", "%%"]),
+            require_title: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Phases {
+    /// A unit is reported at this many labelled phases or more…
+    pub min_phases: usize,
+    /// …when every phase has at least this many non-blank lines…
+    pub min_phase_lines: usize,
+    /// …and the unit spans at least this many lines.
+    pub min_span_lines: usize,
+    /// Phase comments may sit in the body block or in a block this many levels below it (a
+    /// match arm, an `if` block); 0 means the body only.
+    pub max_depth: usize,
+    /// Case-insensitive patterns a phase comment's text (marker stripped) must match. The
+    /// defaults are box-drawing rules, `step|pass|phase|stage N` and `N.` / `N)` numbering;
+    /// `--` / `==` rules and ordinal words (`first`, `finally`) are prose too often.
+    pub patterns: Vec<String>,
+    /// Skip units inside a Rust `#[cfg(test)]` region.
+    pub skip_test_modules: bool,
+    /// Units at or above this cognitive are checked; unset follows `[metrics].cognitive_hard`.
+    pub cross_with_cognitive_min: Option<u32>,
+    /// Estimate each phase's cognitive as a helper: the walker re-run over its statements
+    /// with nesting re-based to 0.
+    pub estimate_cognitive: bool,
+    /// Shared locals the reason names before `+N more`.
+    pub max_shared_locals_named: usize,
+}
+
+impl Default for Phases {
+    fn default() -> Self {
+        Self {
+            min_phases: 2,
+            min_phase_lines: 8,
+            min_span_lines: 40,
+            max_depth: 1,
+            patterns: strings(&[r"^\s*[─═━]{2,}\s*\S", r"^\s*(step|pass|phase|stage)\s*\d", r"^\s*\d+[.):]\s"]),
+            skip_test_modules: true,
+            cross_with_cognitive_min: None,
+            estimate_cognitive: true,
+            max_shared_locals_named: 4,
         }
     }
 }

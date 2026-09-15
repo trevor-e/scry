@@ -29,6 +29,10 @@ pub struct FunctionMetrics {
     /// Lies inside an inline test region (`#[cfg(test)]` mod/item, `#[test]` fn): kept in the
     /// list, left out of the file totals and of the worst-function ranking.
     pub in_test: bool,
+    /// Labelled phases of the body (see `comments`), filled by the report for the units it
+    /// prints; empty (and left out of JSON) everywhere else.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub phases: Vec<crate::comments::Phase>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -149,18 +153,20 @@ fn is_bound_callable(node: Node) -> bool {
 }
 
 pub fn analyze_all(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
-    let (file_metrics, funcs, _) = analyze_all_with(files, cfg, tests, |_, _, _| ());
+    let (file_metrics, funcs, _) = analyze_all_with(files, cfg, tests, |_, _, _, _, _| ());
     (file_metrics, funcs)
 }
 
 /// `analyze_all` plus one caller-supplied pass over each file's parsed tree (`None` when the
-/// parse failed) with its test regions: the mentions pass collects symbols and inline test
-/// units there, so no Source file is parsed twice. The extras come back in file order.
+/// parse failed) with its test regions and its units (the metrics and their nodes, in the same
+/// order): the mentions pass collects symbols and inline test units there and the comments
+/// pass reads the over-threshold bodies, so no Source file is parsed twice. The extras come
+/// back in file order.
 pub fn analyze_all_with<'a, T: Send>(
     files: &'a [SourceFile],
     cfg: &Cfg,
     tests: &TestsCfg,
-    extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion]) -> T + Sync,
+    extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion], &[FunctionMetrics], &[Node]) -> T + Sync,
 ) -> (Vec<FileMetrics>, Vec<FunctionMetrics>, Vec<T>) {
     let per_file: Vec<(FileMetrics, Vec<FunctionMetrics>, T)> =
         files.par_iter().map(|f| analyze_file_with(f, cfg, tests, &extra)).collect();
@@ -177,7 +183,7 @@ pub fn analyze_all_with<'a, T: Send>(
 
 #[cfg(test)]
 pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetrics, Vec<FunctionMetrics>) {
-    let (fm, fs, ()) = analyze_file_with(file, cfg, tests, |_, _, _| ());
+    let (fm, fs, ()) = analyze_file_with(file, cfg, tests, |_, _, _, _, _| ());
     (fm, fs)
 }
 
@@ -185,7 +191,7 @@ fn analyze_file_with<'a, T>(
     file: &'a SourceFile,
     cfg: &Cfg,
     tests: &TestsCfg,
-    extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion]) -> T,
+    extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion], &[FunctionMetrics], &[Node]) -> T,
 ) -> (FileMetrics, Vec<FunctionMetrics>, T) {
     let mut parser = file.lang.parser();
     let src = file.content.as_bytes();
@@ -203,10 +209,10 @@ fn analyze_file_with<'a, T>(
             test_regions = regions::test_regions(root, src);
         }
         let tagged = if tests.inline_modules { test_regions.as_slice() } else { &[] };
-        collect_units(root, file.lang, src, &file.path, tagged, &mut funcs);
-        extra_out = extra(Some(root), file, &test_regions);
+        let nodes = collect_units(root, file.lang, src, &file.path, tagged, &mut funcs);
+        extra_out = extra(Some(root), file, &test_regions, &funcs, &nodes);
     } else {
-        extra_out = extra(None, file, &test_regions);
+        extra_out = extra(None, file, &test_regions, &funcs, &[]);
     }
     // File totals describe the production code only; tagged units stay in the list.
     let source = || funcs.iter().filter(|f| !f.in_test);
@@ -254,13 +260,33 @@ pub fn unit_nodes(root: Node<'_>, lang: Language) -> Vec<Node<'_>> {
     out
 }
 
-fn collect_units(root: Node, lang: Language, src: &[u8], path: &str, test_regions: &[TestRegion], out: &mut Vec<FunctionMetrics>) {
+/// Measures every unit into `out` and returns the unit nodes in the same order.
+fn collect_units<'t>(root: Node<'t>, lang: Language, src: &[u8], path: &str, test_regions: &[TestRegion], out: &mut Vec<FunctionMetrics>) -> Vec<Node<'t>> {
     let prof = profile(lang);
-    for node in unit_nodes(root, lang) {
-        let mut m = measure(node, prof, src, path);
+    let nodes = unit_nodes(root, lang);
+    for node in &nodes {
+        let mut m = measure(*node, prof, src, path);
         m.in_test = regions::contains(test_regions, node.start_byte());
         out.push(m);
     }
+    nodes
+}
+
+/// Cognitive increments of `nodes` walked with nesting re-based to 0: what a phase would cost
+/// as a helper of its own (see `comments`).
+pub fn cognitive_rebased<'t>(nodes: impl IntoIterator<Item = Node<'t>>, lang: Language, src: &[u8]) -> u32 {
+    let prof = profile(lang);
+    let mut acc = Acc::default();
+    for n in nodes {
+        walk(n, prof, src, 0, &mut acc);
+    }
+    acc.cognitive
+}
+
+/// A unit kind or an anonymous callable of `lang`: a scope of its own.
+pub fn is_callable_kind(lang: Language, kind: &str) -> bool {
+    let prof = profile(lang);
+    prof.units.contains(&kind) || prof.nest_only.contains(&kind)
 }
 
 fn measure(node: Node, prof: &Profile, src: &[u8], path: &str) -> FunctionMetrics {
@@ -283,6 +309,7 @@ fn measure(node: Node, prof: &Profile, src: &[u8], path: &str) -> FunctionMetric
         cognitive: acc.cognitive,
         max_nesting: acc.max_nesting,
         in_test: false,
+        phases: Vec::new(),
     }
 }
 
