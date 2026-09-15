@@ -202,7 +202,7 @@ mod tests {
     }
 
     fn unit(name: &str, s: usize, e: usize, cognitive: u32, nesting: u32) -> FunctionMetrics {
-        FunctionMetrics { file: "src/flow.rs".into(), name: name.into(), start_line: s, end_line: e, lines: e - s + 1, params: 0, cyclomatic: 1, cognitive, max_nesting: nesting, in_test: false, phases: Vec::new() }
+        FunctionMetrics { file: "src/flow.rs".into(), name: name.into(), start_line: s, end_line: e, lines: e - s + 1, params: 0, cyclomatic: 1, cognitive, max_nesting: nesting, in_test: false, phases: Vec::new(), bindings: 0, short_bindings: Vec::new(), long_short_bindings: 0 }
     }
 
     fn cycle(from: &str, to: &str) -> Cycle {

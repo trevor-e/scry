@@ -693,7 +693,7 @@ mod tests {
 
     fn side_with(f: &SourceFile, cfg: &Cfg, metrics: &MetricsCfg) -> FileSide {
         let w = Walker::new(cfg, metrics);
-        let (_, _, mut out) = metrics::analyze_all_with(std::slice::from_ref(f), metrics, &TestsCfg::default(), |root, f, regions, funcs, nodes| w.file_side(root, f, regions, funcs, nodes));
+        let (_, _, mut out) = metrics::analyze_all_with(std::slice::from_ref(f), metrics, &TestsCfg::default(), &crate::config::Naming::default(), |root, f, regions, funcs, nodes| w.file_side(root, f, regions, funcs, nodes));
         out.remove(0)
     }
 
@@ -774,7 +774,7 @@ mod tests {
         let big = format!("// ==== one ====\n{body}{body}// ==== two ====\n{body}// ==== three ====\n{body}");
         let files = [file("big.rs", Language::Rust, &big), file("small.rs", Language::Rust, "// ==== one ====\nfn a() {}\n// ==== two ====\nfn b() {}\n"), file("mid.rs", Language::Rust, &"fn y() {}\n".repeat(20))];
         let w = Walker::new(&cfg, &MetricsCfg::default());
-        let (_, _, sides) = metrics::analyze_all_with(&files, &MetricsCfg::default(), &TestsCfg::default(), |root, f, regions, funcs, nodes| w.file_side(root, f, regions, funcs, nodes));
+        let (_, _, sides) = metrics::analyze_all_with(&files, &MetricsCfg::default(), &TestsCfg::default(), &crate::config::Naming::default(), |root, f, regions, funcs, nodes| w.file_side(root, f, regions, funcs, nodes));
         let r = analyze(&sides, &cfg);
         let big = &r.files["big.rs"];
         assert!(big.qualifies && !big.above_size_percentile, "{big:?}");

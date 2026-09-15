@@ -11,6 +11,7 @@ mod history;
 mod lang;
 mod mentions;
 mod metrics;
+mod naming;
 mod plan;
 mod regions;
 mod report;
@@ -449,7 +450,7 @@ fn main() -> Result<()> {
             let src: Vec<discover::SourceFile> =
                 files.into_iter().filter(|f| f.kind == discover::FileKind::Source).collect();
             let walker = comments::Walker::new(&cfg.comments, &cfg.metrics);
-            let (_, _, sides) = metrics::analyze_all_with(&src, &cfg.metrics, &cfg.tests, |root, f, regions, funcs, nodes| walker.file_side(root, f, regions, funcs, nodes));
+            let (_, _, sides) = metrics::analyze_all_with(&src, &cfg.metrics, &cfg.tests, &cfg.naming, |root, f, regions, funcs, nodes| walker.file_side(root, f, regions, funcs, nodes));
             let r = comments::analyze(&sides, &cfg.comments);
             if json {
                 println!("{}", serde_json::to_string_pretty(&r)?);
@@ -461,7 +462,7 @@ fn main() -> Result<()> {
             let files = discover::walk(&path, &cfg.discover)?;
             let src: Vec<discover::SourceFile> =
                 files.into_iter().filter(|f| f.kind == discover::FileKind::Source).collect();
-            let (file_metrics, mut funcs) = metrics::analyze_all(&src, &cfg.metrics, &cfg.tests);
+            let (file_metrics, mut funcs) = metrics::analyze_all(&src, &cfg.metrics, &cfg.tests, &cfg.naming);
             if json {
                 println!("{}", serde_json::to_string_pretty(&serde_json::json!({"files": file_metrics, "functions": funcs}))?);
                 return Ok(());
@@ -474,6 +475,10 @@ fn main() -> Result<()> {
                 funcs.len() - in_tests, file_metrics.len(),
                 funcs.iter().filter(|f| !f.in_test && f.cognitive > cfg.metrics.cognitive_hard).count(),
                 cfg.metrics.cognitive_hard);
+            // The one-letter share of the production bindings and the far-lived ones (see `naming`).
+            let (bindings, short, far): (usize, usize, usize) = file_metrics.iter().fold((0, 0, 0), |a, f| (a.0 + f.bindings, a.1 + f.short_bindings, a.2 + f.long_short_bindings));
+            let share = if bindings == 0 { 0.0 } else { 100.0 * short as f64 / bindings as f64 };
+            println!("{bindings} bindings, {short} one-letter ({share:.1}%), {far} with a use gap of {}+ lines\n", cfg.naming.short_name_min_gap);
             println!("{:>4} {:>4} {:>4} {:>5} {:>3}  location", "cog", "cyc", "nest", "lines", "par");
             for f in funcs.iter().take(top) {
                 let tag = if f.in_test { " (in inline tests)" } else { "" };
@@ -539,7 +544,7 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
     let dwalker = declared::Walker::new(&cfg.declared);
     let mwalker = comments::Walker::new(&cfg.comments, &cfg.metrics);
     let (file_metrics, functions, per_file) =
-        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, |root, f, regions, funcs, nodes| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions), hwalker.file_side(root, f, regions), swalker.file_side(root, f, regions), cwalker.file_side(root, f, regions), dwalker.file_side(root, f, regions), mwalker.file_side(root, f, regions, funcs, nodes)));
+        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, &cfg.naming, |root, f, regions, funcs, nodes| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions), hwalker.file_side(root, f, regions), swalker.file_side(root, f, regions), cwalker.file_side(root, f, regions), dwalker.file_side(root, f, regions), mwalker.file_side(root, f, regions, funcs, nodes)));
     let (mut sides, mut indexes, mut helper_sides, mut string_sides, mut clump_sides, mut declared_sides, mut comment_sides) = (Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()));
     for (m, d, h, s, c, x, k) in per_file {
         sides.push(m);
@@ -589,6 +594,7 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
             declared: &declared_report,
             declared_weight: cfg.declared.weight,
             comments: &comments_report,
+            naming: &cfg.naming,
             cognitive_hard: cfg.metrics.cognitive_hard,
             tests: &cfg.tests,
             list_tables_separately: cfg.clones.list_tables_separately,

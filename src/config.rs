@@ -30,6 +30,7 @@ pub struct Config {
     pub clumps: Clumps,
     pub declared: Declared,
     pub comments: Comments,
+    pub naming: Naming,
 }
 
 impl Config {
@@ -1139,6 +1140,52 @@ impl Default for Phases {
             cross_with_cognitive_min: None,
             estimate_cognitive: true,
             max_shared_locals_named: 4,
+        }
+    }
+}
+
+// ---------- naming ----------
+
+/// The short-name live range (see `naming`): one-letter bindings and the widest gap between
+/// their consecutive uses. Every knob of that measure lives here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Naming {
+    /// A binding whose name has this many characters or fewer is a short name…
+    pub short_name_max_len: usize,
+    /// …unless it is one of these (index and coordinate letters); a name starting with `_`
+    /// never counts either.
+    pub short_name_allow: Vec<String>,
+    /// A short binding is far-lived when the largest line gap between two consecutive uses
+    /// (the declaration counting as the first use) is at least this.
+    pub short_name_min_gap: usize,
+    /// A unit reports its far-lived short bindings only when it binds at least this many other
+    /// names besides the one reported.
+    pub short_name_min_other_bindings: usize,
+    /// Count the names a destructuring pattern binds (`let (a, b) = …`, `for (k, v) in …`,
+    /// `const {p} = …`) as bindings too; off, only a bare identifier is a binding.
+    pub short_name_include_pattern_bindings: bool,
+    /// A unit at least this many lines long carries the attribute even when it is under the
+    /// cognitive threshold and outside the file's `worst_functions`.
+    pub min_unit_lines: usize,
+    /// Emit `short_binding_share` (short bindings / all bindings) per file in `--json`.
+    pub emit_short_binding_share: bool,
+    /// Weight of the `short_binding_share` percentile in the composite score: the only route
+    /// into the ranking, 0 by default so the attribute prints without moving anything.
+    pub weight_into_complexity: f64,
+}
+
+impl Default for Naming {
+    fn default() -> Self {
+        Self {
+            short_name_max_len: 1,
+            short_name_allow: strings(&["i", "j", "k", "n", "x", "y", "z", "_"]),
+            short_name_min_gap: 30,
+            short_name_min_other_bindings: 2,
+            short_name_include_pattern_bindings: false,
+            min_unit_lines: 100,
+            emit_short_binding_share: true,
+            weight_into_complexity: 0.0,
         }
     }
 }

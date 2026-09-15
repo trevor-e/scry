@@ -7,7 +7,7 @@
 //! because it is what most people have an intuition for, but nesting-aware
 //! cognitive complexity is the one that predicts "hard to change safely".
 
-use crate::config::{Metrics as Cfg, Tests as TestsCfg};
+use crate::config::{Metrics as Cfg, Naming as NamingCfg, Tests as TestsCfg};
 use crate::discover::SourceFile;
 use crate::lang::Language;
 use crate::regions::{self, TestRegion};
@@ -33,6 +33,16 @@ pub struct FunctionMetrics {
     /// prints; empty (and left out of JSON) everywhere else.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub phases: Vec<crate::comments::Phase>,
+    /// Names the unit binds (`let` / assignment / `for` / `with`; parameters, closure and
+    /// nested-unit parameters excluded; see `naming`)…
+    pub bindings: usize,
+    /// …the short ones (`[naming].short_name_max_len` characters, outside the allow list) with
+    /// their use pattern, in declaration order; left out of JSON when empty…
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub short_bindings: Vec<crate::naming::ShortBinding>,
+    /// …and how many of those have a use gap of `[naming].short_name_min_gap`+ lines (0 when
+    /// the unit binds too few other names).
+    pub long_short_bindings: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,6 +58,14 @@ pub struct FileMetrics {
     /// Lines spanned by inline test regions (Rust `#[cfg(test)]` mods and items, `#[test]` fns).
     pub inline_test_lines: usize,
     pub test_regions: Vec<TestRegion>,
+    /// Bindings of the production units, the short ones among them, and the short ones with a
+    /// far use gap (see `naming`)…
+    pub bindings: usize,
+    pub short_bindings: usize,
+    pub long_short_bindings: usize,
+    /// …and `short_bindings / bindings` (0 with no binding), when `[naming].emit_short_binding_share`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub short_binding_share: Option<f64>,
 }
 
 /// Node-kind tables per grammar. One walker, three tables.
@@ -152,8 +170,8 @@ fn is_bound_callable(node: Node) -> bool {
     })
 }
 
-pub fn analyze_all(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
-    let (file_metrics, funcs, _) = analyze_all_with(files, cfg, tests, |_, _, _, _, _| ());
+pub fn analyze_all(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg, naming: &NamingCfg) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
+    let (file_metrics, funcs, _) = analyze_all_with(files, cfg, tests, naming, |_, _, _, _, _| ());
     (file_metrics, funcs)
 }
 
@@ -166,10 +184,11 @@ pub fn analyze_all_with<'a, T: Send>(
     files: &'a [SourceFile],
     cfg: &Cfg,
     tests: &TestsCfg,
+    naming: &NamingCfg,
     extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion], &[FunctionMetrics], &[Node]) -> T + Sync,
 ) -> (Vec<FileMetrics>, Vec<FunctionMetrics>, Vec<T>) {
     let per_file: Vec<(FileMetrics, Vec<FunctionMetrics>, T)> =
-        files.par_iter().map(|f| analyze_file_with(f, cfg, tests, &extra)).collect();
+        files.par_iter().map(|f| analyze_file_with(f, cfg, tests, naming, &extra)).collect();
     let mut file_metrics = Vec::with_capacity(per_file.len());
     let mut funcs = Vec::new();
     let mut extras = Vec::with_capacity(per_file.len());
@@ -182,8 +201,8 @@ pub fn analyze_all_with<'a, T: Send>(
 }
 
 #[cfg(test)]
-pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg) -> (FileMetrics, Vec<FunctionMetrics>) {
-    let (fm, fs, ()) = analyze_file_with(file, cfg, tests, |_, _, _, _, _| ());
+pub fn analyze_file(file: &SourceFile, cfg: &Cfg, tests: &TestsCfg, naming: &NamingCfg) -> (FileMetrics, Vec<FunctionMetrics>) {
+    let (fm, fs, ()) = analyze_file_with(file, cfg, tests, naming, |_, _, _, _, _| ());
     (fm, fs)
 }
 
@@ -191,6 +210,7 @@ fn analyze_file_with<'a, T>(
     file: &'a SourceFile,
     cfg: &Cfg,
     tests: &TestsCfg,
+    naming: &NamingCfg,
     extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion], &[FunctionMetrics], &[Node]) -> T,
 ) -> (FileMetrics, Vec<FunctionMetrics>, T) {
     let mut parser = file.lang.parser();
@@ -209,14 +229,14 @@ fn analyze_file_with<'a, T>(
             test_regions = regions::test_regions(root, src);
         }
         let tagged = if tests.inline_modules { test_regions.as_slice() } else { &[] };
-        let nodes = collect_units(root, file.lang, src, &file.path, tagged, &mut funcs);
+        let nodes = collect_units(root, file.lang, src, &file.path, tagged, naming, &mut funcs);
         extra_out = extra(Some(root), file, &test_regions, &funcs, &nodes);
     } else {
         extra_out = extra(None, file, &test_regions, &funcs, &[]);
     }
     // File totals describe the production code only; tagged units stay in the list.
     let source = || funcs.iter().filter(|f| !f.in_test);
-    let fm = FileMetrics {
+    let mut fm = FileMetrics {
         path: file.path.clone(),
         functions: source().count(),
         total_cognitive: source().map(|f| f.cognitive).sum(),
@@ -226,7 +246,14 @@ fn analyze_file_with<'a, T>(
         parse_errors,
         inline_test_lines: if tests.inline_modules { regions::inline_lines(&test_regions) } else { 0 },
         test_regions,
+        bindings: source().map(|f| f.bindings).sum(),
+        short_bindings: source().map(|f| f.short_bindings.len()).sum(),
+        long_short_bindings: source().map(|f| f.long_short_bindings).sum(),
+        short_binding_share: None,
     };
+    if naming.emit_short_binding_share {
+        fm.short_binding_share = Some(if fm.bindings == 0 { 0.0 } else { fm.short_bindings as f64 / fm.bindings as f64 });
+    }
     (fm, funcs, extra_out)
 }
 
@@ -261,12 +288,16 @@ pub fn unit_nodes(root: Node<'_>, lang: Language) -> Vec<Node<'_>> {
 }
 
 /// Measures every unit into `out` and returns the unit nodes in the same order.
-fn collect_units<'t>(root: Node<'t>, lang: Language, src: &[u8], path: &str, test_regions: &[TestRegion], out: &mut Vec<FunctionMetrics>) -> Vec<Node<'t>> {
+fn collect_units<'t>(root: Node<'t>, lang: Language, src: &[u8], path: &str, test_regions: &[TestRegion], naming: &NamingCfg, out: &mut Vec<FunctionMetrics>) -> Vec<Node<'t>> {
     let prof = profile(lang);
     let nodes = unit_nodes(root, lang);
     for node in &nodes {
         let mut m = measure(*node, prof, src, path);
         m.in_test = regions::contains(test_regions, node.start_byte());
+        let b = crate::naming::unit_bindings(*node, lang, src, naming);
+        m.bindings = b.bindings;
+        m.short_bindings = b.short;
+        m.long_short_bindings = b.long_short_bindings;
         out.push(m);
     }
     nodes
@@ -281,6 +312,13 @@ pub fn cognitive_rebased<'t>(nodes: impl IntoIterator<Item = Node<'t>>, lang: La
         walk(n, prof, src, 0, &mut acc);
     }
     acc.cognitive
+}
+
+/// A node that `unit_nodes` reports as a unit of its own when it sits inside another unit: the
+/// grammar's unit kinds, arrow functions and function expressions only when bound to a name.
+pub(crate) fn is_nested_unit(node: Node, lang: Language) -> bool {
+    let kind = node.kind();
+    profile(lang).units.contains(&kind) && (!matches!(kind, "arrow_function" | "function_expression") || is_bound_callable(node))
 }
 
 /// A unit kind or an anonymous callable of `lang`: a scope of its own.
@@ -310,6 +348,9 @@ fn measure(node: Node, prof: &Profile, src: &[u8], path: &str) -> FunctionMetric
         max_nesting: acc.max_nesting,
         in_test: false,
         phases: Vec::new(),
+        bindings: 0,
+        short_bindings: Vec::new(),
+        long_short_bindings: 0,
     }
 }
 
@@ -503,7 +544,7 @@ def f(path):
 def kw(a, *, b, **kw):
     return a
 ";
-        let (_, fs) = analyze_file(&file("w.py", Language::Python, src), &Cfg::default(), &TestsCfg::default());
+        let (_, fs) = analyze_file(&file("w.py", Language::Python, src), &Cfg::default(), &TestsCfg::default(), &NamingCfg::default());
         assert_eq!(fs[0].cognitive, 2, "{:?}", fs[0]); // except + for
         assert_eq!(fs[0].max_nesting, 1);
         assert_eq!(fs[1].params, 3);
@@ -520,7 +561,7 @@ export const Comp = React.forwardRef((props, ref) => { if (props.a) {} });
 describe('suite', () => { it('works', () => { if (1) {} }); });
 function sw(x: number) { switch (x) { case 1: return 1; case 2: return 2; default: return 0; } }
 ";
-        let (_, fs) = analyze_file(&file("r.ts", Language::TypeScript, src), &Cfg::default(), &TestsCfg::default());
+        let (_, fs) = analyze_file(&file("r.ts", Language::TypeScript, src), &Cfg::default(), &TestsCfg::default(), &NamingCfg::default());
         let names: Vec<&str> = fs.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["app.post('/x')", "Comp", "describe('suite')", "sw"], "{fs:?}");
         assert_eq!(fs[0].cognitive, 5, "{:?}", fs[0]);
@@ -531,7 +572,7 @@ function sw(x: number) { switch (x) { case 1: return 1; case 2: return 2; defaul
     fn deep_expression_does_not_overflow() {
         let expr = std::iter::repeat_n("a", 60_000).collect::<Vec<_>>().join(" + ");
         let src = format!("export const s = {expr};\nfunction f() {{ return {expr}; }}\n");
-        let (fm, fs) = analyze_file(&file("deep.ts", Language::TypeScript, &src), &Cfg::default(), &TestsCfg::default());
+        let (fm, fs) = analyze_file(&file("deep.ts", Language::TypeScript, &src), &Cfg::default(), &TestsCfg::default(), &NamingCfg::default());
         assert!(!fm.parse_errors);
         assert_eq!(fs.len(), 1);
     }
@@ -561,7 +602,7 @@ def f(a, b):
         pass
     return 1 if a else 2   # +1
 ";
-        let (_, fs) = analyze_file(&file("f.py", Language::Python, src), &Cfg::default(), &TestsCfg::default());
+        let (_, fs) = analyze_file(&file("f.py", Language::Python, src), &Cfg::default(), &TestsCfg::default(), &NamingCfg::default());
         assert_eq!(fs.len(), 1);
         let f = &fs[0];
         assert_eq!(f.name, "f");
@@ -583,7 +624,7 @@ class K {
 }
 export const g = (x: number) => x && x;   // +1
 ";
-        let (_, fs) = analyze_file(&file("k.ts", Language::TypeScript, src), &Cfg::default(), &TestsCfg::default());
+        let (_, fs) = analyze_file(&file("k.ts", Language::TypeScript, src), &Cfg::default(), &TestsCfg::default(), &NamingCfg::default());
         let names: Vec<&str> = fs.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["K.m", "cb", "g"], "{fs:?}");
         assert_eq!(fs[0].cognitive, 8, "{:?}", fs[0]);
@@ -604,7 +645,7 @@ mod tests {
 }
 ";
         let f = file("t.rs", Language::Rust, src);
-        let (fm, fs) = analyze_file(&f, &Cfg { cognitive_hard: 5 }, &TestsCfg::default());
+        let (fm, fs) = analyze_file(&f, &Cfg { cognitive_hard: 5 }, &TestsCfg::default(), &NamingCfg::default());
         assert_eq!(fs.len(), 2, "{fs:?}");
         assert_eq!((fs[0].name.as_str(), fs[0].in_test), ("f", false));
         assert_eq!((fs[1].name.as_str(), fs[1].in_test), ("deep", true));
@@ -615,7 +656,7 @@ mod tests {
         // The knob turns the effects off: every unit is source and every line counts, but the
         // region is still reported.
         let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
-        let (fm, fs) = analyze_file(&f, &Cfg { cognitive_hard: 5 }, &off);
+        let (fm, fs) = analyze_file(&f, &Cfg { cognitive_hard: 5 }, &off, &NamingCfg::default());
         assert!(fs.iter().all(|f| !f.in_test));
         assert_eq!((fm.functions, fm.complex_functions, fm.inline_test_lines), (2, 1, 0));
         assert_eq!(fm.test_regions.len(), 1);
@@ -624,7 +665,7 @@ mod tests {
     #[test]
     fn rust_regions_sharing_a_line_are_counted_once() {
         let src = "#[cfg(test)] use a; #[cfg(test)] use b;\nfn f() {}\n";
-        let (fm, _) = analyze_file(&file("t.rs", Language::Rust, src), &Cfg::default(), &TestsCfg::default());
+        let (fm, _) = analyze_file(&file("t.rs", Language::Rust, src), &Cfg::default(), &TestsCfg::default(), &NamingCfg::default());
         assert_eq!((fm.test_regions.len(), fm.inline_test_lines), (2, 1), "{fm:?}");
     }
 
@@ -641,7 +682,7 @@ fn f(a: Option<u8>) {
     for i in 0..3 { let c = |x| if x { 1 } else { 0 }; }  // for +1, closure nests: if +3, else +1
 }
 ";
-        let (_, fs) = analyze_file(&file("s.rs", Language::Rust, src), &Cfg::default(), &TestsCfg::default());
+        let (_, fs) = analyze_file(&file("s.rs", Language::Rust, src), &Cfg::default(), &TestsCfg::default(), &NamingCfg::default());
         assert_eq!(fs[0].name, "S.m");
         assert_eq!(fs[0].cognitive, 5, "{:?}", fs[0]);
         assert_eq!(fs[0].params, 1);

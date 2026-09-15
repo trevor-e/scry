@@ -7,7 +7,7 @@
 
 use crate::clones::{CloneKind, CloneReport, ClonePair, Loc, TableRef};
 use crate::clumps::{self, Clump, ClumpsReport};
-use crate::config::{History as HistoryCfg, Plan as PlanCfg, Report as Cfg, Tests as TestsCfg, Weights};
+use crate::config::{History as HistoryCfg, Naming as NamingCfg, Plan as PlanCfg, Report as Cfg, Tests as TestsCfg, Weights};
 use crate::dead::{self, DeadReport, FileDead, Shape, SymbolReport};
 use crate::declared::{self, DeclaredReport, Feature, Misplaced, Orphan, TestSeam, UnreadKnob};
 use crate::deps::{Cycle, DepGraph};
@@ -16,6 +16,7 @@ use crate::discover::{FileKind, SourceFile};
 use crate::history::{CoChange, History};
 use crate::mentions::{MentionIndex, Symbol};
 use crate::metrics::{FileMetrics, FunctionMetrics};
+use crate::naming;
 use crate::plan::{self, Step};
 use crate::comments::{CommentsReport, Section};
 use crate::regions::{RegionKind, TestRegion};
@@ -73,6 +74,14 @@ pub struct Signals {
     /// …and env names this file reads that only tests set. Their sum is percentile-ranked,
     /// weight `[declared].weight`.
     pub test_seams: usize,
+    /// One-letter bindings of the file's production units whose widest use gap reaches
+    /// `[naming].short_name_min_gap` (see `naming`)…
+    pub long_short_bindings: usize,
+    /// …and the file's short bindings over all its bindings, percentile-ranked with weight
+    /// `[naming].weight_into_complexity` (0 by default); absent when
+    /// `[naming].emit_short_binding_share` is off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub short_binding_share: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -275,6 +284,8 @@ pub struct Inputs<'a> {
     /// `[declared].weight`.
     pub declared_weight: f64,
     pub comments: &'a CommentsReport,
+    /// `[naming]`: the short-name gate, the unit-length floor and the share weight.
+    pub naming: &'a NamingCfg,
     pub cognitive_hard: u32,
     pub tests: &'a TestsCfg,
     /// `[clones].list_tables_separately`.
@@ -469,6 +480,22 @@ fn unmentioned_reason(unmentioned: &[Symbol], public: usize, listed: usize) -> S
     format!("{} of {public} public symbols are named by no test: {}{more}", unmentioned.len(), named.join(", "))
 }
 
+/// The short-name attribute lines of a file's production units (see `naming::unit_reason`):
+/// one per unit with a far-lived one-letter binding that is over `cognitive_hard`, among the
+/// file's `worst` units, or at least `min_unit_lines` long; widest gap first.
+fn short_name_lines(units: &[&FunctionMetrics], worst: &[&FunctionMetrics], cognitive_hard: u32, naming: &NamingCfg) -> Vec<String> {
+    let mut hits: Vec<(usize, String)> = units
+        .iter()
+        .filter(|u| u.cognitive > cognitive_hard || u.lines >= naming.min_unit_lines || worst.iter().any(|w| std::ptr::eq(*w, **u)))
+        .filter_map(|u| {
+            let gap = u.short_bindings.iter().map(|s| s.max_gap).max().unwrap_or(0);
+            naming::unit_reason(&u.name, u.start_line, u.end_line, &u.short_bindings, u.long_short_bindings, naming).map(|r| (gap, r))
+        })
+        .collect();
+    hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    hits.into_iter().map(|(_, r)| r).collect()
+}
+
 pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report {
     let fm: HashMap<&str, &FileMetrics> = inp.file_metrics.iter().map(|m| (m.path.as_str(), m)).collect();
     let inline_ratio = |f: &SourceFile| {
@@ -541,6 +568,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 clump_members: cl.map_or(0, |c| c.members),
                 unread_knobs: dc.map_or(0, |d| d.unread_knobs.len()),
                 test_seams: dc.map_or(0, |d| d.test_seams.len()),
+                long_short_bindings: m.map_or(0, |m| m.long_short_bindings),
+                short_binding_share: m.and_then(|m| m.short_binding_share),
             }
         })
         .collect();
@@ -557,6 +586,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
     let p_strings = percentiles(&signals.iter().map(|s| s.family_literals).collect::<Vec<_>>());
     let p_clumps = percentiles(&signals.iter().map(|s| s.clump_members).collect::<Vec<_>>());
     let p_declared = percentiles(&signals.iter().map(|s| s.unread_knobs + s.test_seams).collect::<Vec<_>>());
+    let p_naming = percentiles(&signals.iter().map(|s| s.short_binding_share.unwrap_or(0.0)).collect::<Vec<_>>());
     // Commits that touched none of our files (a subdirectory scan of a larger
     // repo, a shallow clone) are not history we can rank on.
     let have_history = !hist.files.is_empty();
@@ -619,7 +649,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let strings_p = if s.family_literals == 0 { 0.0 } else { p_strings[i] };
             let clumps_p = if s.clump_members == 0 { 0.0 } else { p_clumps[i] };
             let declared_p = if s.unread_knobs + s.test_seams == 0 { 0.0 } else { p_declared[i] };
-            let base = w.hotspot * hotspot + w.fixes * fix + w.complexity * cx + w.coupling * coupling + w.clones * clone + w.size * p_lines[i] + w.dead * dead_p + inp.helpers_weight * helpers_p + w.strings * strings_p + inp.clumps_weight * clumps_p + inp.declared_weight * declared_p;
+            let naming_p = if s.short_binding_share.unwrap_or(0.0) == 0.0 { 0.0 } else { p_naming[i] };
+            let base = w.hotspot * hotspot + w.fixes * fix + w.complexity * cx + w.coupling * coupling + w.clones * clone + w.size * p_lines[i] + w.dead * dead_p + inp.helpers_weight * helpers_p + w.strings * strings_p + inp.clumps_weight * clumps_p + inp.declared_weight * declared_p + inp.naming.weight_into_complexity * naming_p;
             let score = 100.0 * base * if s.test_units > 0 { 1.0 } else { cfg.no_tests_multiplier };
 
             let mut reasons = Vec::new();
@@ -632,16 +663,32 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 reasons.push(format!("{} fix commits in the last {window}", s.fix_commits));
             }
             let comments_file = inp.comments.files.get(&f.path);
+            // The short-name attribute (see `naming`) of the units the report already ranks: over
+            // the threshold, in `worst_functions`, or at least `[naming].min_unit_lines` long.
+            let naming_lines = short_name_lines(units.get(f.path.as_str()).map_or(&[], Vec::as_slice), worst.get(f.path.as_str()).map_or(&[], Vec::as_slice), inp.cognitive_hard, inp.naming);
             if s.complex_functions > 0 {
                 let w = worst.get(f.path.as_str()).and_then(|v| v.first());
                 let mut r = format!("{} function(s) over cognitive {}", s.complex_functions, inp.cognitive_hard);
                 if let Some(w) = w {
                     r.push_str(&format!("; worst {} at {} (lines {}-{}, nesting {})", w.name, w.cognitive, w.start_line, w.end_line, w.max_nesting));
                 }
-                // Sub-lines: the phases each over-threshold unit already labels (see `comments`).
+                // Sub-lines: the phases each over-threshold unit already labels (see `comments`),
+                // then the short-name attributes.
                 for u in comments_file.into_iter().flat_map(|c| c.units.iter()) {
                     r.push('\n');
                     r.push_str(&u.reason);
+                }
+                for l in &naming_lines {
+                    r.push('\n');
+                    r.push_str(l);
+                }
+                reasons.push(r);
+            } else if !naming_lines.is_empty() {
+                // No functions reason to ride on: a lines-based one heads the attributes.
+                let mut r = format!("{} function(s) carry a one-letter name across a use gap of {}+ lines", naming_lines.len(), inp.naming.short_name_min_gap);
+                for l in &naming_lines {
+                    r.push('\n');
+                    r.push_str(l);
                 }
                 reasons.push(r);
             }
@@ -884,6 +931,11 @@ mod tests {
         R.get_or_init(CommentsReport::default)
     }
 
+    fn nonaming() -> &'static NamingCfg {
+        static R: std::sync::OnceLock<NamingCfg> = std::sync::OnceLock::new();
+        R.get_or_init(NamingCfg::default)
+    }
+
     fn nostrings() -> &'static StringsReport {
         static NOSTRINGS: std::sync::OnceLock<StringsReport> = std::sync::OnceLock::new();
         NOSTRINGS.get_or_init(StringsReport::default)
@@ -892,12 +944,79 @@ mod tests {
     fn fmetrics(path: &str, total: u32, max: u32, complex: usize) -> FileMetrics {
         FileMetrics {
             path: path.into(), functions: 1, total_cognitive: total, max_cognitive: max, max_nesting: 0, complex_functions: complex,
-            parse_errors: false, inline_test_lines: 0, test_regions: vec![],
+            parse_errors: false, inline_test_lines: 0, test_regions: vec![], bindings: 0, short_bindings: 0, long_short_bindings: 0, short_binding_share: None,
         }
     }
 
     fn region(kind: RegionKind, start_line: usize, end_line: usize) -> TestRegion {
         TestRegion { kind, start_byte: 0, end_byte: 0, start_line, end_line }
+    }
+
+    #[test]
+    fn short_name_attribute_rides_the_functions_reason_and_weighs_nothing_by_default() {
+        use crate::naming::ShortBinding;
+        let sf = |p: &str, lines: usize| SourceFile {
+            path: p.into(), lang: crate::lang::Language::Rust, kind: FileKind::Source, lines, bytes: 0, content: String::new(),
+        };
+        let far = |name: &str, decl: usize| ShortBinding { name: name.into(), decl_line: decl, last_line: decl + 80, uses: 3, max_gap: 50, gap_from: decl + 5, gap_to: decl + 55, span: 80, block_lines: 100 };
+        let near = |name: &str, decl: usize| ShortBinding { name: name.into(), decl_line: decl, last_line: decl + 10, uses: 4, max_gap: 4, gap_from: decl, gap_to: decl + 4, span: 10, block_lines: 100 };
+        let unit = |file: &str, name: &str, s: usize, lines: usize, cognitive: u32, short: Vec<ShortBinding>| {
+            let long = short.iter().filter(|b| b.max_gap >= 30).count();
+            FunctionMetrics { file: file.into(), name: name.into(), start_line: s, end_line: s + lines - 1, lines, params: 0, cyclomatic: 1, cognitive, max_nesting: 1, in_test: false, phases: Vec::new(), bindings: 6, short_bindings: short, long_short_bindings: long }
+        };
+        // a.rs: an over-threshold unit with two far bindings and a near one. b.rs: nothing over
+        // the threshold, a 120-line unit (>= min_unit_lines). c.rs: four short units, the far
+        // binding in the top one (worst_functions) and in the fourth (never listed).
+        let files = vec![sf("a.rs", 400), sf("b.rs", 400), sf("c.rs", 400)];
+        let mut fm = vec![fmetrics("a.rs", 32, 32, 1), fmetrics("b.rs", 2, 2, 0), fmetrics("c.rs", 6, 3, 0)];
+        fm[0].long_short_bindings = 2;
+        fm[0].short_binding_share = Some(0.5);
+        fm[1].short_binding_share = Some(0.1);
+        fm[2].short_binding_share = Some(0.2);
+        let functions = vec![
+            unit("a.rs", "close", 687, 258, 32, vec![far("p", 690), near("f", 889), far("o", 700)]),
+            unit("b.rs", "long", 10, 120, 2, vec![far("d", 12)]),
+            unit("c.rs", "top", 1, 40, 3, vec![far("t", 2)]),
+            unit("c.rs", "mid", 50, 40, 2, vec![]),
+            unit("c.rs", "low", 100, 40, 1, vec![]),
+            unit("c.rs", "fourth", 150, 40, 0, vec![far("q", 151)]),
+        ];
+        let deps = DepGraph::default();
+        let clones = CloneReport::default();
+        let mentions = MentionIndex::default();
+        let tests = TestsCfg::default();
+        let hcfg = HistoryCfg::default();
+        let pcfg = PlanCfg::default();
+        let weights = Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 0.0, dead: 0.0, strings: 0.0 };
+        let none = Cfg { with_history: weights.clone(), without_history: weights, no_tests_multiplier: 1.0, ..Cfg::default() };
+        let inputs = |naming: &'static NamingCfg| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming };
+        let r = build(inputs(nonaming()), 10, &none, &td());
+        let hot = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap();
+        // Weight 0: every score is 0 whatever the share; the share and count are in the signals.
+        assert!(r.hotspots.iter().all(|h| h.score == 0.0), "{:?}", r.hotspots.iter().map(|h| h.score).collect::<Vec<_>>());
+        assert_eq!((hot("a.rs").signals.long_short_bindings, hot("a.rs").signals.short_binding_share), (2, Some(0.5)));
+        // a.rs: a sub-line of the functions reason, worst binding first, both far ones listed.
+        let a = hot("a.rs");
+        assert_eq!(a.reasons[0], "1 function(s) over cognitive 15; worst close at 32 (lines 687-944, nesting 1)\nclose (lines 687-944): this block is too long to carry a one-letter name: p (declared line 690, last used line 770, 3 uses, widest gap 50 lines between lines 695 and 745, in a 100-line block); 2 one-letter bindings have a use gap of 30+ lines: p, o", "{:?}", a.reasons);
+        assert!(a.worst_functions[0].short_bindings.iter().any(|b| b.name == "f"), "raw bindings ride the unit in JSON");
+        // b.rs: no functions reason to ride on, so a lines-based one heads it.
+        let b = hot("b.rs");
+        assert_eq!(b.reasons[0], "1 function(s) carry a one-letter name across a use gap of 30+ lines\nlong (lines 10-129): this block is too long to carry a one-letter name: d (declared line 12, last used line 92, 3 uses, widest gap 50 lines between lines 17 and 67, in a 100-line block)", "{:?}", b.reasons);
+        // c.rs: the unit in worst_functions carries it, the fourth-ranked one does not.
+        let c = hot("c.rs");
+        let lines: Vec<&str> = c.reasons.iter().flat_map(|r| r.split('\n')).filter(|l| l.contains("one-letter name:")).collect();
+        assert_eq!(lines.len(), 1, "{:?}", c.reasons);
+        assert!(lines[0].starts_with("top (lines 1-40): this block"), "{}", lines[0]);
+        assert!(!c.reasons.iter().any(|r| r.contains("fourth")), "{:?}", c.reasons);
+        // The text renderer indents the sub-line under the reason and never says rename.
+        let text = render(&r, 10);
+        assert!(text.contains("        - 1 function(s) over cognitive 15; worst close at 32 (lines 687-944, nesting 1)\n            close (lines 687-944): this block is too long"), "{text}");
+        assert!(!text.contains("rename"));
+        // The share percentile enters the score only through the weight.
+        static WEIGHTED: std::sync::OnceLock<NamingCfg> = std::sync::OnceLock::new();
+        let weighted = WEIGHTED.get_or_init(|| NamingCfg { weight_into_complexity: 1.0, ..NamingCfg::default() });
+        let r = build(inputs(weighted), 10, &none, &td());
+        assert_eq!(r.hotspots.iter().map(|h| (h.path.as_str(), h.score)).collect::<Vec<_>>(), vec![("a.rs", 100.0), ("c.rs", 50.0), ("b.rs", 0.0)]);
     }
 
     #[test]
@@ -910,7 +1029,7 @@ mod tests {
         // because it is in the printed list. c.rs: qualifies but is not printed at --top 2.
         let files = vec![sf("a.rs", 1400), sf("b.rs", 900), sf("c.rs", 800)];
         let fm = vec![fmetrics("a.rs", 30, 30, 1), fmetrics("b.rs", 2, 2, 0), fmetrics("c.rs", 1, 1, 0)];
-        let functions = vec![FunctionMetrics { file: "a.rs".into(), name: "ladder".into(), start_line: 405, end_line: 656, lines: 252, params: 1, cyclomatic: 9, cognitive: 32, max_nesting: 5, in_test: false, phases: Vec::new() }];
+        let functions = vec![FunctionMetrics { file: "a.rs".into(), name: "ladder".into(), start_line: 405, end_line: 656, lines: 252, params: 1, cyclomatic: 9, cognitive: 32, max_nesting: 5, in_test: false, phases: Vec::new(), bindings: 0, short_bindings: Vec::new(), long_short_bindings: 0 }];
         let phase = |label: &str, start, end| Phase { label: label.into(), start, end, lines: end - start + 1, est_cognitive: Some(1), shared_locals: vec![] };
         let unit = UnitPhases { unit: "ladder".into(), start_line: 405, end_line: 656, cognitive: 32, phases: vec![phase("rung 1", 471, 497), phase("rung 2", 498, 656)], shared_locals: vec!["git".into()], reason: "ladder (lines 405-656, cognitive 32) already labels 2 phases: rung 1 471-497, rung 2 498-656 — extract each as a helper (est. cognitive 1 / 1; 1 local shared: git)".into() };
         let section = |name: &str, start, end| Section { name: name.into(), start, end, lines: end - start + 1, functions: 1 };
@@ -924,7 +1043,7 @@ mod tests {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 1.0, dead: 0.0, strings: 0.0 },
             ..Cfg::default()
         };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: &comments }, 2, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: &comments, naming: nonaming() }, 2, &size_only, &td());
         let a = &r.hotspots[0];
         assert_eq!(a.path, "a.rs");
         // The phase sub-line is part of the metrics reason; the banner line is its own reason.
@@ -961,8 +1080,8 @@ mod tests {
         c.test_regions = vec![region(RegionKind::CfgTestMod, 6, 100)];
         let fm = vec![a, fmetrics("b.rs", 1, 1, 0), c];
         let functions = vec![
-            FunctionMetrics { file: "a.rs".into(), name: "src".into(), start_line: 1, end_line: 2, lines: 2, params: 0, cyclomatic: 1, cognitive: 1, max_nesting: 0, in_test: false, phases: Vec::new() },
-            FunctionMetrics { file: "a.rs".into(), name: "tst".into(), start_line: 1300, end_line: 1360, lines: 61, params: 0, cyclomatic: 1, cognitive: 40, max_nesting: 3, in_test: true, phases: Vec::new() },
+            FunctionMetrics { file: "a.rs".into(), name: "src".into(), start_line: 1, end_line: 2, lines: 2, params: 0, cyclomatic: 1, cognitive: 1, max_nesting: 0, in_test: false, phases: Vec::new(), bindings: 0, short_bindings: Vec::new(), long_short_bindings: 0 },
+            FunctionMetrics { file: "a.rs".into(), name: "tst".into(), start_line: 1300, end_line: 1360, lines: 61, params: 0, cyclomatic: 1, cognitive: 40, max_nesting: 3, in_test: true, phases: Vec::new(), bindings: 0, short_bindings: Vec::new(), long_short_bindings: 0 },
         ];
         let deps = DepGraph::default();
         let clones = CloneReport::default();
@@ -976,7 +1095,7 @@ mod tests {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 1.0, dead: 0.0, strings: 0.0 },
             ..Cfg::default()
         };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &size_only, &td());
         let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["b.rs", "a.rs"], "{r:?}");
         let a = &r.hotspots[1];
@@ -993,19 +1112,19 @@ mod tests {
         assert!(text.contains("b.rs  (1500 lines)"), "{text}");
         // Below the ratio knob the note is absent; the inline unit still counts.
         let strict = TestsCfg { report_inline_ratio_above: 0.9, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &strict, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &strict, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &size_only, &td());
         assert!(r.hotspots[1].inline_test_note.is_none());
         assert_eq!(r.hotspots[1].signals.test_units, 1);
         // The inline_modules knob gates line counts and tags, not the mention index.
         let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &off, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &off, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &size_only, &td());
         assert_eq!(r.hotspots.iter().find(|h| h.path == "a.rs").unwrap().signals.test_units, 1);
         // Knob off, the metrics pass lists the regions but counts 0 inline test lines: no note,
         // even when the ratio threshold would always show one.
         let mut fm_off = fm.clone();
         fm_off.iter_mut().for_each(|m| m.inline_test_lines = 0);
         let always = TestsCfg { inline_modules: false, report_inline_ratio_above: 0.0, ..TestsCfg::default() };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm_off, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &always, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &size_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm_off, functions: &functions, deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &always, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &size_only, &td());
         let a = r.hotspots.iter().find(|h| h.path == "a.rs").unwrap();
         assert!(a.inline_test_note.is_none() && a.test_regions.len() == 1, "{:?}", a.inline_test_note);
         // Many regions: the largest one's kind and range, the rest counted.
@@ -1032,7 +1151,7 @@ mod tests {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 0.0, dead: 1.0, strings: 0.0 },
             ..Cfg::default()
         };
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: &dead, helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &dead_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: &dead, helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &dead_only, &td());
         let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["b.rs", "a.rs", "c.rs"], "{r:?}");
         let a = &r.hotspots[1];
@@ -1047,7 +1166,7 @@ mod tests {
         assert!(text.contains("\nDEAD SURFACE  (exported symbols with no production use outside their file; fields never read, variants never constructed)\n  2 pub items checked in 3 files: 1 dead, 0 test-only, 0 referenced only in-file (0% with no external production use); 0 dead shapes\n  lines ratio  d/t/i of items  path\n     20   20%      0/0/1 of 1  b.rs\n      5    5%      1/0/0 of 1  a.rs\n"), "{text}");
         assert!(text.contains("        - pub fn install (a.rs 143-147) is called nowhere in 3 files (5 doc mentions)\n"), "{text}");
         // Nothing indexed: the section says none.
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &dead_only, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &dead_only, &td());
         assert!(render(&r, 10).contains("DEAD SURFACE  (exported symbols with no production use outside their file; fields never read, variants never constructed)\n  none\n"));
     }
 
@@ -1067,7 +1186,7 @@ mod tests {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 0.0, dead: 0.0, strings: 0.0 },
             ..Cfg::default()
         };
-        let inputs = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: &h, helpers_weight: w, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() };
+        let inputs = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: &h, helpers_weight: w, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() };
         let r = build(inputs(1.0), 10, &none, &td());
         let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["b.rs", "a.rs", "c.rs"], "{r:?}");
@@ -1086,7 +1205,7 @@ mod tests {
         assert!(text.contains("\nHELPERS  (same-name helpers defined in several files; small helper bodies inlined instead of called)\n  1 names defined in 2+ files: 1 verbatim, 0 similar, 0 different contract; 1 of 4 small helpers inlined elsewhere (25.0%)\n  attribution: 2 git lookups\n  plural  2 copies in 2 files, verbatim (Jaccard 1.00): a.rs:1-3, c.rs:5-7 (verbatim); from 2 commits / 2 sessions\n  INLINED  (helper bodies found as exact token sequences elsewhere)\n  body of io_err (c.rs:20-22, 18 tokens) is inlined 2 times in 1 file: b.rs:9, b.rs:30 - io_err is private; hoist and call\n"), "{text}");
         assert_eq!(r.helpers.families.len(), 1);
         // Nothing indexed: the section says none.
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &none, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &none, &td());
         assert!(render(&r, 10).contains("HELPERS  (same-name helpers defined in several files; small helper bodies inlined instead of called)\n  none\n"));
     }
 
@@ -1107,7 +1226,7 @@ mod tests {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 0.0, dead: 0.0, strings: 0.0 },
             ..Cfg::default()
         };
-        let inputs = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: &c, clumps_weight: w, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() };
+        let inputs = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: &c, clumps_weight: w, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() };
         let r = build(inputs(1.0), 10, &none, &td());
         let paths: Vec<&str> = r.hotspots.iter().map(|h| h.path.as_str()).collect();
         assert_eq!(paths, vec!["a.rs", "b.rs", "c.rs"], "{r:?}");
@@ -1124,7 +1243,7 @@ mod tests {
         assert!(text.contains(&format!("\nCLUMPS  (parameter tuples recurring across functions; slots no member reads)\n  1 clumps over 5 of 20 functions (25.0%) in 2 files; 5 functions (25.0%) carry a _-prefixed parameter\n  3 functions not analysed: 3 trait / override methods and callbacks, 0 protocol tuples, 0 overloads / dunders / stubs, 0 same-name duplicates\n  {line}\n")), "{text}");
         assert_eq!(r.clumps.clumps.len(), 1);
         // Nothing analysed: the section says none.
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &none, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &none, &td());
         assert!(render(&r, 10).contains("CLUMPS  (parameter tuples recurring across functions; slots no member reads)\n  none\n"));
     }
 
@@ -1145,7 +1264,7 @@ mod tests {
             without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 0.0, size: 0.0, dead: 0.0, strings: 0.0 },
             ..Cfg::default()
         };
-        let inputs = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: &d, declared_weight: w, comments: nocomments() };
+        let inputs = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: &d, declared_weight: w, comments: nocomments(), naming: nonaming() };
         let r = build(inputs(1.0), 10, &none, &td());
         let a = r.hotspots.iter().find(|h| h.path == "src/config.rs").unwrap();
         assert_eq!((a.signals.unread_knobs, a.unread_knobs.clone()), (1, vec![("ci.homerunner".to_string(), 182)]));
@@ -1166,7 +1285,7 @@ mod tests {
         let mut d2 = DeclaredReport { totals: Totals { env_names: 14, test_seams: 1, ..d.totals.clone() }, ..DeclaredReport::default() };
         d2.test_seams.push(TestSeam { name: "KANSPEC_ACTOR".into(), class: "seam".into(), reads: vec![EnvRead { file: "src/main.rs".into(), line: 49, symbol: "Actor.detect".into() }], test_mentions: 8, test_dirs: vec!["tests/".into()], born_read: None, born_test: None, doc_mentions: vec![], line_text: seam.into() });
         d2.files.insert("src/main.rs".into(), FileDeclared { unread_knobs: vec![], test_seams: vec![("KANSPEC_ACTOR".into(), 49)], reasons: vec![seam.into()] });
-        let inputs2 = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: &d2, declared_weight: w, comments: nocomments() };
+        let inputs2 = |w: f64| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: &d2, declared_weight: w, comments: nocomments(), naming: nonaming() };
         let r = build(inputs2(1.0), 10, &none, &td());
         let m = r.hotspots.iter().find(|h| h.path == "src/main.rs").unwrap();
         assert_eq!((m.signals.test_seams, m.test_seams.clone(), m.reasons.last().map(String::as_str)), (1, vec![("KANSPEC_ACTOR".to_string(), 49)], Some(seam)));
@@ -1176,7 +1295,7 @@ mod tests {
         assert!(text.contains(&format!("; 1 of 14 env names read are test seams\n  TEST SEAMS  (env names read by production code, set only by tests, in no user doc)\n  {seam}\n")), "{text}");
         assert_eq!(r.declared.test_seams.len(), 1);
         // No manifest and no candidate: the section says none.
-        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &none, &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &none, &td());
         assert!(render(&r, 10).contains("DECLARED  (dependencies no file imports; feature flags nothing checks; config knobs no code reads; env names only tests set)\n  none\n"));
     }
 
@@ -1194,7 +1313,7 @@ mod tests {
             hist.files.insert(p.into(), fh);
         }
         let (deps, clones, tests, hcfg, mentions, pcfg) = (DepGraph::default(), CloneReport::default(), TestsCfg::default(), hcfg(), MentionIndex::default(), pcfg());
-        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &Cfg::default(), &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &Cfg::default(), &td());
         let reasons = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.clone();
         assert!(reasons("bot.rs").contains(&"9 commits in the last 6 months (0 fix commits, 0 authors (all bot commits))".to_string()), "{:?}", reasons("bot.rs"));
         assert!(reasons("bot.rs").contains(&"no non-bot author over the window (bus factor 0)".to_string()));
@@ -1222,7 +1341,7 @@ mod tests {
         let hcfg = hcfg();
         let pcfg = pcfg();
         let mentions = MentionIndex::default();
-        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: sep, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() };
+        let inputs = |sep: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: sep, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() };
         let r = build(inputs(true), 10, &Cfg::default(), &td());
         assert_eq!((r.clones.len(), r.tables.len()), (1, 1));
         assert_eq!(r.clones[0].kind, CloneKind::Logic);
@@ -1270,7 +1389,7 @@ mod tests {
         };
         let (deps, tests, hcfg, mentions, pcfg) = (DepGraph::default(), TestsCfg::default(), hcfg(), MentionIndex::default(), pcfg());
         fn constrain<'a, F: Fn(&'a PlanCfg) -> Inputs<'a>>(f: F) -> F { f }
-        let inputs = constrain(|pcfg| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() });
+        let inputs = constrain(|pcfg| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() });
         let r = build(inputs(&pcfg), 10, &Cfg::default(), &td());
         assert!(r.hotspots.iter().all(|h| h.path != "c.rs"));
         let a = r.hotspots.iter().find(|h| h.path == "a.rs").unwrap();
@@ -1333,7 +1452,7 @@ mod tests {
         let pcfg = pcfg();
         let strict = HistoryCfg { explained_min_share: 0.9, ..HistoryCfg::default() };
         fn constrain<'a, F: Fn(&'a HistoryCfg) -> Inputs<'a>>(f: F) -> F { f }
-        let inputs = constrain(|hcfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() });
+        let inputs = constrain(|hcfg| Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() });
         let r = build(inputs(&dflt), 10, &Cfg::default(), &td());
         assert_eq!(r.hidden_coupling.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.together, h.together_nonsweep)).collect::<Vec<_>>(), vec![("a.rs", "b.rs", 6, 4), ("a.rs", "e.rs", 3, 3)]);
         assert!(r.hidden_coupling.iter().all(|h| h.explained_by.is_none()));
@@ -1367,7 +1486,7 @@ mod tests {
         hist.sweep_commits = 0;
         hist.sweeps.clear();
         hist.co_changes.retain(|c| c.a == "c.rs");
-        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &dflt, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() }, 10, &Cfg::default(), &td());
+        let r = build(Inputs { root: String::new(), files: &files, history: Some(&hist), file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &dflt, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() }, 10, &Cfg::default(), &td());
         let text = render(&r, 10);
         assert!(r.sweep_note.is_none() && !text.contains("directory-sweep"));
         assert!(r.hidden_coupling.is_empty() && r.explained_coupling.len() == 1);
@@ -1405,7 +1524,7 @@ mod tests {
         let hcfg = hcfg();
         let pcfg = pcfg();
         let mentions = MentionIndex::default();
-        let inputs = |dedupe: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: dedupe, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() };
+        let inputs = |dedupe: bool| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: dedupe, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() };
         let r = build(inputs(true), 10, &Cfg::default(), &td());
         let reason = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap().reasons.iter().find(|x| x.contains("cycle")).cloned().unwrap_or_default();
         assert_eq!(reason("src/paths.rs"), "in the 4-file src cycle (cut: paths.rs -> plan.rs, EntityRef)");
@@ -1453,7 +1572,7 @@ mod tests {
         let hcfg = hcfg();
         let pcfg = pcfg();
         fn constrain<'a, F: Fn(&'a TestsCfg) -> Inputs<'a>>(f: F) -> F { f }
-        let inputs = constrain(|tests| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, mentions: &mentions, cognitive_hard: 15, tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() });
+        let inputs = constrain(|tests| Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, mentions: &mentions, cognitive_hard: 15, tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() });
         let r = build(inputs(&tests), 10, &Cfg::default(), &td());
         let hot = |p: &str| r.hotspots.iter().find(|h| h.path == p).unwrap();
         let units = |p: &str| hot(p).signals.test_units;
@@ -1504,7 +1623,7 @@ mod tests {
         let hcfg = hcfg();
         let pcfg = pcfg();
         let mentions = MentionIndex::default();
-        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments() };
+        let inputs = || Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming() };
         let by_default = build(inputs(), 10, &Cfg::default(), &td());
         assert_eq!(by_default.hotspots[0].path, "small.py");
         let size_only = Cfg {
