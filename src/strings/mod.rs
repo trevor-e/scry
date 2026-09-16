@@ -652,8 +652,46 @@ impl Walker {
         if prose {
             return (Some(Lit { line, text: raw.to_string(), key: masked, class: Class::Prose, config_class: None, role: role.map(|r| fold(&r)), named_const, words }), true);
         }
-        let Some(class) = self.classes.iter().find(|(_, r)| r.is_match(raw)).map(|(c, _)| c.clone()) else { return (None, shaped) };
+        let Some(class) = self.classes.iter().find(|(c, r)| r.is_match(raw) && (c != "env_name" || Self::is_env_key(n, anc, src, lang))).map(|(c, _)| c.clone()) else { return (None, shaped) };
         (Some(Lit { line, text: raw.to_string(), key: raw.to_string(), class: Class::Config, config_class: Some(class), role: role.map(|r| fold(&r)), named_const, words }), shaped)
+    }
+
+    /// Only the key of a recognized environment access, never its default or value.
+    fn is_env_key(n: Node, anc: &[Node], src: &[u8], lang: Language) -> bool {
+        let Some(&parent) = anc.last() else { return false };
+        let compact = |node: Node| text(node, src).split_whitespace().collect::<String>();
+        if matches!(parent.kind(), "subscript" | "subscript_expression") {
+            let (object, index) = if lang == Language::Python { ("value", "subscript") } else { ("object", "index") };
+            return parent.child_by_field_name(index) == Some(n)
+                && parent.child_by_field_name(object).is_some_and(|o| match lang {
+                    Language::Python => matches!(compact(o).as_str(), "os.environ" | "environ"),
+                    Language::TypeScript | Language::Tsx | Language::JavaScript => matches!(compact(o).as_str(), "process.env" | "import.meta.env"),
+                    _ => false,
+                });
+        }
+        if parent.named_child(0) != Some(n) {
+            return false;
+        }
+        let Some(&outer) = anc.iter().rev().nth(1) else { return false };
+        if lang == Language::Rust && parent.kind() == "token_tree" {
+            let name = if outer.kind() == "macro_invocation" {
+                outer.child_by_field_name("macro").map(|m| text(m, src))
+            } else {
+                nested_macro_name(parent, src)
+            };
+            return name.is_some_and(|name| matches!(name, "env" | "option_env" | "std::env" | "std::option_env"));
+        }
+        if !matches!(parent.kind(), "arguments" | "argument_list") {
+            return false;
+        }
+        let Some(callee) = outer.child_by_field_name("function") else { return false };
+        let name = compact(callee);
+        match lang {
+            Language::Rust => matches!(name.as_str(), "std::env::var" | "std::env::var_os" | "std::env::set_var" | "std::env::remove_var" | "env::var" | "env::var_os" | "env::set_var" | "env::remove_var")
+                || (callee.kind() == "field_expression" && callee.child_by_field_name("field").is_some_and(|f| matches!(text(f, src), "env" | "env_remove"))),
+            Language::Python => matches!(name.as_str(), "os.getenv" | "getenv" | "os.environ.get" | "environ.get" | "os.environ.pop" | "environ.pop" | "os.environ.setdefault" | "environ.setdefault"),
+            _ => matches!(name.as_str(), "Deno.env.get" | "Deno.env.set" | "Deno.env.delete"),
+        }
     }
 
     fn number_lit<'s>(&self, n: Node, anc: &[Node], src: &'s [u8], lang: Language, callees: &mut Callees<'s>) -> Option<Lit> {
@@ -1187,8 +1225,8 @@ mod tests {
         let rs = "fn f() {\n    println!(\"short text\");\n    println!(\"single-word-long-enough\");\n    println!(\"UPPER_CASE_CONST_TEXT\");\n    println!(\"content-type\");\n    println!(\"long enough prose text\");\n    println!(\"error {code} for {id}\");\n    helper(\"long enough but no role\");\n}\n";
         let prose = |cfg: &Cfg| lits("a.rs", rs, cfg).into_iter().filter(|l| l.class == Class::Prose).map(|l| l.text).collect::<Vec<_>>();
         assert_eq!(prose(&cfg), vec!["long enough prose text", "error {code} for {id}"]);
-        // The ALL_CAPS one is not prose: it went to the env_name config class.
-        assert_eq!(lits("a.rs", rs, &cfg).iter().filter(|l| l.class == Class::Config).map(|l| l.text.as_str()).collect::<Vec<_>>(), vec!["UPPER_CASE_CONST_TEXT"]);
+        // An uppercase message is neither prose nor evidence of an environment key.
+        assert!(!lits("a.rs", rs, &cfg).iter().any(|l| l.class == Class::Config));
         assert!(prose(&Cfg { min_len: 25, ..cfg.clone() }).is_empty());
         assert!(prose(&Cfg { exact_min_words: 5, ..cfg.clone() }).is_empty());
     }
@@ -1223,6 +1261,40 @@ mod tests {
         let r3 = run(&files, &Cfg { min_files: 3, ..cfg.clone() });
         assert_eq!(r3.families.len(), 1);
         assert_eq!(r3.files["src/b.rs"].family_literals, 1);
+    }
+
+    #[test]
+    fn environment_names_require_key_context() {
+        let examples = [
+            ("a.rs", r#"fn f() {
+                std::env::var("REAL_ENV_KEY"); env::var_os("REAL_ENV_KEY");
+                std::env::set_var("REAL_ENV_KEY", "NOT_AN_ENV_KEY");
+                cmd.env("REAL_ENV_KEY", "NOT_AN_ENV_KEY"); cmd.env_remove("REAL_ENV_KEY");
+                env!("REAL_ENV_KEY"); option_env!("REAL_ENV_KEY");
+                println!("NOT_AN_ENV_KEY"); let action = "NOT_AN_ENV_KEY";
+            }"#, 7),
+            ("a.py", r#"import os
+os.getenv("REAL_ENV_KEY", "NOT_AN_ENV_KEY")
+os.environ.get("REAL_ENV_KEY", "NOT_AN_ENV_KEY")
+os.environ["REAL_ENV_KEY"] = "NOT_AN_ENV_KEY"
+environ["REAL_ENV_KEY"]
+getenv("REAL_ENV_KEY")
+action = "NOT_AN_ENV_KEY"
+settings.get("NOT_AN_ENV_KEY")
+"#, 5),
+            ("a.ts", r#"const action = {type: 'NOT_AN_ENV_KEY'};
+type Action = 'NOT_AN_ENV_KEY';
+process.env['REAL_ENV_KEY'] = 'NOT_AN_ENV_KEY';
+const mode = import.meta.env['REAL_ENV_KEY'];
+Deno.env.get('REAL_ENV_KEY'); Deno.env.set('REAL_ENV_KEY', 'NOT_AN_ENV_KEY');
+settings.get('NOT_AN_ENV_KEY');
+"#, 4),
+        ];
+        for (path, code, count) in examples {
+            let found: Vec<_> = lits(path, code, &loose()).into_iter().filter(|l| l.config_class.as_deref() == Some("env_name")).collect();
+            assert_eq!(found.len(), count, "{path}: {found:?}");
+            assert!(found.iter().all(|l| l.text == "REAL_ENV_KEY"), "{path}: {found:?}");
+        }
     }
 
     #[test]

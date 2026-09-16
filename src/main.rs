@@ -731,6 +731,26 @@ mod tests {
     }
 
     #[test]
+    fn test_support_files_do_not_rank_or_create_production_env_seams() {
+        let root = std::env::temp_dir().join(format!("scry-test-support-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src/app/testutils")).unwrap();
+        std::fs::create_dir_all(root.join("tests")).unwrap();
+        std::fs::write(root.join("src/app/service.py"), "def production(value):\n    return value + 1\n").unwrap();
+        std::fs::write(root.join("src/app/testutils/helpers.py"), "import os\ndef seed():\n    return os.getenv('APP_TEST_SEED')\n").unwrap();
+        std::fs::write(root.join("tests/test_seed.py"), "import os\ndef test_seed():\n    os.environ['APP_TEST_SEED'] = '1'\n").unwrap();
+        let result = scan(&root, &config::Config::default(), 10, true);
+        std::fs::remove_dir_all(&root).unwrap();
+        let report = result.unwrap();
+        assert_eq!((report.summary.source_files, report.summary.test_files), (1, 2));
+        assert_eq!(report.hotspots.len(), 1);
+        assert_eq!(report.hotspots[0].path, "src/app/service.py");
+        assert!(report.declared.test_seams.is_empty());
+        let rendered = report::render_with(&report, 10, true);
+        assert!(rendered.contains("not measured coverage"));
+        assert!(!rendered.contains("missing tests"));
+    }
+
+    #[test]
     fn one_parse_matches_the_standalone_passes() {
         let files = vec![
             sf("pkg/__init__.py", ""),

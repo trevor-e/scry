@@ -118,7 +118,10 @@ impl Default for Discover {
                 "node_modules", "vendor", "third_party", "thirdparty", "dist", "build", "target",
                 ".venv", "venv", "site-packages", "__pycache__", ".git",
             ]),
-            test_dirs: strings(&["test", "tests", "__tests__", "e2e", "spec", "specs", "testing"]),
+            test_dirs: strings(&[
+                "test", "tests", "__tests__", "e2e", "spec", "specs", "testing",
+                "testutils", "test_utils", "testutil", "test_util", "testsupport", "test_support",
+            ]),
             data_dirs: strings(&["fixtures", "fixture", "snapshots", "__snapshots__", "testdata"]),
             generated_dirs: strings(&["migrations", "generated", "__generated__", "gen"]),
             test_stem_prefixes: strings(&["test_"]),
@@ -792,7 +795,7 @@ pub struct Strings {
     /// Config classes checked, in order; the first match wins. `number` covers numeric literals.
     pub config_classes: Vec<String>,
     /// The regex per string class (`strftime`, `env_name`, `url`, `mime`, `path`), matched
-    /// against the literal as written, in any position.
+    /// against the literal as written. `env_name` also requires an environment-key position.
     pub config_patterns: BTreeMap<String, String>,
     /// An integer literal is a config candidate from this value up (floats always are)…
     pub number_min: i64,

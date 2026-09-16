@@ -5,6 +5,7 @@ code: [src/report/**, src/main.rs, src/config.rs]
 # report
 
 ## Rules
+- The text report describes absent test mentions rather than missing tests and explains that direct references are not measured coverage; integration and parent-component tests can exercise files without naming their symbols.
 - The report is written for an LLM reader: every ranked item carries the reasons it ranked, with symbol names and line ranges, never a bare number.
 - Each analysis pass has a standalone subcommand (`files`, `history`, …) so a signal can be inspected on its own before it is folded into the composite score.
 - Every signal is percentile-ranked within the repo's Source files before weighting; a file with a zero signal gets 0, not its tie percentile, so untouched files never score on churn.

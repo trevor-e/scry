@@ -198,6 +198,19 @@ mod tests {
     }
 
     #[test]
+    fn test_support_directories_are_exact_names_not_substrings() {
+        let c = Cfg::default();
+        for dir in ["testutils", "test_utils", "testutil", "test_util", "testsupport", "test_support"] {
+            assert_eq!(classify(&format!("src/app/{dir}/helpers.py"), "def helper():\n    return 1\n", 2, &c), FileKind::Test);
+        }
+        for dir in ["contest", "latest", "testimonials", "testing_platform"] {
+            assert_eq!(classify(&format!("src/{dir}/service.py"), "def serve():\n    return 1\n", 2, &c), FileKind::Source);
+        }
+        let custom = Cfg { test_dirs: vec!["qa".into()], ..c };
+        assert_eq!(classify("src/testutils/helpers.py", "", 0, &custom), FileKind::Source);
+    }
+
+    #[test]
     fn config_changes_classification() {
         let mut c = Cfg::default();
         c.test_dirs = vec!["qa".into()];

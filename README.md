@@ -57,7 +57,14 @@ quality grades or defect probabilities.
 
 Findings include symbols and line ranges to inspect. Treat refactor suggestions
 as review candidates: matching code or values can be intentional, and test
-mentions are not measured coverage.
+mentions are not measured coverage: integration and parent-component tests can
+exercise a file without naming its symbols.
+
+Static import and re-export blocks are excluded from clone suggestions.
+Environment-name findings require a literal key in a recognized environment
+access, rather than uppercase spelling alone. Test-support directories such as
+`testutils`, `test_utils`, and `test_support` are classified as tests by default;
+override `[discover].test_dirs` for repositories with different conventions.
 
 ## Configuration
 

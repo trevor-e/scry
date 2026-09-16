@@ -877,6 +877,14 @@ fn tokenize(file: &SourceFile, tree: Option<Tree>, tests: &TestsCfg, kinds: Arc<
             }
             continue;
         }
+        if is_static_import(n) {
+            // A unique barrier excludes import boilerplate without joining code across it.
+            out.hashes.push(hash_str(&format!("\u{0}import:{}:{}", file.path, n.start_byte())));
+            out.lines.push(n.start_position().row + 1);
+            out.starts.push(n.start_byte());
+            out.ends.push(n.end_byte());
+            continue;
+        }
         let class = if STRING_KINDS.contains(&kind) {
             Some("STR")
         } else if NUMBER_KINDS.contains(&kind) {
@@ -902,6 +910,11 @@ fn tokenize(file: &SourceFile, tree: Option<Tree>, tests: &TestsCfg, kinds: Arc<
     out.tree = Some(tree);
     out.test_regions = test_regions;
     out
+}
+
+fn is_static_import(n: Node) -> bool {
+    matches!(n.kind(), "use_declaration" | "extern_crate_declaration" | "import_statement" | "import_from_statement" | "future_import_statement")
+        || (n.kind() == "export_statement" && n.child_by_field_name("source").is_some())
 }
 
 #[cfg(test)]
@@ -941,6 +954,40 @@ mod tests {
             s.push_str(&format!("    Check {{ id: \"c{i}\", about: \"check {i}\", run: check_{i}, fix: None }},\n"));
         }
         s + "];\n"
+    }
+
+    #[test]
+    fn imports_and_reexports_do_not_form_clones() {
+        for (lang, ext, statement) in [
+            (Language::Rust, "rs", "use crate::module::{Alpha, Beta, Gamma};\n"),
+            (Language::Python, "py", "from package.module import alpha, beta, gamma\n"),
+            (Language::TypeScript, "ts", "import {Alpha, Beta, Gamma} from './module';\n"),
+            (Language::TypeScript, "ts", "export {Alpha, Beta, Gamma} from './module';\n"),
+        ] {
+            let files: Vec<_> = ["a", "b"].iter().map(|name| SourceFile { lang, ..sf(&format!("{name}.{ext}"), statement.repeat(20)) }).collect();
+            let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
+            assert!(r.pairs.is_empty(), "{ext}: {:?}", r.pairs);
+            assert!(r.files.is_empty());
+        }
+    }
+
+    #[test]
+    fn import_gaps_do_not_join_short_code_into_a_clone() {
+        let chunk = "value = compute(input, 1) + other[2]\n";
+        let files = [sf("a.py", format!("{chunk}import first\n{chunk}")), sf("b.py", format!("{chunk}import second\n{chunk}"))];
+        let cfg = Cfg { k: 5, w: 3, min_tokens: 20, ..Cfg::default() };
+        let r = detect(&files, &cfg, &TestsCfg::default(), SymbolFallback::PrecedingItem);
+        assert!(r.pairs.is_empty(), "{:?}", r.pairs);
+    }
+
+    #[test]
+    fn exported_logic_still_forms_clones() {
+        let body = "export function run(items: number[]) {\n let total = 0;\n for (const item of items) {\n if (item > 2) { total += item * 3; } else { total -= item; }\n }\n while (total > 100) { total -= 10; }\n return total > 0 ? total : -total;\n}\n";
+        let files: Vec<_> = ["a.ts", "b.ts"].iter().map(|path| SourceFile { lang: Language::TypeScript, ..sf(path, body.into()) }).collect();
+        let cfg = Cfg { min_tokens: 40, ..Cfg::default() };
+        let r = detect(&files, &cfg, &TestsCfg::default(), SymbolFallback::PrecedingItem);
+        assert!(!r.pairs.is_empty());
+        assert_eq!(r.pairs[0].a.symbol, "run");
     }
 
     #[test]
@@ -1077,32 +1124,29 @@ mod tests {
 
     #[test]
     fn uniform_siblings_under_a_copied_block_do_not_make_it_a_table() {
-        // Six identical imports and a copied function with control flow: the imports are entries
-        // under the run, but they are not the run.
+        // A copied function remains logic; the imports before it are excluded.
         let body = |p: &str| format!("    let {p}_a = compute({p}, 1) + other[2];\n    if {p}_a > 0 && !{p} {{ panic!(\"{{}}\", {p}_a); }}\n    for {p}_i in 0..3 {{ {p}_a += {p}_i * 2; }}\n    while {p}_a > 10 {{ {p}_a -= 1; }}\n    let {p}_b: Vec<u8> = {p}.iter().filter(|x| **x > 0).cloned().collect();\n    match {p}_b.first() {{ Some(v) => {p}_a += *v as i32, None => {p}_a = 0 }}\n");
         let uses = |p: &str| (0..6).map(|i| format!("use crate::{p}_{i}::{{Alpha{i}, Beta{i}, Gamma{i}}};\n")).collect::<String>();
         let files = [rs("a.rs", format!("{}pub fn alpha(aa: &[u8]) -> i32 {{\n{}    aa_a\n}}\n", uses("m"), body("aa"))), rs("b.rs", format!("{}pub fn beta(bb: &[u8]) -> i32 {{\n{}    bb_a\n}}\n", uses("n"), body("bb")))];
         let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         let p = &r.pairs[0];
-        assert!(p.a.start_line <= 6 && p.a.end_line >= 13, "{p:?}");
+        assert_eq!((p.a.start_line, p.a.end_line), (7, 15), "{p:?}");
         assert_eq!((p.kind, &p.container_kind, p.entry_count), (CloneKind::Logic, &None, None));
         let f = &r.files["a.rs"];
         assert_eq!((f.table_clone_lines, f.tables.len()), (0, 0), "{f:?}");
-        // Same file, drop path: two copied fns with six uniform `use` lines between them are
-        // sibling copies, not a table matching its own second half, even when the first run
-        // bleeds into the `use` line that follows both.
+        // Imports between sibling functions must not suppress the actual function copy.
         let src = format!("pub fn alpha(aa: &[u8]) -> i32 {{\n{}    aa_a\n}}\n{}pub fn beta(bb: &[u8]) -> i32 {{\n{}    bb_a\n}}\nuse crate::z_0::{{Alpha0, Beta0, Gamma0}};\n", body("aa"), uses("m"), body("bb"));
         let r = detect(&[rs("s.rs", src)], &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
         let p = &r.pairs[0];
-        assert_eq!((p.a.start_line, p.a.end_line, p.b.start_line, p.b.end_line, p.kind), (1, 10, 16, 25, CloneKind::Logic), "{p:?}");
+        assert_eq!((p.a.start_line, p.a.end_line, p.b.start_line, p.b.end_line, p.kind), (1, 9, 16, 24, CloneKind::Logic), "{p:?}");
     }
 
     #[test]
     fn a_fallback_item_starts_on_its_attributes_and_is_never_a_stripped_test_fn() {
-        // Copied `impl` bodies whose runs extend back over `use` and `#[derive] struct` lines,
-        // each below a `#[test]` fn: named after the struct, or the fn before the tests, never
+        // Copied `impl` bodies whose runs extend back over `#[derive] struct` lines,
+        // each below a `#[test]` fn: named after the struct or impl, never
         // after the test fn (which emitted no tokens).
         let body = |p: &str| format!("    fn is_switch(&self) -> bool {{ false }}\n    fn name_long(&self) -> &'static str {{ \"{p}\" }}\n    fn doc_short(&self) -> &'static str {{ \"{p} doc\" }}\n    fn update(&self, v: FlagValue, args: &mut LowArgs) -> Result<()> {{\n        let {p}_x = v.unwrap_switch();\n        if {p}_x && args.{p}.is_none() {{ args.{p} = Some({p}_x); }}\n        for {p}_i in 0..3 {{ args.count += {p}_i; }}\n        Ok(())\n    }}\n");
         let test_fn = |p: &str, s: &str| format!("#[cfg(test)]\n#[test]\nfn test_{p}() {{\n    let args = parse_low_raw([\"--{p}\"]).unwrap();\n    {s};\n}}\n");
@@ -1113,16 +1157,16 @@ mod tests {
         let p = &r.pairs[0];
         assert_eq!(p.a.start_line, 9, "{p:?}"); // the `#[derive]` line
         assert_eq!((p.a.symbol.as_str(), p.b.symbol.as_str()), ("Alpha", "Beta"), "{p:?}");
-        // A run starting on a `use` after the test fn: the fn before the tests names it, and
-        // with the regions un-stripped the test fn (now a token source) does.
+        // An import between a test and an impl keeps the clone inside the impl,
+        // regardless of whether test regions are stripped.
         let with_use = |p: &str, s: &str| format!("pub fn head_{p}(a: u8) -> u8 {{ a {s} 1 }}\n{}use crate::flags::{{FlagValue, LowArgs}};\nimpl Flag for {p} {{\n{}}}\n", test_fn(p, s), body(p));
         let files = [rs("a.rs", with_use("Alpha", "assert_eq!(1, args.n)")), rs("b.rs", with_use("Beta", "assert!(args.n > 0 && args.m < 3)"))];
         let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
-        assert_eq!((r.pairs[0].a.start_line, r.pairs[0].a.symbol.as_str(), r.pairs[0].b.symbol.as_str()), (8, "head_Alpha", "head_Beta"), "{:?}", r.pairs);
+        assert_eq!((r.pairs[0].a.start_line, r.pairs[0].a.symbol.as_str(), r.pairs[0].b.symbol.as_str()), (9, "Alpha", "Beta"), "{:?}", r.pairs);
         let off = TestsCfg { inline_modules: false, ..TestsCfg::default() };
         let r = detect(&files, &Cfg::default(), &off, SymbolFallback::PrecedingItem);
-        assert_eq!((r.pairs[0].a.symbol.as_str(), r.pairs[0].b.symbol.as_str()), ("test_Alpha", "test_Beta"), "{:?}", r.pairs);
+        assert_eq!((r.pairs[0].a.symbol.as_str(), r.pairs[0].b.symbol.as_str()), ("Alpha", "Beta"), "{:?}", r.pairs);
     }
 
     #[test]

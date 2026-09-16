@@ -1807,7 +1807,7 @@ pub fn render_with(r: &Report, top: usize, plans: bool) -> String {
         None => { let _ = writeln!(o, "history: unavailable (not a git repo or --no-history)"); }
     }
 
-    let _ = writeln!(o, "\nHOTSPOTS  (score = churn x complexity, boosted by fixes, coupling, clones, missing tests)");
+    let _ = writeln!(o, "\nHOTSPOTS  (score = churn x complexity, boosted by fixes, coupling, clones, absent test mentions)\nTest mentions are direct references, not measured coverage; parent-component and integration tests may exercise these files.");
     for (i, h) in r.hotspots.iter().take(top).enumerate() {
         let note = h.inline_test_note.as_ref().map(|n| format!(", {n}")).unwrap_or_default();
         let _ = writeln!(o, "{:>2}. {:>5.1}  {}  ({} lines{note})", i + 1, h.score, h.path, h.signals.lines);
