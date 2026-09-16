@@ -4,6 +4,8 @@
 //! file set (never the filesystem, so the graph matches what other passes see),
 //! and fed to Tarjan's SCC. Cycles are reported at two granularities: file
 //! cycles are the concrete tangle, directory cycles are the architectural one.
+//! Every edge knows what it carries (`use` / `mod` / `type_only`, distinct names),
+//! so a large file cycle also gets the cheapest import to cut and what that buys.
 
 use crate::config::Deps as Cfg;
 use crate::discover::{FileKind, SourceFile};
@@ -12,7 +14,7 @@ use petgraph::algo::tarjan_scc;
 use petgraph::graph::{DiGraph, NodeIndex};
 use rayon::prelude::*;
 use serde::Serialize;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use tree_sitter::{Node, Tree};
 
 mod tsconfig;
@@ -33,9 +35,78 @@ pub struct FileDeps {
     pub instability: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeKind {
+    /// TS `import type` / `import { type X }` / `export type { X } from`: erased at runtime.
+    TypeOnly,
+    Use,
+    /// A Rust `mod x;` declaration contributes: the edge cannot be cut by removing an import.
+    Mod,
+}
+
+/// One import edge and what it carries.
+#[derive(Debug, Clone, Serialize)]
+pub struct Edge {
+    pub from: String,
+    pub to: String,
+    pub kind: EdgeKind,
+    /// Distinct imported names, plus `glob_import_symbol_cost` per wildcard. For a `mod` edge
+    /// this is informational: its cut cost is infinite.
+    pub symbols: u32,
+    pub names: Vec<String>,
+    pub glob: bool,
+    /// Line of the first contributing import.
+    pub line: usize,
+}
+
+/// A single edge removed from a cycle and the largest cycle that leaves.
+#[derive(Debug, Clone, Serialize)]
+pub struct EdgeCut {
+    #[serde(flatten)]
+    pub edge: Edge,
+    pub largest_after: usize,
+}
+
+/// Dropping every non-`mod` import one member makes inside the cycle.
+#[derive(Debug, Clone, Serialize)]
+pub struct HubCut {
+    pub member: String,
+    pub imports: usize,
+    pub symbols: u32,
+    /// One of the dropped imports is a wildcard, so `symbols` is a floor.
+    pub glob: bool,
+    pub largest_after: usize,
+}
+
+/// Cut analysis of one file cycle (only for cycles with `min_cycle_size_to_cut` members).
+#[derive(Debug, Clone, Serialize)]
+pub struct Cuts {
+    pub internal_edges: usize,
+    pub mod_edges: usize,
+    /// Edges left out of the search when `ignore_type_only_imports`.
+    pub type_only_edges: usize,
+    /// Largest cycle among the members before any cut (smaller than the member count only
+    /// when type-only edges were carrying part of it).
+    pub base: usize,
+    /// Cheapest single import whose removal leaves the smallest cycle (then fewest symbols).
+    pub single: Option<EdgeCut>,
+    /// Best hub cut, kept only when it leaves a smaller cycle than `single`.
+    pub hub: Option<HubCut>,
+    /// Greedy best-single-edge cuts that bring every cycle under `min_cycle_size_to_cut`;
+    /// empty when that takes more than `max_cut_set` edges.
+    pub cut_set: Vec<EdgeCut>,
+    /// `single` still leaves at least `no_single_cut_share` of the members in a cycle.
+    pub no_single_break: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Cycle {
     pub members: Vec<String>,
+    /// Deepest directory containing every member (`.` for the root).
+    pub dir: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cuts: Option<Cuts>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -45,14 +116,41 @@ pub struct DepGraph {
     pub dir_cycles: Vec<Cycle>,
     pub edges: usize,
     #[serde(skip)]
-    edge_set: HashSet<(String, String)>,
+    edge_map: HashMap<(String, String), Edge>,
 }
 
 impl DepGraph {
     /// True when either file imports the other, directly.
     pub fn connected(&self, a: &str, b: &str) -> bool {
-        self.edge_set.contains(&(a.to_string(), b.to_string()))
-            || self.edge_set.contains(&(b.to_string(), a.to_string()))
+        self.edge_map.contains_key(&(a.to_string(), b.to_string()))
+            || self.edge_map.contains_key(&(b.to_string(), a.to_string()))
+    }
+
+    /// In-repo files that both `a` and `b` import directly, sorted.
+    pub fn shared_imports(&self, a: &str, b: &str) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .edge_map
+            .keys()
+            .filter(|(s, t)| s == a && self.edge_map.contains_key(&(b.to_string(), t.clone())))
+            .map(|(_, t)| t.clone())
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The edge `from -> to`, if any.
+    #[cfg(test)]
+    pub(crate) fn edge(&self, from: &str, to: &str) -> Option<&Edge> {
+        self.edge_map.get(&(from.to_string(), to.to_string()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn add_edge(&mut self, from: &str, to: &str) {
+        self.edge_map.insert(
+            (from.to_string(), to.to_string()),
+            Edge { from: from.into(), to: to.into(), kind: EdgeKind::Use, symbols: 1, names: vec![], glob: false, line: 1 },
+        );
+        self.edges = self.edge_map.len();
     }
 }
 
@@ -65,6 +163,70 @@ pub struct RawImport {
     names: Vec<String>,
     /// Python relative-import level (number of leading dots).
     level: usize,
+    /// What the import brings in: the leaf names, or a wildcard.
+    syms: Vec<String>,
+    glob: bool,
+    kind: EdgeKind,
+    line: usize,
+}
+
+impl RawImport {
+    fn new(spec: String, syms: Vec<String>, glob: bool, kind: EdgeKind, line: usize) -> Self {
+        Self { spec, names: vec![], level: 0, syms, glob, kind, line }
+    }
+}
+
+/// What one file's imports of one target add up to, before it becomes an `Edge`.
+#[derive(Debug, Default, Clone)]
+struct Carried {
+    is_mod: bool,
+    names: BTreeSet<String>,
+    globs: u32,
+    type_names: BTreeSet<String>,
+    type_globs: u32,
+    line: usize,
+}
+
+impl Carried {
+    fn add(&mut self, r: &RawImport) {
+        if self.line == 0 || r.line < self.line {
+            self.line = r.line;
+        }
+        match r.kind {
+            EdgeKind::Mod => {
+                self.is_mod = true;
+                self.names.extend(r.syms.iter().cloned());
+            }
+            EdgeKind::Use => {
+                self.names.extend(r.syms.iter().cloned());
+                self.globs += u32::from(r.glob);
+            }
+            EdgeKind::TypeOnly => {
+                self.type_names.extend(r.syms.iter().cloned());
+                self.type_globs += u32::from(r.glob);
+            }
+        }
+    }
+
+    fn into_edge(self, from: &str, to: &str, glob_cost: u32) -> Edge {
+        let kind = if self.is_mod {
+            EdgeKind::Mod
+        } else if !self.names.is_empty() || self.globs > 0 {
+            EdgeKind::Use
+        } else {
+            EdgeKind::TypeOnly
+        };
+        let (names, globs) = if kind == EdgeKind::TypeOnly { (self.type_names, self.type_globs) } else { (self.names, self.globs) };
+        Edge {
+            from: from.to_string(),
+            to: to.to_string(),
+            kind,
+            symbols: names.len() as u32 + globs * glob_cost,
+            names: names.into_iter().collect(),
+            glob: globs > 0,
+            line: self.line,
+        }
+    }
 }
 
 /// Parse every file and build the graph. `scan` parses once for all passes
@@ -135,18 +297,19 @@ pub fn build_from(all: &[SourceFile], raws: &[Vec<RawImport>], cfg: &Cfg, ts: &T
     };
     let env = Env { cfg, known, py_roots, ts };
 
-    let per_file: Vec<(usize, Vec<String>, usize)> = files
+    type PerFile = (usize, Vec<(String, Carried)>, usize);
+    let per_file: Vec<PerFile> = files
         .par_iter()
         .enumerate()
         .map(|(i, (f, raws))| {
-            let mut targets = BTreeSet::new();
+            let mut targets: BTreeMap<String, Carried> = BTreeMap::new();
             let mut external = 0usize;
             for r in raws.iter() {
                 match resolve(&f.path, f.lang, r, &env) {
                     Some(t) => {
                         for t in t {
                             if t != f.path {
-                                targets.insert(t);
+                                targets.entry(t).or_default().add(r);
                             }
                         }
                     }
@@ -164,25 +327,24 @@ pub fn build_from(all: &[SourceFile], raws: &[Vec<RawImport>], cfg: &Cfg, ts: &T
     let mut fan_in: HashMap<&str, usize> = HashMap::new();
     let mut test_refs: HashMap<&str, usize> = HashMap::new();
 
-    for (i, targets, external) in &per_file {
-        let src = files[*i].0.path.as_str();
+    for (i, targets, external) in per_file {
+        let src = files[i].0.path.as_str();
         let is_test = kind_of[src] == FileKind::Test;
-        for t in targets {
+        let fan_out = targets.len();
+        for (t, carried) in targets {
             let (Some(&a), Some(&b)) = (idx.get(src), idx.get(t.as_str())) else { continue };
             graph.add_edge(a, b, ());
-            out.edge_set.insert((src.to_string(), t.clone()));
             if is_test {
-                *test_refs.entry(t.as_str()).or_default() += 1;
+                *test_refs.entry(files[graph[b]].0.path.as_str()).or_default() += 1;
             } else {
-                *fan_in.entry(t.as_str()).or_default() += 1;
+                *fan_in.entry(files[graph[b]].0.path.as_str()).or_default() += 1;
             }
+            let edge = carried.into_edge(src, &t, cfg.glob_import_symbol_cost);
+            out.edge_map.insert((src.to_string(), t), edge);
         }
-        out.files.insert(
-            src.to_string(),
-            FileDeps { fan_out: targets.len(), external: *external, ..Default::default() },
-        );
+        out.files.insert(src.to_string(), FileDeps { fan_out, external, ..Default::default() });
     }
-    out.edges = out.edge_set.len();
+    out.edges = out.edge_map.len();
 
     for (p, d) in out.files.iter_mut() {
         d.fan_in = fan_in.get(p.as_str()).copied().unwrap_or(0);
@@ -203,7 +365,10 @@ pub fn build_from(all: &[SourceFile], raws: &[Vec<RawImport>], cfg: &Cfg, ts: &T
                 d.in_cycle = true;
             }
         }
-        out.file_cycles.push(Cycle { members });
+        let rust = scc.iter().all(|n| files[graph[*n]].0.lang == Language::Rust);
+        let cuts = (members.len() >= cfg.min_cycle_size_to_cut && (cfg.cut_rust_cycles || !rust))
+            .then(|| cuts_for(&members, &out.edge_map, cfg));
+        out.file_cycles.push(Cycle { dir: common_dir(&members), members, cuts });
     }
     // Largest first, then by members: SCC order varies with hash-map iteration
     // and the output must not.
@@ -213,7 +378,7 @@ pub fn build_from(all: &[SourceFile], raws: &[Vec<RawImport>], cfg: &Cfg, ts: &T
     let mut dgraph: DiGraph<String, ()> = DiGraph::new();
     let mut didx: HashMap<String, NodeIndex> = HashMap::new();
     let mut dedges: HashSet<(String, String)> = HashSet::new();
-    for (a, b) in &out.edge_set {
+    for (a, b) in out.edge_map.keys() {
         let (da, db) = (dir_of(a), dir_of(b));
         if da != db && kind_of[a.as_str()] != FileKind::Test {
             dedges.insert((da.to_string(), db.to_string()));
@@ -230,7 +395,7 @@ pub fn build_from(all: &[SourceFile], raws: &[Vec<RawImport>], cfg: &Cfg, ts: &T
         }
         let mut members: Vec<String> = scc.iter().map(|n| dgraph[*n].clone()).collect();
         members.sort();
-        out.dir_cycles.push(Cycle { members });
+        out.dir_cycles.push(Cycle { dir: common_dir_of(members.iter().map(|m| m.as_str())), members, cuts: None });
     }
     out.dir_cycles.sort_by(|a, b| b.members.len().cmp(&a.members.len()).then_with(|| a.members.cmp(&b.members)));
     out
@@ -238,6 +403,213 @@ pub fn build_from(all: &[SourceFile], raws: &[Vec<RawImport>], cfg: &Cfg, ts: &T
 
 fn dir_of(path: &str) -> &str {
     path.rfind('/').map(|i| &path[..i]).unwrap_or("")
+}
+
+/// Deepest directory containing every file; `.` at the root.
+fn common_dir(files: &[String]) -> String {
+    common_dir_of(files.iter().map(|f| dir_of(f)))
+}
+
+fn common_dir_of<'a>(dirs: impl Iterator<Item = &'a str>) -> String {
+    let mut common: Option<Vec<&str>> = None;
+    for d in dirs {
+        let parts: Vec<&str> = d.split('/').filter(|s| !s.is_empty()).collect();
+        common = Some(match common {
+            None => parts,
+            Some(c) => c.iter().zip(&parts).take_while(|(a, b)| a == b).map(|(a, _)| *a).collect(),
+        });
+    }
+    match common {
+        Some(c) if !c.is_empty() => c.join("/"),
+        _ => ".".to_string(),
+    }
+}
+
+// ---------- cuts ----------
+
+/// One internal edge of a cycle, in local member indices; `cost` is `u64::MAX` for `mod`.
+struct Internal<'a> {
+    from: usize,
+    to: usize,
+    cost: u64,
+    edge: &'a Edge,
+}
+
+/// Largest SCC among `n` members once the edges at `removed` positions are gone.
+fn largest_after(n: usize, edges: &[Internal], removed: &[bool]) -> usize {
+    let mut g: DiGraph<(), ()> = DiGraph::with_capacity(n, edges.len());
+    let nodes: Vec<NodeIndex> = (0..n).map(|_| g.add_node(())).collect();
+    for (i, e) in edges.iter().enumerate() {
+        if !removed[i] {
+            g.add_edge(nodes[e.from], nodes[e.to], ());
+        }
+    }
+    tarjan_scc(&g).iter().map(|c| c.len()).max().unwrap_or(0)
+}
+
+/// Best single cuttable edge on top of `removed`: smallest largest-after, then cheapest, then
+/// edge order (cheapest first, so ties are stable). Tries at most `max_edges_tried` edges.
+fn best_single(n: usize, edges: &[Internal], removed: &[bool], cfg: &Cfg) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, u64, usize)> = None;
+    let mut scratch = removed.to_vec();
+    for (i, e) in edges.iter().enumerate().filter(|(i, e)| !removed[*i] && e.cost != u64::MAX).take(cfg.max_edges_tried) {
+        scratch[i] = true;
+        let after = largest_after(n, edges, &scratch);
+        scratch[i] = false;
+        if best.is_none_or(|(a, c, _)| (after, e.cost) < (a, c)) {
+            best = Some((after, e.cost, i));
+        }
+    }
+    best.map(|(after, _, i)| (i, after))
+}
+
+fn cuts_for(members: &[String], edge_map: &HashMap<(String, String), Edge>, cfg: &Cfg) -> Cuts {
+    let n = members.len();
+    let pos: HashMap<&str, usize> = members.iter().enumerate().map(|(i, m)| (m.as_str(), i)).collect();
+    let mut all: Vec<&Edge> = edge_map.values().filter(|e| pos.contains_key(e.from.as_str()) && pos.contains_key(e.to.as_str())).collect();
+    all.sort_by(|a, b| (a.from.as_str(), a.to.as_str()).cmp(&(b.from.as_str(), b.to.as_str())));
+    let internal_edges = all.len();
+    let mod_edges = all.iter().filter(|e| e.kind == EdgeKind::Mod).count();
+    let type_only_edges = all.iter().filter(|e| e.kind == EdgeKind::TypeOnly).count();
+    let mut edges: Vec<Internal> = all
+        .into_iter()
+        .filter(|e| !(cfg.ignore_type_only_imports && e.kind == EdgeKind::TypeOnly))
+        .map(|e| Internal {
+            from: pos[e.from.as_str()],
+            to: pos[e.to.as_str()],
+            cost: if e.kind == EdgeKind::Mod { u64::MAX } else { u64::from(e.symbols) },
+            edge: e,
+        })
+        .collect();
+    edges.sort_by_key(|e| e.cost);
+    let none = vec![false; edges.len()];
+    let base = largest_after(n, &edges, &none);
+    let cut = |i: usize, after: usize| EdgeCut { edge: edges[i].edge.clone(), largest_after: after };
+
+    let single = (base >= 2).then(|| best_single(n, &edges, &none, cfg)).flatten().map(|(i, after)| cut(i, after));
+
+    let mut hub: Option<HubCut> = None;
+    if cfg.report_hub_cut && base >= 2 {
+        let mut best: Option<(usize, u64, usize)> = None;
+        for (m, name) in members.iter().enumerate() {
+            let removed: Vec<bool> = edges.iter().map(|e| e.from == m && e.cost != u64::MAX).collect();
+            let imports = removed.iter().filter(|r| **r).count();
+            if imports == 0 {
+                continue;
+            }
+            let after = largest_after(n, &edges, &removed);
+            let dropped = || edges.iter().zip(&removed).filter(|(_, r)| **r).map(|(e, _)| e);
+            let cost: u64 = dropped().map(|e| e.cost).sum();
+            if best.is_none_or(|(a, c, _)| (after, cost) < (a, c)) {
+                best = Some((after, cost, m));
+                hub = Some(HubCut { member: name.clone(), imports, symbols: cost as u32, glob: dropped().any(|e| e.edge.glob), largest_after: after });
+            }
+        }
+        if let (Some(h), Some(s)) = (&hub, &single) && h.largest_after >= s.largest_after {
+            hub = None;
+        }
+    }
+
+    // Greedy: keep taking the best single edge on the residual until every cycle is small.
+    let mut removed = none.clone();
+    let mut set: Vec<EdgeCut> = Vec::new();
+    let mut dissolved = largest_after(n, &edges, &removed) < cfg.min_cycle_size_to_cut;
+    while !dissolved && set.len() < cfg.max_cut_set {
+        let Some((i, after)) = best_single(n, &edges, &removed, cfg) else { break };
+        removed[i] = true;
+        set.push(cut(i, after));
+        dissolved = after < cfg.min_cycle_size_to_cut;
+    }
+    let cut_set = if dissolved { set } else { Vec::new() };
+
+    // Only meaningful over a runtime cycle: with none there is nothing a cut could break.
+    let no_single_break = base >= 2 && single.as_ref().is_none_or(|s| s.largest_after as f64 >= cfg.no_single_cut_share * n as f64);
+    Cuts { internal_edges, mod_edges, type_only_edges, base, single, hub, cut_set, no_single_break }
+}
+
+/// The file name, with its directory when the name alone says nothing: `searcher/mod.rs`,
+/// `dom/index.ts`, `pkg/__init__.py`.
+fn short_name(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let generic = name == "mod.rs" || name == "__init__.py" || name.starts_with("index.");
+    match path[..path.len() - name.len()].trim_end_matches('/').rsplit('/').next() {
+        Some(parent) if generic && !parent.is_empty() => &path[path.len() - name.len() - parent.len() - 1..],
+        _ => name,
+    }
+}
+
+/// `EntityRef`, `A, B, C, D, +3 more`, `*` for a wildcard.
+pub fn symbol_names(names: &[String], glob: bool) -> String {
+    let mut shown: Vec<String> = names.iter().take(4).cloned().collect();
+    if names.len() > 4 {
+        shown.push(format!("+{} more", names.len() - 4));
+    }
+    if glob {
+        shown.push("*".to_string());
+    }
+    shown.join(", ")
+}
+
+/// `1 symbol`, `3 symbols`, `>= 20 symbols` for a wildcard.
+pub fn symbol_count(e: &Edge) -> String {
+    match (e.glob, e.symbols) {
+        (true, n) => format!(">= {n} symbols"),
+        (false, 1) => "1 symbol".to_string(),
+        (false, n) => format!("{n} symbols"),
+    }
+}
+
+impl Cycle {
+    /// The one-line block header: `15-file cycle in src: cheapest cut src/paths.rs -> src/plan.rs
+    /// imports 1 symbol (EntityRef, line 16) -> largest remaining cycle 12; hub cut: drop
+    /// paths.rs's 4 imports (9 symbols) -> 11; no single import breaks this cycle`.
+    pub fn headline(&self) -> String {
+        let mut o = format!("{}-file cycle {}", self.members.len(), if self.dir == "." { "at the repo root".to_string() } else { format!("in {}", self.dir) });
+        let Some(c) = &self.cuts else { return o };
+        let mut parts: Vec<String> = Vec::new();
+        if c.type_only_edges > 0 && c.base < self.members.len() {
+            let s = if c.type_only_edges == 1 { "" } else { "s" };
+            parts.push(format!("{} type-only import{s} ignored, largest runtime cycle {}", c.type_only_edges, c.base));
+        }
+        match &c.single {
+            Some(s) => parts.push(format!(
+                "cheapest cut {} -> {} imports {} ({}, line {}) -> largest remaining cycle {}",
+                s.edge.from, s.edge.to, symbol_count(&s.edge), symbol_names(&s.edge.names, s.edge.glob), s.edge.line, s.largest_after
+            )),
+            None if c.base >= 2 => parts.push(format!("no cuttable import: all {} internal edges are mod declarations", c.mod_edges)),
+            None => parts.push("no runtime cycle".to_string()),
+        }
+        if let Some(h) = &c.hub {
+            let s = if h.imports == 1 { "" } else { "s" };
+            let floor = if h.glob { ">= " } else { "" };
+            parts.push(format!("hub cut: drop {}'s {} import{s} ({floor}{} symbols) -> {}", short_name(&h.member), h.imports, h.symbols, h.largest_after));
+        }
+        if c.no_single_break && c.base >= 2 {
+            parts.push("no single import breaks this cycle".to_string());
+        }
+        o.push_str(": ");
+        o.push_str(&parts.join("; "));
+        o
+    }
+
+    /// `cut set of 3 imports dissolves it: src/a.rs -> src/b.rs (X), …`, when the greedy set did.
+    pub fn cut_set_line(&self) -> Option<String> {
+        let c = self.cuts.as_ref()?;
+        if c.cut_set.is_empty() {
+            return None;
+        }
+        let edges: Vec<String> = c.cut_set.iter().map(|e| format!("{} -> {} ({})", e.edge.from, e.edge.to, symbol_names(&e.edge.names, e.edge.glob))).collect();
+        let s = if c.cut_set.len() == 1 { "" } else { "s" };
+        Some(format!("cut set of {} import{s} dissolves it: {}", c.cut_set.len(), edges.join(", ")))
+    }
+
+    /// `cut: paths.rs -> plan.rs, EntityRef` for a member on the cheapest cut edge; the report
+    /// joins it into the member's reason.
+    pub fn cut_clause(&self, member: &str) -> Option<String> {
+        let s = self.cuts.as_ref()?.single.as_ref()?;
+        (s.edge.from == member || s.edge.to == member)
+            .then(|| format!("cut: {} -> {}, {}", short_name(&s.edge.from), short_name(&s.edge.to), symbol_names(&s.edge.names, s.edge.glob)))
+    }
 }
 
 // ---------- extraction ----------
@@ -264,6 +636,16 @@ fn t<'a>(n: Node, src: &'a [u8]) -> &'a str {
     n.utf8_text(src).unwrap_or("")
 }
 
+fn line_of(n: Node) -> usize {
+    n.start_position().row + 1
+}
+
+/// True when `n` has an anonymous `type` keyword child (`import type …`, `{ type X }`).
+fn has_type_keyword(n: Node) -> bool {
+    let mut c = n.walk();
+    n.children(&mut c).any(|ch| !ch.is_named() && ch.kind() == "type")
+}
+
 fn extract_python(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
     match n.kind() {
         "import_statement" => {
@@ -274,7 +656,7 @@ fn extract_python(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
                     "aliased_import" => ch.child_by_field_name("name").map(|x| t(x, src)).unwrap_or(""),
                     _ => continue,
                 };
-                out.push(RawImport { spec: name.to_string(), names: vec![], level: 0 });
+                out.push(RawImport::new(name.to_string(), vec![name.to_string()], false, EdgeKind::Use, line_of(n)));
             }
         }
         "import_from_statement" => {
@@ -298,7 +680,9 @@ fn extract_python(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
                     names.push(nm.to_string());
                 }
             }
-            out.push(RawImport { spec, names, level });
+            let mut c = n.walk();
+            let glob = n.children(&mut c).any(|ch| ch.kind() == "wildcard_import");
+            out.push(RawImport { spec, syms: names.clone(), names, level, glob, kind: EdgeKind::Use, line: line_of(n) });
         }
         _ => {}
     }
@@ -307,8 +691,53 @@ fn extract_python(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
 fn extract_js(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
     match n.kind() {
         "import_statement" | "export_statement" => {
-            if let Some(s) = n.child_by_field_name("source") {
-                out.push(RawImport { spec: unquote(t(s, src)), names: vec![], level: 0 });
+            let Some(s) = n.child_by_field_name("source") else { return };
+            let spec = unquote(t(s, src));
+            let line = line_of(n);
+            let all_type = has_type_keyword(n);
+            // Names split by whether they survive to runtime: `import { type A, b }` is one
+            // type-only import and one value import of the same file.
+            let (mut value, mut types): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+            // `export * from './x'`: the star is an anonymous token with no named node around it.
+            let mut c = n.walk();
+            let mut glob = n.children(&mut c).any(|ch| !ch.is_named() && ch.kind() == "*");
+            let mut stack = vec![n];
+            while let Some(x) = stack.pop() {
+                match x.kind() {
+                    "import_specifier" | "export_specifier" => {
+                        let name = x.child_by_field_name("name").map(|y| t(y, src).to_string()).unwrap_or_default();
+                        if all_type || has_type_keyword(x) { types.push(name) } else { value.push(name) }
+                        continue;
+                    }
+                    "namespace_import" | "namespace_export" => {
+                        glob = true;
+                        continue;
+                    }
+                    "identifier" if x.parent().is_some_and(|p| p.kind() == "import_clause") => {
+                        let name = t(x, src).to_string();
+                        if all_type { types.push(name) } else { value.push(name) }
+                        continue;
+                    }
+                    "string" => continue,
+                    _ => {}
+                }
+                let mut c = x.walk();
+                for ch in x.children(&mut c) {
+                    stack.push(ch);
+                }
+            }
+            let bare = value.is_empty() && types.is_empty() && !glob;
+            if all_type && !glob {
+                out.push(RawImport::new(spec, types, false, EdgeKind::TypeOnly, line));
+                return;
+            }
+            if !types.is_empty() {
+                out.push(RawImport::new(spec.clone(), types, false, EdgeKind::TypeOnly, line));
+            }
+            if !value.is_empty() || glob || bare {
+                // `export * from`, `import * as ns` are wildcards; a bare `import './x'` counts as one.
+                let syms = if bare { vec![spec.clone()] } else { value };
+                out.push(RawImport::new(spec, syms, glob, if all_type { EdgeKind::TypeOnly } else { EdgeKind::Use }, line));
             }
         }
         "call_expression" => {
@@ -319,7 +748,8 @@ fn extract_js(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
             }
             if let Some(args) = n.child_by_field_name("arguments") {
                 if let Some(a) = args.named_child(0).filter(|a| a.kind() == "string") {
-                    out.push(RawImport { spec: unquote(t(a, src)), names: vec![], level: 0 });
+                    let spec = unquote(t(a, src));
+                    out.push(RawImport::new(spec.clone(), vec![spec], false, EdgeKind::Use, line_of(n)));
                 }
             }
         }
@@ -331,7 +761,8 @@ fn extract_rust(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
     match n.kind() {
         "mod_item" if n.child_by_field_name("body").is_none() => {
             if let Some(name) = n.child_by_field_name("name") {
-                out.push(RawImport { spec: format!("mod:{}", t(name, src)), names: vec![], level: 0 });
+                let name = t(name, src).to_string();
+                out.push(RawImport::new(format!("mod:{name}"), vec![name], false, EdgeKind::Mod, line_of(n)));
             }
         }
         "use_declaration" => {
@@ -346,11 +777,16 @@ fn extract_rust(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
                 }
                 let mut paths = Vec::new();
                 use_paths(arg, src, "", &mut paths);
-                for p in paths.iter().filter_map(|p| rebase_inline(p, depth)) {
+                for (p, leaf) in paths {
+                    let Some(p) = rebase_inline(&p, depth) else { continue };
                     if p == "crate" || p == "super" || p == "self"
                         || p.starts_with("crate::") || p.starts_with("super::") || p.starts_with("self::")
                     {
-                        out.push(RawImport { spec: p, names: vec![], level: 0 });
+                        let (syms, glob) = match leaf {
+                            Some(name) => (vec![name], false),
+                            None => (vec![], true),
+                        };
+                        out.push(RawImport::new(p, syms, glob, EdgeKind::Use, line_of(n)));
                     }
                 }
             }
@@ -385,9 +821,11 @@ fn rebase_inline(spec: &str, depth: usize) -> Option<String> {
     Some(segs.join("::"))
 }
 
-/// Flatten a `use` tree: `crate::{a::X, b::{self, Y}}` → `crate::a::X`, `crate::b`, `crate::b::Y`.
-fn use_paths(n: Node, src: &[u8], prefix: &str, out: &mut Vec<String>) {
+/// Flatten a `use` tree: `crate::{a::X, b::{self, Y}}` → `crate::a::X`, `crate::b`, `crate::b::Y`,
+/// each with the leaf name it imports (`None` for a wildcard).
+fn use_paths(n: Node, src: &[u8], prefix: &str, out: &mut Vec<(String, Option<String>)>) {
     let with_prefix = |p: &str| if prefix.is_empty() { p.to_string() } else { format!("{prefix}::{p}") };
+    let leaf = |p: &str| p.rsplit("::").next().unwrap_or(p).to_string();
     match n.kind() {
         "scoped_use_list" => {
             let inner = n.child_by_field_name("path").map(|p| with_prefix(t(p, src))).unwrap_or_else(|| prefix.to_string());
@@ -410,14 +848,18 @@ fn use_paths(n: Node, src: &[u8], prefix: &str, out: &mut Vec<String>) {
             // `path::*` depends on the module at `path`; a bare `*` on the prefix.
             let mut c = n.walk();
             match n.named_children(&mut c).next() {
-                Some(p) => out.push(with_prefix(t(p, src))),
-                None if !prefix.is_empty() => out.push(prefix.to_string()),
+                Some(p) => out.push((with_prefix(t(p, src)), None)),
+                None if !prefix.is_empty() => out.push((prefix.to_string(), None)),
                 None => {}
             }
         }
         // `self` inside a list names the prefix itself.
-        "self" if !prefix.is_empty() => out.push(prefix.to_string()),
-        _ => out.push(with_prefix(t(n, src))),
+        "self" if !prefix.is_empty() => out.push((prefix.to_string(), Some(leaf(prefix)))),
+        _ => {
+            let p = with_prefix(t(n, src));
+            let l = leaf(&p);
+            out.push((p, Some(l)));
+        }
     }
 }
 
@@ -619,6 +1061,7 @@ fn resolve_rust(from: &str, imp: &RawImport, known: &HashSet<&str>) -> Option<Ve
     None
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,7 +1186,7 @@ mod tests {
         let g = build(&files, &Cfg::default());
         assert_eq!(g.files["src/a.rs"].fan_out, 1, "{:?}", g.files["src/a.rs"]);
         assert!(g.connected("src/a.rs", "src/b.rs"));
-        assert!(!g.edge_set.contains(&("src/a.rs".to_string(), "src/main.rs".to_string())), "{:?}", g.edge_set);
+        assert!(g.edge("src/a.rs", "src/main.rs").is_none(), "{:?}", g.edge_map.keys());
     }
 
     #[test]
@@ -770,5 +1213,183 @@ mod tests {
         assert_eq!(g.files["src/main.rs"].fan_out, 2);
         assert!(g.connected("src/deps/mod.rs", "src/lang/mod.rs"));
         assert_eq!(g.file_cycles.len(), 1);
+    }
+
+    #[test]
+    fn rust_edges_carry_kind_and_distinct_symbols() {
+        let files = vec![
+            sf("src/main.rs", "mod a;\nmod e;\nuse crate::a::Top;\n"),
+            sf("src/a.rs", "use crate::e::{B, C};\nuse crate::e::D;\nuse crate::e::B;\nuse crate::f::*;\n"),
+            sf("src/e.rs", ""),
+            sf("src/f.rs", ""),
+        ];
+        let g = build(&files, &Cfg::default());
+        let m = g.edge("src/main.rs", "src/a.rs").unwrap();
+        assert_eq!((m.kind, m.symbols, m.line), (EdgeKind::Mod, 2, 1), "{m:?}");
+        assert_eq!(m.names, vec!["Top", "a"]);
+        let ae = g.edge("src/a.rs", "src/e.rs").unwrap();
+        assert_eq!((ae.kind, ae.symbols, ae.glob, ae.line), (EdgeKind::Use, 3, false, 1));
+        assert_eq!(ae.names, vec!["B", "C", "D"]);
+        let af = g.edge("src/a.rs", "src/f.rs").unwrap();
+        assert_eq!((af.kind, af.symbols, af.glob, af.line), (EdgeKind::Use, 20, true, 4));
+        assert_eq!(symbol_names(&af.names, af.glob), "*");
+    }
+
+    #[test]
+    fn ts_type_only_imports_are_tagged_and_python_counts_names() {
+        let files = vec![
+            sf("src/x.ts", "import type { A, B } from './y'\nimport { type C, D, E as F } from './z'\nimport * as ns from './w'\nexport type { H } from './v'\nimport './side'\nexport * from './star'\n"),
+            sf("src/star.ts", ""),
+            sf("src/y.ts", "import { X } from './x'\n"),
+            sf("src/z.ts", ""),
+            sf("src/w.ts", ""),
+            sf("src/v.ts", ""),
+            sf("src/side.ts", ""),
+            sf("pkg/__init__.py", ""),
+            sf("pkg/p.py", "from pkg.q import a, b as c\nfrom pkg.r import *\nimport pkg.s\n"),
+            sf("pkg/q.py", ""),
+            sf("pkg/r.py", ""),
+            sf("pkg/s.py", ""),
+        ];
+        let g = build(&files, &Cfg::default());
+        let e = |a: &str, b: &str| g.edge(a, b).unwrap();
+        assert_eq!((e("src/x.ts", "src/y.ts").kind, e("src/x.ts", "src/y.ts").symbols), (EdgeKind::TypeOnly, 2));
+        let z = e("src/x.ts", "src/z.ts");
+        assert_eq!((z.kind, z.symbols, z.names.clone()), (EdgeKind::Use, 2, vec!["D".to_string(), "E".to_string()]));
+        assert!(e("src/x.ts", "src/w.ts").glob && e("src/x.ts", "src/w.ts").symbols == 20);
+        assert_eq!(e("src/x.ts", "src/v.ts").kind, EdgeKind::TypeOnly);
+        assert_eq!((e("src/x.ts", "src/side.ts").symbols, e("src/x.ts", "src/side.ts").names.clone()), (1, vec!["./side".to_string()]));
+        let star = e("src/x.ts", "src/star.ts");
+        assert_eq!((star.kind, star.glob, star.symbols, star.names.is_empty()), (EdgeKind::Use, true, 20, true), "{star:?}");
+        assert_eq!((e("pkg/p.py", "pkg/q.py").symbols, e("pkg/p.py", "pkg/q.py").names.clone()), (2, vec!["a".to_string(), "b".to_string()]));
+        assert!(e("pkg/p.py", "pkg/r.py").glob);
+        assert_eq!(e("pkg/p.py", "pkg/s.py").symbols, 1);
+        // x <-> y is a cycle only through a type-only import: no runtime cycle to cut.
+        let mut cfg = Cfg { min_cycle_size_to_cut: 2, ..Cfg::default() };
+        let g = build(&files, &cfg);
+        let c = g.file_cycles.iter().find(|c| c.members.contains(&"src/x.ts".to_string())).unwrap();
+        let cuts = c.cuts.as_ref().unwrap();
+        assert_eq!((cuts.type_only_edges, cuts.base, cuts.single.is_none(), cuts.no_single_break), (1, 1, true, false), "{cuts:?}");
+        assert_eq!(c.headline(), "2-file cycle in src: 1 type-only import ignored, largest runtime cycle 1; no runtime cycle");
+        cfg.ignore_type_only_imports = false;
+        let g = build(&files, &cfg);
+        let c = g.file_cycles.iter().find(|c| c.members.contains(&"src/x.ts".to_string())).unwrap();
+        let s = c.cuts.as_ref().unwrap().single.as_ref().unwrap();
+        assert_eq!((s.edge.from.as_str(), s.largest_after), ("src/y.ts", 1));
+    }
+
+    fn cycle_files() -> Vec<SourceFile> {
+        vec![
+            sf("src/lib.rs", "mod a;\nmod b;\nmod c;\n"),
+            sf("src/a.rs", "mod a2;\n"),
+            sf("src/a/a2.rs", "use crate::b::B;\n"),
+            sf("src/b/mod.rs", "use crate::a::A;\nuse crate::c::C;\n"),
+            sf("src/c.rs", "use crate::a::A;\nuse crate::b::B2;\n"),
+        ]
+    }
+
+    /// Four files each importing the other three: no single edge shrinks the cycle.
+    fn dense_files() -> Vec<SourceFile> {
+        let names = ["a", "b", "c", "d"];
+        let mut v = vec![sf("src/lib.rs", "mod a;\nmod b;\nmod c;\nmod d;\n")];
+        for n in names {
+            let body: String = names.iter().filter(|o| **o != n).map(|o| format!("use crate::{o}::{};\n", o.to_uppercase())).collect();
+            v.push(sf(&format!("src/{n}.rs"), &body));
+        }
+        v
+    }
+
+    #[test]
+    fn cut_search_never_proposes_a_mod_edge_and_reports_hub_and_set() {
+        let cfg = Cfg::default();
+        let g = build(&cycle_files(), &cfg);
+        assert_eq!(g.file_cycles.len(), 1);
+        let c = &g.file_cycles[0];
+        assert_eq!((c.members.len(), c.dir.as_str()), (4, "src"));
+        let cuts = c.cuts.as_ref().unwrap();
+        assert_eq!((cuts.internal_edges, cuts.mod_edges, cuts.base), (6, 1, 4));
+        let s = cuts.single.as_ref().unwrap();
+        assert_eq!((s.edge.from.as_str(), s.edge.to.as_str(), s.edge.kind, s.largest_after), ("src/a/a2.rs", "src/b/mod.rs", EdgeKind::Use, 2));
+        let h = cuts.hub.as_ref().unwrap();
+        assert_eq!((h.member.as_str(), h.imports, h.symbols, h.glob, h.largest_after), ("src/b/mod.rs", 2, 2, false, 1));
+        assert!(!cuts.no_single_break);
+        assert_eq!(cuts.cut_set.iter().map(|e| (e.edge.from.as_str(), e.edge.to.as_str(), e.largest_after)).collect::<Vec<_>>(), vec![("src/a/a2.rs", "src/b/mod.rs", 2)]);
+        // `mod.rs` names nothing on its own: the short name carries its directory.
+        assert_eq!(c.headline(), "4-file cycle in src: cheapest cut src/a/a2.rs -> src/b/mod.rs imports 1 symbol (B, line 1) -> largest remaining cycle 2; hub cut: drop b/mod.rs's 2 imports (2 symbols) -> 1");
+        assert_eq!(c.cut_set_line().as_deref(), Some("cut set of 1 import dissolves it: src/a/a2.rs -> src/b/mod.rs (B)"));
+        assert_eq!(c.cut_clause("src/b/mod.rs").as_deref(), Some("cut: a2.rs -> b/mod.rs, B"));
+        assert!(c.cut_clause("src/a.rs").is_none());
+        assert_eq!((short_name("src/dom/index.ts"), short_name("pkg/__init__.py"), short_name("index.ts"), short_name("src/x.rs"), short_name("mod.rs")), ("dom/index.ts", "pkg/__init__.py", "index.ts", "x.rs", "mod.rs"));
+        // Without the hub, and with the hub not beating the single, it is absent.
+        let cfg = Cfg { report_hub_cut: false, ..Cfg::default() };
+        assert!(build(&cycle_files(), &cfg).file_cycles[0].cuts.as_ref().unwrap().hub.is_none());
+    }
+
+    #[test]
+    fn search_knobs_bound_the_edges_tried_and_price_globs() {
+        // a2 -> b costs 2 now, so it sorts after the four 1-symbol edges; with one edge tried the
+        // search stops at the first of those, which leaves the whole cycle.
+        let mut files = cycle_files();
+        files[2] = sf("src/a/a2.rs", "use crate::b::{B, B2};\n");
+        let g = build(&files, &Cfg::default());
+        let s = g.file_cycles[0].cuts.as_ref().unwrap().single.as_ref().unwrap();
+        assert_eq!((s.edge.from.as_str(), s.edge.symbols, s.largest_after), ("src/a/a2.rs", 2, 2));
+        let g = build(&files, &Cfg { max_edges_tried: 1, ..Cfg::default() });
+        let s = g.file_cycles[0].cuts.as_ref().unwrap().single.as_ref().unwrap();
+        assert_eq!((s.edge.from.as_str(), s.edge.to.as_str(), s.largest_after), ("src/b/mod.rs", "src/a.rs", 4));
+        // A wildcard costs the knob, and a hub that drops one says `>= N symbols`.
+        files[2] = sf("src/a/a2.rs", "use crate::b::B;\n");
+        files[3] = sf("src/b/mod.rs", "use crate::a::*;\nuse crate::c::C;\n");
+        let g = build(&files, &Cfg { glob_import_symbol_cost: 3, ..Cfg::default() });
+        let e = g.edge("src/b/mod.rs", "src/a.rs").unwrap();
+        assert_eq!((e.glob, e.symbols), (true, 3));
+        let c = &g.file_cycles[0];
+        let cuts = c.cuts.as_ref().unwrap();
+        assert_eq!(cuts.single.as_ref().unwrap().edge.from.as_str(), "src/a/a2.rs");
+        let h = cuts.hub.as_ref().unwrap();
+        assert_eq!((h.member.as_str(), h.imports, h.glob, h.symbols, h.largest_after), ("src/b/mod.rs", 2, true, 4, 1));
+        assert!(c.headline().ends_with("hub cut: drop b/mod.rs's 2 imports (>= 4 symbols) -> 1"), "{}", c.headline());
+        // The share knob decides when a single cut is called no break at all.
+        let g = build(&dense_files(), &Cfg { no_single_cut_share: 1.01, ..Cfg::default() });
+        assert!(!g.file_cycles[0].cuts.as_ref().unwrap().no_single_break);
+    }
+
+    #[test]
+    fn dense_cycle_says_no_single_import_breaks_it_and_caps_the_cut_set() {
+        let g = build(&dense_files(), &Cfg::default());
+        let c = &g.file_cycles[0];
+        let cuts = c.cuts.as_ref().unwrap();
+        assert_eq!((cuts.internal_edges, cuts.mod_edges), (12, 0));
+        let s = cuts.single.as_ref().unwrap();
+        assert_eq!((s.edge.from.as_str(), s.edge.to.as_str(), s.largest_after), ("src/a.rs", "src/b.rs", 4));
+        assert!(cuts.no_single_break);
+        let h = cuts.hub.as_ref().unwrap();
+        assert_eq!((h.member.as_str(), h.imports, h.symbols, h.largest_after), ("src/a.rs", 3, 3, 3));
+        // The greedy set drops a.rs's three imports (largest 3 < min size 4); a cap of two hides it.
+        assert_eq!(cuts.cut_set.iter().map(|e| (e.edge.to.as_str(), e.largest_after)).collect::<Vec<_>>(), vec![("src/b.rs", 4), ("src/c.rs", 4), ("src/d.rs", 3)]);
+        assert!(cuts.cut_set.iter().all(|e| e.edge.kind != EdgeKind::Mod));
+        assert!(c.headline().ends_with("-> largest remaining cycle 4; hub cut: drop a.rs's 3 imports (3 symbols) -> 3; no single import breaks this cycle"), "{}", c.headline());
+        let cfg = Cfg { max_cut_set: 2, ..Cfg::default() };
+        let g = build(&dense_files(), &cfg);
+        assert!(g.file_cycles[0].cuts.as_ref().unwrap().cut_set.is_empty());
+        assert!(g.file_cycles[0].cut_set_line().is_none());
+    }
+
+    #[test]
+    fn rust_cuts_can_be_switched_off_and_small_cycles_get_no_cuts() {
+        let cfg = Cfg { cut_rust_cycles: false, ..Cfg::default() };
+        let g = build(&cycle_files(), &cfg);
+        assert!(g.file_cycles[0].cuts.is_none());
+        assert_eq!(g.file_cycles[0].headline(), "4-file cycle in src");
+        assert!(g.file_cycles[0].cut_set_line().is_none() && g.file_cycles[0].cut_clause("src/b/mod.rs").is_none());
+        let cfg = Cfg { min_cycle_size_to_cut: 5, ..Cfg::default() };
+        assert!(build(&cycle_files(), &cfg).file_cycles[0].cuts.is_none());
+    }
+
+    #[test]
+    fn common_dir_is_the_deepest_shared_directory() {
+        assert_eq!(common_dir(&["src/a.rs".to_string(), "src/cmd/b.rs".to_string()]), "src");
+        assert_eq!(common_dir(&["crates/x/src/a.rs".to_string(), "crates/x/src/b/c.rs".to_string()]), "crates/x/src");
+        assert_eq!(common_dir(&["a.rs".to_string(), "src/b.rs".to_string()]), ".");
     }
 }

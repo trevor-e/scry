@@ -5,6 +5,6 @@
 
 None yet — `kanspec decide "..."` proposes one; a human accepts it.
 
-## Landmines (0)
+## Landmines (1)
 
-None recorded.
+- **q-b403** scan parses each file once in main.rs parse_once and hands the tree to metrics, the walkers (mentions/dead/helpers/strings/clumps/declared/comments), deps::imports and clones::Tokenizer; a new tree-reading pass must plug into parse_once via analyze_tree_with's extra closure, never parse on its own inside scan (only the standalone subcommands and tests parse for themselves via Language::parse) — `src/main.rs`, `src/metrics/mod.rs`, `src/clones/mod.rs`, `src/deps/mod.rs` (learned in t-1278)

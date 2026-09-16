@@ -372,9 +372,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "globset",
  "ignore",
  "petgraph",
  "rayon",
+ "regex",
  "serde",
  "serde_json",
  "toml",
