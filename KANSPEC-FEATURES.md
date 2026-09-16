@@ -4,10 +4,21 @@
 | Feature | Spec | Code | Last shipped change |
 |---|---|---|---|
 | Near-exact clone detection via normalized-token winnowing fingerprints | clones | src/clones/** | — |
+| Parameter clumps: groups of parameter names recurring across functions, collapsed into the largest tuple those functions share, with per-slot type agreement, the members that leave a slot unused (the silenced-slot attribute) and the one caller they all have | clumps | src/clumps/** | — |
+| Comments as structure: top-level banners that cut a file into labelled sections, phase labels inside functions over the cognitive threshold | comments | src/comments/** | — |
+| Dead surface: exported symbols with no production use outside their file, test-only symbols, never-read fields and never-constructed variants, on a shared symbol index | dead | src/dead/** | — |
+| Declared but unconsumed: dependencies a Cargo manifest declares that no file in its scope references, feature flags nothing checks that gate only such dependencies, config knobs a Deserialize struct accepts that no code reads, each with the commit that declared it or removed its last consumer, and env names production code reads that only tests set | declared | src/declared/** | — |
 | Import graph, cycles (SCC), fan-in/out, instability | deps | src/deps/** | — |
 | Walk a repo, classify files (source/test/data/generated/vendored), detect language | discovery | src/discover/**, src/lang/** | — |
+| Parse-default fallbacks: literal defaults applied to the result of a fallible transform, counted per unit and reported as a reason, never a score input | fallback | src/fallback/** | — |
+| Re-implemented helpers: same-name top-level helpers defined in several files, classified verbatim / similar / different contract with commit and session attribution, and small helper bodies inlined where the helper should have been called | helpers | src/helpers/** | — |
 | Git-derived signals: churn, fix commits, authors, temporal co-change | history | src/history/** | — |
+| Test-mention index: which test units name each source file's symbols, replacing the boolean has_tests | mentions | src/mentions/** | — |
 | Tree-sitter per-function metrics: cognitive/cyclomatic complexity, nesting, length, params | metrics | src/metrics/** | — |
+| Short-name live range: one-letter bindings and the widest gap between their consecutive uses, rebinding-aware, as an attribute on units the report already ranks | naming | src/naming/** | — |
+| Per-hotspot refactor plan: clone runs resolved to symbols, one step per existing finding, no predicted effect | plan | src/plan/** | — |
+| Inline test regions in Rust Source files: #[cfg(test)] mods and items, bare #[test] fns | regions | src/regions.rs | — |
 | Composite hotspot ranking and human/JSON report for LLM consumption | report | src/report/**, src/main.rs, src/config.rs | — |
+| Repeated literals: message strings spelled in several files as exact masked families, config literals (time formats, env names, paths, URLs, MIME types, numbers in one config role) duplicated with no shared constant, and near-duplicate message pairs as information | strings | src/strings/** | — |
 
 Staleness is computed from git at read time, not stored here: `kanspec features --stale`.
