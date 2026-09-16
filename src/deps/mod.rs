@@ -38,7 +38,7 @@ pub struct FileDeps {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeKind {
-    /// TS `import type` / `import { type X }` / `export type { X } from`: erased at runtime.
+    /// TS type imports/exports and Python imports guarded by `TYPE_CHECKING`.
     TypeOnly,
     Use,
     /// A Rust `mod x;` declaration contributes: the edge cannot be cut by removing an import.
@@ -246,20 +246,19 @@ pub fn build(all: &[SourceFile], cfg: &Cfg, ts: &TsConfigs) -> DepGraph {
 struct Env<'a> {
     cfg: &'a Cfg,
     known: HashSet<&'a str>,
-    /// Python roots tried after the importer's ancestors (`src/` layouts).
+    /// Search roots for Python absolute imports (`src/` layouts).
     py_roots: Vec<String>,
     ts: &'a TsConfigs,
 }
 
-/// Directories that directly hold a top-level package: `src` for
-/// `src/pkg/__init__.py` when `src/__init__.py` does not exist. Sorted, so
-/// resolution order is stable.
+/// The repo root plus directories holding top-level packages. A missing `__init__.py`
+/// in an intermediate namespace must not turn a nested package into a search root.
 fn detect_py_roots(known: &HashSet<&str>) -> Vec<String> {
-    let mut roots = BTreeSet::new();
+    let mut roots = BTreeSet::from([String::new()]);
     for p in known {
         let Some(pkg) = p.strip_suffix("/__init__.py") else { continue };
         let parent = dir_of(pkg);
-        if !known.contains(join(parent, "__init__.py").as_str()) {
+        if !ancestors(parent).iter().any(|a| known.contains(join(a, "__init__.py").as_str())) {
             roots.insert(parent.to_string());
         }
     }
@@ -656,7 +655,7 @@ fn extract_python(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
                     "aliased_import" => ch.child_by_field_name("name").map(|x| t(x, src)).unwrap_or(""),
                     _ => continue,
                 };
-                out.push(RawImport::new(name.to_string(), vec![name.to_string()], false, EdgeKind::Use, line_of(n)));
+                out.push(RawImport::new(name.to_string(), vec![name.to_string()], false, python_import_kind(n, src), line_of(n)));
             }
         }
         "import_from_statement" => {
@@ -682,10 +681,29 @@ fn extract_python(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
             }
             let mut c = n.walk();
             let glob = n.children(&mut c).any(|ch| ch.kind() == "wildcard_import");
-            out.push(RawImport { spec, syms: names.clone(), names, level, glob, kind: EdgeKind::Use, line: line_of(n) });
+            out.push(RawImport { spec, syms: names.clone(), names, level, glob, kind: python_import_kind(n, src), line: line_of(n) });
         }
         _ => {}
     }
+}
+
+fn python_import_kind(mut node: Node, src: &[u8]) -> EdgeKind {
+    while let Some(parent) = node.parent() {
+        if matches!(parent.kind(), "if_statement" | "elif_clause")
+            && parent.child_by_field_name("consequence") == Some(node)
+            && let Some(mut condition) = parent.child_by_field_name("condition")
+        {
+            while condition.kind() == "parenthesized_expression" {
+                let Some(inner) = condition.named_child(0) else { break };
+                condition = inner;
+            }
+            if matches!(t(condition, src), "TYPE_CHECKING" | "typing.TYPE_CHECKING") {
+                return EdgeKind::TypeOnly;
+            }
+        }
+        node = parent;
+    }
+    EdgeKind::Use
 }
 
 fn extract_js(n: Node, src: &[u8], out: &mut Vec<RawImport>) {
@@ -911,56 +929,29 @@ fn py_candidates(base: &str, module: &str) -> [String; 2] {
 }
 
 fn resolve_python(from: &str, imp: &RawImport, known: &HashSet<&str>, py_roots: &[String]) -> Option<Vec<String>> {
-    let dir = dir_of(from);
-    let roots: Vec<String> = if imp.level > 0 {
-        let mut d = dir.to_string();
+    let roots = if imp.level > 0 {
+        let mut dir = dir_of(from).to_string();
         for _ in 1..imp.level {
-            d = dir_of(&d).to_string();
+            dir = dir_of(&dir).to_string();
         }
-        vec![d]
+        vec![dir]
     } else {
-        // The importer's own ancestors first, then the repo's package roots:
-        // `tests/x/test_y.py` importing `pkg.y` from `src/pkg/y.py`.
-        let mut roots = ancestors(dir);
-        let extra: Vec<String> = py_roots.iter().filter(|r| !roots.contains(r)).cloned().collect();
-        roots.extend(extra);
-        roots
+        py_roots.to_vec()
     };
-    let mut hits = Vec::new();
     for root in &roots {
-        let mut found = false;
-        if imp.spec.is_empty() {
-            // `from . import x` – x are submodules of the package at root.
-            for nm in &imp.names {
-                for c in py_candidates(root, nm) {
-                    if known.contains(c.as_str()) {
-                        hits.push(c);
-                        found = true;
-                        break;
-                    }
-                }
-            }
-        } else {
-            for c in py_candidates(root, &imp.spec) {
-                if known.contains(c.as_str()) {
-                    hits.push(c);
-                    found = true;
-                    break;
-                }
-            }
-            if found {
-                for nm in &imp.names {
-                    let sub = format!("{}.{}", imp.spec, nm);
-                    for c in py_candidates(root, &sub) {
-                        if known.contains(c.as_str()) {
-                            hits.push(c);
-                            break;
-                        }
-                    }
-                }
+        let mut hits = Vec::new();
+        let modules = (!imp.spec.is_empty()).then(|| imp.spec.clone()).into_iter().chain(
+            imp.names.iter().map(|name| {
+                if imp.spec.is_empty() { name.clone() } else { format!("{}.{name}", imp.spec) }
+            }),
+        );
+        // A namespace package has no __init__.py; its imported submodules still resolve.
+        for module in modules {
+            if let Some(path) = py_candidates(root, &module).into_iter().find(|p| known.contains(p.as_str())) {
+                hits.push(path);
             }
         }
-        if found {
+        if !hits.is_empty() {
             return Some(hits);
         }
     }
@@ -1092,6 +1083,82 @@ mod tests {
         assert_eq!(g.files["src/pkg/a.py"].fan_out, 2); // pkg/__init__.py and pkg/b.py
         let cfg = Cfg { py_roots: vec!["lib".into()], ..Cfg::default() };
         assert_eq!(build(&files, &cfg).files["src/pkg/a.py"].test_refs, 0);
+    }
+
+    #[test]
+    fn python_absolute_imports_do_not_search_enclosing_packages() {
+        let files = vec![
+            sf("src/pkg/__init__.py", ""),
+            sf("src/pkg/agent/mcp/__init__.py", "from .client import Client\n"),
+            sf("src/pkg/agent/mcp/client.py", "from mcp import ClientSession\n"),
+            sf("src/pkg/agent/local.py", ""),
+            sf("src/pkg/agent/consumer.py", "import local\n"),
+            sf("local.py", ""),
+        ];
+        let g = build(&files, &Cfg::default());
+        assert_eq!(g.files["src/pkg/agent/mcp/client.py"].external, 1);
+        assert!(g.edge("src/pkg/agent/mcp/client.py", "src/pkg/agent/mcp/__init__.py").is_none());
+        assert!(g.file_cycles.is_empty());
+        assert!(g.edge("src/pkg/agent/consumer.py", "local.py").is_some());
+        assert!(g.edge("src/pkg/agent/consumer.py", "src/pkg/agent/local.py").is_none());
+    }
+
+    #[test]
+    fn python_from_import_resolves_namespace_submodules() {
+        let files = vec![
+            sf("src/pkg/__init__.py", ""),
+            sf("src/pkg/review/consumer.py", "from pkg.review import prompts as p\nfrom . import helpers\n"),
+            sf("src/pkg/review/prompts.py", ""),
+            sf("src/pkg/review/helpers.py", ""),
+            sf("tests/test_review.py", "from pkg.review import prompts, helpers\n"),
+        ];
+        let g = build(&files, &Cfg::default());
+        assert!(g.connected("src/pkg/review/consumer.py", "src/pkg/review/prompts.py"));
+        assert!(g.connected("src/pkg/review/consumer.py", "src/pkg/review/helpers.py"));
+        assert_eq!(g.files["src/pkg/review/consumer.py"].external, 0);
+        assert_eq!(g.files["src/pkg/review/prompts.py"].test_refs, 1);
+        assert_eq!(g.files["src/pkg/review/helpers.py"].test_refs, 1);
+
+        let files = vec![
+            sf("lib/ns/consumer.py", "from ns import sibling\n"),
+            sf("lib/ns/sibling.py", ""),
+        ];
+        let cfg = Cfg { py_roots: vec!["lib".into()], ..Cfg::default() };
+        assert!(build(&files, &cfg).connected("lib/ns/consumer.py", "lib/ns/sibling.py"));
+    }
+
+    #[test]
+    fn python_type_checking_imports_are_not_runtime_cycle_cuts() {
+        for guard in ["TYPE_CHECKING", "typing.TYPE_CHECKING", "(TYPE_CHECKING)"] {
+            let files = vec![
+                sf("pkg/__init__.py", ""),
+                sf("pkg/a.py", &format!("from typing import TYPE_CHECKING\nimport typing\nif {guard}:\n    if enabled:\n        from pkg.b import B\nelse:\n    import pkg.c\n")),
+                sf("pkg/b.py", "from pkg.a import A\n"),
+                sf("pkg/c.py", ""),
+            ];
+            let cfg = Cfg { min_cycle_size_to_cut: 2, ..Cfg::default() };
+            let g = build(&files, &cfg);
+            assert_eq!(g.edge("pkg/a.py", "pkg/b.py").unwrap().kind, EdgeKind::TypeOnly, "{guard}");
+            assert_eq!(g.edge("pkg/a.py", "pkg/c.py").unwrap().kind, EdgeKind::Use, "{guard}");
+            let cuts = g.file_cycles[0].cuts.as_ref().unwrap();
+            assert_eq!((cuts.type_only_edges, cuts.base), (1, 1));
+            assert!(cuts.single.is_none() && cuts.cut_set.is_empty());
+        }
+    }
+
+    #[test]
+    fn python_runtime_import_overrides_type_only_import_of_same_module() {
+        let files = vec![
+            sf("pkg/__init__.py", ""),
+            sf("pkg/a.py", "if TYPE_CHECKING:\n    from pkg.b import B\nfrom pkg.b import run\nif not TYPE_CHECKING:\n    import pkg.c\n"),
+            sf("pkg/b.py", ""),
+            sf("pkg/c.py", ""),
+        ];
+        let g = build(&files, &Cfg::default());
+        let edge = g.edge("pkg/a.py", "pkg/b.py").unwrap();
+        assert_eq!(edge.kind, EdgeKind::Use);
+        assert_eq!(edge.names, vec!["run"]);
+        assert_eq!(g.edge("pkg/a.py", "pkg/c.py").unwrap().kind, EdgeKind::Use);
     }
 
     #[test]

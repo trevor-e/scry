@@ -253,15 +253,15 @@ pub struct Deps {
     /// Compute cuts for Rust cycles. Off keeps the deduped count line but no cut text: the
     /// idiomatic-Rust argument belongs in `[report].cycle_coupling`, not in hiding the cut.
     pub cut_rust_cycles: bool,
-    /// TS `import type` / `import { type X }` edges are erased at runtime: leave them out of
-    /// the cycle the cuts are searched on.
+    /// TS type imports and Python `TYPE_CHECKING` imports are erased at runtime:
+    /// leave them out of the cycle the cuts are searched on.
     pub ignore_type_only_imports: bool,
     /// `no single import breaks this cycle` is appended when the best single cut still leaves
     /// a cycle of at least this share of the members.
     pub no_single_cut_share: f64,
-    /// Directories Python absolute imports resolve from, after the importing
-    /// file's own ancestors (`["src"]` for a src layout). Empty means detect:
-    /// every directory that directly holds a top-level package.
+    /// Search roots for Python absolute imports (`["src"]` for a src layout).
+    /// Empty means the repo root plus detected top-level package roots. Configure
+    /// namespace-only source roots and script directories explicitly when needed.
     pub py_roots: Vec<String>,
 }
 
