@@ -1,7 +1,7 @@
 ---
 id: t-8fbb
 title: Reduce Sentry report noise from import clones, uppercase strings, and test support classification
-state: review
+state: done
 spec: null
 proposal: null
 item: null
@@ -24,3 +24,4 @@ Reduce Sentry report noise from import clones, uppercase strings, and test suppo
 - 2026-09-16T04:10Z  todo     codex/01a0a863-7f92-  new
 - 2026-09-16T04:10Z  doing    codex/01a0a863-7f92-  start (branch created)
 - 2026-09-16T04:21Z  review   codex/01a0a863-7f92-  ship (head 68ed148)
+- 2026-09-16T04:22Z  done     codex/01a0a863-7f92-  done (in main 68ed148 via ancestry)
