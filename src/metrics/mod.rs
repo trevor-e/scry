@@ -14,7 +14,7 @@ use crate::regions::{self, TestRegion};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use tree_sitter::Node;
+use tree_sitter::{Node, Tree};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FunctionMetrics {
@@ -270,6 +270,8 @@ fn is_bound_callable(node: Node) -> bool {
     })
 }
 
+/// Parse and measure every file. `scan` parses once for all passes instead and calls
+/// [`analyze_tree_with`] + [`collect`] itself.
 pub fn analyze_all(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg, naming: &NamingCfg, fallback: &FallbackCfg) -> (Vec<FileMetrics>, Vec<FunctionMetrics>) {
     let (file_metrics, funcs, _) = analyze_all_with(files, cfg, tests, naming, fallback, |_, _, _, _, _| ());
     (file_metrics, funcs)
@@ -288,8 +290,11 @@ pub fn analyze_all_with<'a, T: Send>(
     fallback: &FallbackCfg,
     extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion], &[FunctionMetrics], &[Node]) -> T + Sync,
 ) -> (Vec<FileMetrics>, Vec<FunctionMetrics>, Vec<T>) {
-    let per_file: Vec<(FileMetrics, Vec<FunctionMetrics>, T)> =
-        files.par_iter().map(|f| analyze_file_with(f, cfg, tests, naming, fallback, &extra)).collect();
+    collect(files.par_iter().map(|f| analyze_file_with(f, cfg, tests, naming, fallback, &extra)).collect())
+}
+
+/// Flatten per-file results, in file order, into the two lists the report reads plus the extras.
+pub fn collect<T>(per_file: Vec<(FileMetrics, Vec<FunctionMetrics>, T)>) -> (Vec<FileMetrics>, Vec<FunctionMetrics>, Vec<T>) {
     let mut file_metrics = Vec::with_capacity(per_file.len());
     let mut funcs = Vec::new();
     let mut extras = Vec::with_capacity(per_file.len());
@@ -315,16 +320,29 @@ fn analyze_file_with<'a, T>(
     fallback: &FallbackCfg,
     extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion], &[FunctionMetrics], &[Node]) -> T,
 ) -> (FileMetrics, Vec<FunctionMetrics>, T) {
-    let mut parser = file.lang.parser();
+    let tree = file.lang.parse(&file.content);
+    analyze_tree_with(file, tree.as_ref(), cfg, tests, naming, fallback, extra)
+}
+
+/// Measure an already-parsed file and run `extra` over its tree. `None` stands for a file
+/// tree-sitter could not parse at all and yields zero functions, like an empty file.
+pub fn analyze_tree_with<'a, T>(
+    file: &'a SourceFile,
+    tree: Option<&Tree>,
+    cfg: &Cfg,
+    tests: &TestsCfg,
+    naming: &NamingCfg,
+    fallback: &FallbackCfg,
+    extra: impl Fn(Option<Node>, &'a SourceFile, &[TestRegion], &[FunctionMetrics], &[Node]) -> T,
+) -> (FileMetrics, Vec<FunctionMetrics>, T) {
     let src = file.content.as_bytes();
     let mut funcs = Vec::new();
     let mut parse_errors = false;
     // Regions are always detected on a Rust file, so they are listed whatever the knob says;
     // the knob gates their effects (unit tags, line counts).
     let mut test_regions = Vec::new();
-    let tree = parser.parse(src, None);
     let extra_out;
-    if let Some(tree) = &tree {
+    if let Some(tree) = tree {
         let root = tree.root_node();
         parse_errors = root.has_error();
         if file.lang == Language::Rust {

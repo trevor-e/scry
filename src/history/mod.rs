@@ -164,8 +164,10 @@ pub fn parse(text: &str, prefix: &str, cfg: &Cfg, tracked: &HashSet<String>) -> 
         );
         hist.commits_scanned += 1;
         let touched: Vec<&str> = lines.map(str::trim).filter(|l| !l.is_empty()).collect();
-        // Mass edits (formatters, renames) say nothing about coupling; judge that
-        // on everything the commit touched, not just the files we track.
+        // Mass edits (formatters, lint sweeps, renames) say nothing about
+        // coupling and are not fixes *of this file* whatever the subject says
+        // (`fix(eslint): import/no-duplicates` over 66 files). Judge size on
+        // everything the commit touched, not just the files we track.
         let mass_edit = touched.len() > cfg.max_cochange_commit_size;
         // A fix word on a mass edit ("review pass: fix eleven defects", 49 files) says nothing
         // about which file was broken: churn, not a fix, for every file it touched.
@@ -404,5 +406,34 @@ mod tests {
         assert_eq!((h.commits_scanned, h.sweep_commits, h.sweeps[0].dir.as_str(), h.sweeps[0].files), (2, 1, "src/cmd", 6));
         assert_eq!((h.files["src/cmd/a.rs"].commits, h.files["src/cmd/a.rs"].sweep_commits), (2, 1));
         assert_eq!(h.co_commits, vec![vec!["src/cmd/a.rs".to_string(), "src/cmd/b.rs".to_string()]]);
+    }
+
+    #[test]
+    fn mass_edits_count_as_churn_but_not_as_fixes() {
+        let dir = std::env::temp_dir().join(format!("scry-hist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        git(&["init", "-q"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "root"]);
+        let commit = |subject: &str, n: usize| {
+            for i in 0..n {
+                std::fs::write(dir.join(format!("f{i}.py")), format!("{subject}{i}\n")).unwrap();
+            }
+            git(&["add", "-A"]);
+            git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", subject]);
+        };
+        commit("fix(eslint): sweep", 30); // touches 30 files: churn, not a fix
+        commit("fix: real bug", 1); // touches f0.py only
+        let cfg = Cfg { since: "10 years ago".into(), ..Cfg::default() };
+        let tracked: HashSet<String> = ["f0.py".to_string(), "f1.py".to_string()].into();
+        let h = collect(&dir, &cfg, &tracked).unwrap();
+        assert_eq!((h.files["f0.py"].commits, h.files["f0.py"].fix_commits), (2, 1), "{:?}", h.files["f0.py"]);
+        assert_eq!((h.files["f1.py"].commits, h.files["f1.py"].fix_commits), (1, 0), "{:?}", h.files["f1.py"]);
+        assert!(h.co_changes.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

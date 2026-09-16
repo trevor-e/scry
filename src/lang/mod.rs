@@ -1,7 +1,15 @@
 //! Language identification and tree-sitter grammar lookup.
 
 use serde::Serialize;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::Path;
+
+thread_local! {
+    /// One parser per grammar per thread: `Parser::new` + `set_language` is
+    /// not free, and a scan parses thousands of files on a handful of threads.
+    static PARSERS: RefCell<HashMap<Language, tree_sitter::Parser>> = RefCell::new(HashMap::new());
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -44,6 +52,16 @@ impl Language {
         parser
     }
 
+    /// Parse `src` with this thread's cached parser for the grammar. `None`
+    /// only when tree-sitter itself gives up, which without a timeout or
+    /// cancellation flag it does not; callers treat it as an empty file.
+    pub fn parse(self, src: &str) -> Option<tree_sitter::Tree> {
+        PARSERS.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let parser = cache.entry(self).or_insert_with(|| self.parser());
+            parser.parse(src, None)
+        })
+    }
 
     pub fn name(self) -> &'static str {
         match self {

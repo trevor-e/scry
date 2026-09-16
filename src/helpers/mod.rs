@@ -1472,7 +1472,7 @@ mod tests {
 
     fn run(files: &[SourceFile], cfg: &Cfg) -> HelpersReport {
         let (sides, index) = index_all(files, cfg, &DeadCfg::default());
-        let deps = crate::deps::build(files, &crate::config::Deps::default());
+        let deps = crate::deps::build(files, &crate::config::Deps::default(), &crate::deps::TsConfigs::default());
         analyze(&sides, &index, &deps, None, cfg)
     }
 
@@ -1774,7 +1774,7 @@ mod tests { fn test_helper() {} }
         let files = [src("src/a.rs", &format!("pub(crate) {PLURAL}")), src("src/b.rs", &format!("pub fn other() {{}}\n{PLURAL}")), src("p/a.py", "DEFAULT_TIMEOUT = 30\n"), src("p/b.py", "DEFAULT_TIMEOUT = 30\n")];
         let cfg = Cfg::default();
         let (sides, index) = index_all(&files, &cfg, &DeadCfg::default());
-        let deps = crate::deps::build(&files, &crate::config::Deps::default());
+        let deps = crate::deps::build(&files, &crate::config::Deps::default(), &crate::deps::TsConfigs::default());
         let r = analyze(&sides, &index, &deps, Some(&dir), &cfg);
         let plural_of = |r: &HelpersReport| r.families.iter().position(|f| f.name == "plural").unwrap();
         let f = &r.families[plural_of(&r)];

@@ -23,7 +23,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use tree_sitter::Node;
+use tree_sitter::{Node, Tree};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Loc {
@@ -85,7 +85,8 @@ pub struct CloneReport {
     pub files: HashMap<String, FileClones>,
 }
 
-struct Tokens {
+/// One file's normalised token stream: a class hash per leaf and the line it sits on.
+pub struct Tokens {
     hashes: Vec<u64>,
     lines: Vec<usize>,
     /// Byte span of each token, so a token range maps back onto the tree.
@@ -101,14 +102,18 @@ struct Tokens {
     kinds: Arc<Kinds>,
 }
 
+/// Parse and tokenize every file, then find clones. `scan` parses once for all passes instead
+/// and calls [`Tokenizer::tokenize`] + [`detect_from`] itself.
 pub fn detect(files: &[SourceFile], cfg: &Cfg, tests: &TestsCfg, fallback: SymbolFallback) -> CloneReport {
+    let tokenizer = Tokenizer::new(files, cfg, tests);
+    let toks: Vec<Tokens> = files.par_iter().map(|f| tokenizer.tokenize(f, f.lang.parse(&f.content))).collect();
+    detect_from(files, toks, cfg, fallback)
+}
+
+/// Find clones from per-file token streams, `toks[i]` belonging to `files[i]`.
+pub fn detect_from(files: &[SourceFile], toks: Vec<Tokens>, cfg: &Cfg, fallback: SymbolFallback) -> CloneReport {
+    assert_eq!(files.len(), toks.len(), "one token stream per file");
     let k = cfg.k;
-    // Kind classes once per grammar, not per file: a grammar has a thousand kinds to classify.
-    let mut kinds: HashMap<Language, Arc<Kinds>> = HashMap::new();
-    for f in files {
-        kinds.entry(f.lang).or_insert_with(|| Arc::new(Kinds::new(f.lang, control_kinds(cfg, f.lang))));
-    }
-    let toks: Vec<Tokens> = files.par_iter().map(|f| tokenize(f, tests, Arc::clone(&kinds[&f.lang]))).collect();
 
     // fingerprint hash -> (file, token position)
     let mut index: HashMap<u64, Vec<(usize, usize)>> = HashMap::new();
@@ -810,11 +815,38 @@ const NUMBER_KINDS: &[&str] = &[
     "null", "undefined",
 ];
 
-fn tokenize(file: &SourceFile, tests: &TestsCfg, kinds: Arc<Kinds>) -> Tokens {
-    let mut parser = file.lang.parser();
+/// What [`tokenize`] reads besides the tree: the kind classes of every grammar in the run and
+/// the inline-test knob. Built once per run, shared by every worker thread.
+pub struct Tokenizer<'a> {
+    kinds: HashMap<Language, Arc<Kinds>>,
+    cfg: &'a Cfg,
+    tests: &'a TestsCfg,
+}
+
+impl<'a> Tokenizer<'a> {
+    /// Kind classes once per grammar in `files`, not per file: a grammar has a thousand kinds
+    /// to classify. A file of a grammar not in `files` still tokenizes (its classes are built
+    /// on the spot).
+    pub fn new(files: &[SourceFile], cfg: &'a Cfg, tests: &'a TestsCfg) -> Self {
+        let mut kinds: HashMap<Language, Arc<Kinds>> = HashMap::new();
+        for f in files {
+            kinds.entry(f.lang).or_insert_with(|| Arc::new(Kinds::new(f.lang, control_kinds(cfg, f.lang))));
+        }
+        Self { kinds, cfg, tests }
+    }
+
+    /// Tokenize an already-parsed file; `None` (tree-sitter gave up) is an empty stream. The
+    /// tree is kept on the stream for the container walks.
+    pub fn tokenize(&self, file: &SourceFile, tree: Option<Tree>) -> Tokens {
+        let kinds = self.kinds.get(&file.lang).cloned().unwrap_or_else(|| Arc::new(Kinds::new(file.lang, control_kinds(self.cfg, file.lang))));
+        tokenize(file, tree, self.tests, kinds)
+    }
+}
+
+fn tokenize(file: &SourceFile, tree: Option<Tree>, tests: &TestsCfg, kinds: Arc<Kinds>) -> Tokens {
     let src = file.content.as_bytes();
     let mut out = Tokens { hashes: Vec::new(), lines: Vec::new(), starts: Vec::new(), ends: Vec::new(), inline_test_lines: 0, test_regions: Vec::new(), tree: None, kinds };
-    let Some(tree) = parser.parse(src, None) else { return out };
+    let Some(tree) = tree else { return out };
     // Inline test regions emit no tokens, so no run can lie inside one.
     let test_regions = if tests.inline_modules && file.lang == Language::Rust {
         regions::test_regions(tree.root_node(), src)

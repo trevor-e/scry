@@ -20,8 +20,125 @@ mod strings;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use discover::{FileKind, SourceFile};
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+/// What one parse per file produces for every pass `scan` folds into the report.
+struct Parsed<'a> {
+    file_metrics: Vec<metrics::FileMetrics>,
+    functions: Vec<metrics::FunctionMetrics>,
+    deps: deps::DepGraph,
+    clones: clones::CloneReport,
+    /// The Source-file sides of the mentions, dead, helpers, strings, clumps, declared and
+    /// comments passes, in `source` order (`helper_sides` also holds the Test files' when
+    /// `[helpers].include_test_helpers`).
+    sides: Vec<mentions::SourceSide<'a>>,
+    indexes: Vec<dead::FileIndex>,
+    helper_sides: Vec<helpers::FileSide>,
+    string_sides: Vec<strings::FileSide>,
+    clump_sides: Vec<clumps::FileSide>,
+    declared_sides: Vec<declared::FileSide>,
+    comment_sides: Vec<comments::FileSide>,
+    /// Every Test file with its tree, for the passes that index tests.
+    tests: Vec<(&'a SourceFile, Option<tree_sitter::Tree>)>,
+}
+
+/// Parse each file once and run every tree-reading pass over the same tree: metrics (with the
+/// mentions, dead, helpers, strings, clumps, declared and comments walkers reading symbols,
+/// inline test units, references, helper bodies, literals, parameter lists, crate / feature /
+/// field references and banner / phase comments off it), deps and clones. A Source file's tree
+/// ends up on its clone token stream (the container walks need it) and a Test file's is kept
+/// for the test-indexing passes; any other tree is dropped before the next file starts.
+/// `source` must be the `Source` files of `files`, in the same order (the standalone
+/// subcommands each parse for themselves and are unaffected).
+fn parse_once<'a>(files: &'a [SourceFile], source: &[SourceFile], cfg: &config::Config, ts: &deps::TsConfigs) -> Parsed<'a> {
+    type Sides<'a> = (mentions::SourceSide<'a>, dead::FileIndex, helpers::FileSide, strings::FileSide, clumps::FileSide, declared::FileSide, comments::FileSide);
+    struct PerFile<'a> {
+        metrics: Option<(metrics::FileMetrics, Vec<metrics::FunctionMetrics>, Sides<'a>)>,
+        imports: Vec<deps::RawImport>,
+        tokens: Option<clones::Tokens>,
+        test: Option<(&'a SourceFile, Option<tree_sitter::Tree>)>,
+    }
+    let walker = dead::Walker::new(&cfg.dead);
+    let hwalker = helpers::Walker::new(&cfg.helpers);
+    let swalker = strings::Walker::new(&cfg.strings);
+    let cwalker = clumps::Walker::new(&cfg.clumps);
+    let dwalker = declared::Walker::new(&cfg.declared);
+    let mwalker = comments::Walker::new(&cfg.comments, &cfg.metrics, &cfg.tests);
+    let tokenizer = clones::Tokenizer::new(source, &cfg.clones, &cfg.tests);
+    let per_file: Vec<PerFile<'a>> = files
+        .par_iter()
+        .map(|f| {
+            let ranked = f.kind == FileKind::Source;
+            let is_test = f.kind == FileKind::Test;
+            let tree = if ranked || is_test || deps::walks_imports(f) { f.lang.parse(&f.content) } else { None };
+            let metrics = ranked.then(|| {
+                metrics::analyze_tree_with(f, tree.as_ref(), &cfg.metrics, &cfg.tests, &cfg.naming, &cfg.fallback, |root, f, regions, funcs, nodes| {
+                    (
+                        mentions::source_side(root, f, regions, &cfg.tests),
+                        walker.file_index(root, f, regions),
+                        hwalker.file_side(root, f, regions),
+                        swalker.file_side(root, f, regions),
+                        cwalker.file_side(root, f, regions),
+                        dwalker.file_side(root, f, regions),
+                        mwalker.file_side(root, f, regions, funcs, nodes),
+                    )
+                })
+            });
+            let imports = deps::imports(f, tree.as_ref());
+            let (tokens, test) = if ranked {
+                (Some(tokenizer.tokenize(f, tree)), None)
+            } else if is_test {
+                (None, Some((f, tree)))
+            } else {
+                (None, None)
+            };
+            PerFile { metrics, imports, tokens, test }
+        })
+        .collect();
+    let mut per_metrics = Vec::with_capacity(source.len());
+    let mut imports = Vec::with_capacity(files.len());
+    let mut tokens = Vec::with_capacity(source.len());
+    let mut tests = Vec::new();
+    for p in per_file {
+        per_metrics.extend(p.metrics);
+        imports.push(p.imports);
+        tokens.extend(p.tokens);
+        tests.extend(p.test);
+    }
+    let (file_metrics, functions, per_sides) = metrics::collect(per_metrics);
+    let n = per_sides.len();
+    let (mut sides, mut indexes, mut helper_sides, mut string_sides, mut clump_sides, mut declared_sides, mut comment_sides) =
+        (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    for (m, d, h, s, c, x, k) in per_sides {
+        sides.push(m);
+        indexes.push(d);
+        helper_sides.push(h);
+        string_sides.push(s);
+        clump_sides.push(c);
+        declared_sides.push(x);
+        comment_sides.push(k);
+    }
+    if cfg.helpers.include_test_helpers {
+        helper_sides.extend(tests.iter().map(|(f, t)| hwalker.file_side(t.as_ref().map(|t| t.root_node()), f, &[])));
+    }
+    Parsed {
+        file_metrics,
+        functions,
+        deps: deps::build_from(files, &imports, &cfg.deps, ts),
+        clones: clones::detect_from(source, tokens, &cfg.clones, cfg.plan.symbol_fallback),
+        sides,
+        indexes,
+        helper_sides,
+        string_sides,
+        clump_sides,
+        declared_sides,
+        comment_sides,
+        tests,
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "scry", version, about = "Find the parts of a codebase most likely to need refactoring or to hide bugs")]
@@ -348,7 +465,7 @@ fn main() -> Result<()> {
         }
         Cmd::Deps { path, json, top } => {
             let files = discover::walk(&path, &cfg.discover)?;
-            let g = deps::build(&files, &cfg.deps);
+            let g = deps::build(&files, &cfg.deps, &deps::TsConfigs::load(&path));
             if json {
                 println!("{}", serde_json::to_string_pretty(&g)?);
                 return Ok(());
@@ -411,7 +528,7 @@ fn main() -> Result<()> {
         Cmd::Helpers { path, json, top } => {
             let files = discover::walk(&path, &cfg.discover)?;
             let (sides, symbols) = helpers::index_all(&files, &cfg.helpers, &cfg.dead);
-            let graph = deps::build(&files, &cfg.deps);
+            let graph = deps::build(&files, &cfg.deps, &deps::TsConfigs::load(&path));
             let r = helpers::analyze(&sides, &symbols, &graph, Some(&path), &cfg.helpers);
             if json {
                 println!("{}", serde_json::to_string_pretty(&r)?);
@@ -528,8 +645,7 @@ fn main() -> Result<()> {
 /// Every pass over `path`, folded into the report: what `scan` prints and `plan` reads one file of.
 fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bool) -> Result<report::Report> {
     let files = discover::walk(path, &cfg.discover)?;
-    let source: Vec<discover::SourceFile> =
-        files.iter().filter(|f| f.kind == discover::FileKind::Source).cloned().collect();
+    let source: Vec<SourceFile> = files.iter().filter(|f| f.kind == FileKind::Source).cloned().collect();
     let tracked: std::collections::HashSet<String> = source.iter().map(|f| f.path.clone()).collect();
     let history = if no_history {
         None
@@ -547,41 +663,12 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
             }
         }
     };
-    // The mentions, dead, helpers, strings, clumps, declared and comments passes read symbols,
-    // inline test units, references, helper bodies, literals, parameter lists, crate / feature /
-    // field references and banner / phase comments off the metrics trees; Test files are parsed
-    // once here for the ones that need them.
-    let walker = dead::Walker::new(&cfg.dead);
-    let hwalker = helpers::Walker::new(&cfg.helpers);
-    let swalker = strings::Walker::new(&cfg.strings);
-    let cwalker = clumps::Walker::new(&cfg.clumps);
-    let dwalker = declared::Walker::new(&cfg.declared);
-    let mwalker = comments::Walker::new(&cfg.comments, &cfg.metrics, &cfg.tests);
-    let (file_metrics, functions, per_file) =
-        metrics::analyze_all_with(&source, &cfg.metrics, &cfg.tests, &cfg.naming, &cfg.fallback, |root, f, regions, funcs, nodes| (mentions::source_side(root, f, regions, &cfg.tests), walker.file_index(root, f, regions), hwalker.file_side(root, f, regions), swalker.file_side(root, f, regions), cwalker.file_side(root, f, regions), dwalker.file_side(root, f, regions), mwalker.file_side(root, f, regions, funcs, nodes)));
-    let (mut sides, mut indexes, mut helper_sides, mut string_sides, mut clump_sides, mut declared_sides, mut comment_sides) = (Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()), Vec::with_capacity(per_file.len()));
-    for (m, d, h, s, c, x, k) in per_file {
-        sides.push(m);
-        indexes.push(d);
-        helper_sides.push(h);
-        string_sides.push(s);
-        clump_sides.push(c);
-        declared_sides.push(x);
-        comment_sides.push(k);
-    }
-    let graph = deps::build(&files, &cfg.deps);
-    let clone_report = clones::detect(&source, &cfg.clones, &cfg.tests, cfg.plan.symbol_fallback);
-    let tests: Vec<(&discover::SourceFile, Option<tree_sitter::Tree>)> = {
-        use rayon::prelude::*;
-        files.par_iter().filter(|f| f.kind == discover::FileKind::Test).map(|f| (f, f.lang.parser().parse(f.content.as_bytes(), None))).collect()
-    };
+    let ts = deps::TsConfigs::load(path);
+    let Parsed { file_metrics, functions, deps: graph, clones: clone_report, sides, mut indexes, helper_sides, string_sides, clump_sides, mut declared_sides, comment_sides, tests } = parse_once(&files, &source, cfg, &ts);
     let mentions = mentions::index_parsed(&sides, &tests, &cfg.tests);
     indexes.extend(dead::index_tests(&tests, &cfg.dead));
     let symbols = dead::SymbolIndex::build(indexes);
     let dead_report = dead::analyze(&symbols, path, &cfg.dead);
-    if cfg.helpers.include_test_helpers {
-        helper_sides.extend(tests.iter().map(|(f, t)| hwalker.file_side(t.as_ref().map(|t| t.root_node()), f, &[])));
-    }
     let helpers_report = helpers::analyze(&helper_sides, &symbols, &graph, history.as_ref().map(|_| path), &cfg.helpers);
     let strings_report = strings::analyze(&string_sides, &cfg.strings);
     let clumps_report = clumps::analyze(&clump_sides, &cfg.clumps);
@@ -621,4 +708,63 @@ fn scan(path: &std::path::Path, cfg: &config::Config, top: usize, no_history: bo
         &cfg.report,
         &cfg.discover.test_dirs,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lang::Language;
+
+    fn sf(path: &str, content: &str) -> SourceFile {
+        let lang = Language::from_path(std::path::Path::new(path)).unwrap();
+        let kind = discover::classify(path, content, content.lines().count(), &config::Discover::default());
+        SourceFile { path: path.into(), lang, kind, lines: content.lines().count(), bytes: content.len(), content: content.into() }
+    }
+
+    /// Twelve structurally different lines, long enough to be a clone.
+    fn body(p: &str) -> String {
+        format!(
+            "    {p}_a = compute({p}, 1) + other[2]\n    if {p}_a and not {p}:\n        raise ValueError({p}_a)\n\
+             \x20   for {p}_i in range(3):\n        {p}_a += {p}_i * 2\n    while {p}_a > 10:\n        {p}_a -= 1\n\
+             \x20   {p}_b = [{p}_x for {p}_x in {p} if {p}_x]\n    try:\n        {p}_c = {p}_b[0]\n    except IndexError:\n        {p}_c = None\n"
+        )
+    }
+
+    #[test]
+    fn one_parse_matches_the_standalone_passes() {
+        let files = vec![
+            sf("pkg/__init__.py", ""),
+            sf("pkg/a.py", &format!("from pkg import b\nfrom .c import thing\n\ndef alpha(x):\n{}\n    return x\n", body("aa"))),
+            sf("pkg/b.py", &format!("import pkg.a\n\ndef beta(y):\n{}\n    return y\n", body("bb"))),
+            sf("pkg/c.py", "from . import a\n"),
+            sf("tests/test_a.py", "from pkg.a import alpha\n"),
+            sf("vendor/lib/x.js", "import {y} from './y'\n"),
+            sf("web/k.ts", "import x from '@/a/x'\nclass K { m(a: number) { if (a) {} else if (a > 1) {} return a ? 1 : 2; } }\n"),
+            sf("web/src/a/x.ts", "export const g = (x: number) => x && x;\n"),
+        ];
+        let cfg = config::Config::default();
+        let source: Vec<SourceFile> = files.iter().filter(|f| f.kind == FileKind::Source).cloned().collect();
+        assert!(source.len() < files.len(), "the fixture needs non-source files");
+        let ts = deps::TsConfigs::default();
+        let once = parse_once(&files, &source, &cfg, &ts);
+
+        let (fm, fs) = metrics::analyze_all(&source, &cfg.metrics, &cfg.tests, &cfg.naming, &cfg.fallback);
+        assert_eq!(json(&once.file_metrics), json(&fm));
+        assert_eq!(json(&once.functions), json(&fs));
+        assert_eq!(json(&once.deps), json(&deps::build(&files, &cfg.deps, &ts)));
+        assert_eq!(json(&once.clones), json(&clones::detect(&source, &cfg.clones, &cfg.tests, cfg.plan.symbol_fallback)));
+        assert_eq!(once.deps.file_cycles.len(), 1);
+        assert_eq!(once.clones.pairs.len(), 1, "{:?}", once.clones.pairs);
+        assert!(once.functions.iter().any(|f| f.name == "K.m"));
+        // One side per Source file for every tree-reading pass, and every Test file's tree.
+        assert_eq!(once.sides.len(), source.len());
+        assert_eq!((once.indexes.len(), once.helper_sides.len(), once.string_sides.len()), (source.len(), source.len(), source.len()));
+        assert_eq!((once.clump_sides.len(), once.declared_sides.len(), once.comment_sides.len()), (source.len(), source.len(), source.len()));
+        assert_eq!(once.tests.iter().map(|(f, t)| (f.path.as_str(), t.is_some())).collect::<Vec<_>>(), vec![("tests/test_a.py", true)]);
+    }
+
+    /// `serde_json::Value` compares maps by content, so HashMap order does not matter.
+    fn json<T: serde::Serialize>(v: &T) -> serde_json::Value {
+        serde_json::to_value(v).unwrap()
+    }
 }

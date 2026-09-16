@@ -15,7 +15,10 @@ use petgraph::graph::{DiGraph, NodeIndex};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use tree_sitter::Node;
+use tree_sitter::{Node, Tree};
+
+mod tsconfig;
+pub use tsconfig::TsConfigs;
 
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct FileDeps {
@@ -151,8 +154,9 @@ impl DepGraph {
     }
 }
 
+/// One import as written, before resolution.
 #[derive(Debug)]
-struct RawImport {
+pub struct RawImport {
     /// Module spec as written: `a.b.c`, `./x`, `crate::y`.
     spec: String,
     /// Python: `from a.b import c` – `c` may itself be a submodule.
@@ -225,28 +229,87 @@ impl Carried {
     }
 }
 
-pub fn build(all: &[SourceFile], cfg: &Cfg) -> DepGraph {
-    // Third-party code checked into the tree is not part of this repo's graph:
-    // its cycles are not ours to fix. Generated files may be imported, but
-    // their own imports are not walked, so they never form cycles either.
-    let files: Vec<&SourceFile> = all.iter().filter(|f| f.kind != FileKind::Vendored).collect();
-    let known: HashSet<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    let kind_of: HashMap<&str, FileKind> = files.iter().map(|f| (f.path.as_str(), f.kind)).collect();
+/// Parse every file and build the graph. `scan` parses once for all passes
+/// instead and calls [`imports`] + [`build_from`] itself.
+pub fn build(all: &[SourceFile], cfg: &Cfg, ts: &TsConfigs) -> DepGraph {
+    let raws: Vec<Vec<RawImport>> = all
+        .par_iter()
+        .map(|f| {
+            let tree = if walks_imports(f) { f.lang.parse(&f.content) } else { None };
+            imports(f, tree.as_ref())
+        })
+        .collect();
+    build_from(all, &raws, cfg, ts)
+}
+
+/// What resolution needs beyond the import itself, computed once per build.
+struct Env<'a> {
+    cfg: &'a Cfg,
+    known: HashSet<&'a str>,
+    /// Python roots tried after the importer's ancestors (`src/` layouts).
+    py_roots: Vec<String>,
+    ts: &'a TsConfigs,
+}
+
+/// Directories that directly hold a top-level package: `src` for
+/// `src/pkg/__init__.py` when `src/__init__.py` does not exist. Sorted, so
+/// resolution order is stable.
+fn detect_py_roots(known: &HashSet<&str>) -> Vec<String> {
+    let mut roots = BTreeSet::new();
+    for p in known {
+        let Some(pkg) = p.strip_suffix("/__init__.py") else { continue };
+        let parent = dir_of(pkg);
+        if !known.contains(join(parent, "__init__.py").as_str()) {
+            roots.insert(parent.to_string());
+        }
+    }
+    roots.into_iter().collect()
+}
+
+/// Whether a file's own imports are edges. Third-party code checked into the
+/// tree is not part of this repo's graph: its cycles are not ours to fix.
+/// Generated files may be imported, but their own imports are not walked, so
+/// they never form cycles either.
+pub fn walks_imports(file: &SourceFile) -> bool {
+    !matches!(file.kind, FileKind::Vendored | FileKind::Generated)
+}
+
+/// The imports of one already-parsed file; empty for kinds whose imports are
+/// not walked, so callers need not check [`walks_imports`] themselves.
+pub fn imports(file: &SourceFile, tree: Option<&Tree>) -> Vec<RawImport> {
+    match tree {
+        Some(tree) if walks_imports(file) => extract(file, tree),
+        _ => Vec::new(),
+    }
+}
+
+/// Build the graph from per-file imports, `raws[i]` belonging to `all[i]`.
+pub fn build_from(all: &[SourceFile], raws: &[Vec<RawImport>], cfg: &Cfg, ts: &TsConfigs) -> DepGraph {
+    assert_eq!(all.len(), raws.len(), "one import list per file");
+    let files: Vec<(&SourceFile, &Vec<RawImport>)> =
+        all.iter().zip(raws).filter(|(f, _)| f.kind != FileKind::Vendored).collect();
+    let known: HashSet<&str> = files.iter().map(|(f, _)| f.path.as_str()).collect();
+    let kind_of: HashMap<&str, FileKind> = files.iter().map(|(f, _)| (f.path.as_str(), f.kind)).collect();
+    let py_roots = if cfg.py_roots.is_empty() {
+        detect_py_roots(&known)
+    } else {
+        cfg.py_roots.iter().map(|r| join("", r)).collect()
+    };
+    let env = Env { cfg, known, py_roots, ts };
 
     type PerFile = (usize, Vec<(String, Carried)>, usize);
     let per_file: Vec<PerFile> = files
         .par_iter()
         .enumerate()
-        .map(|(i, f)| {
-            let raws = if f.kind == FileKind::Generated { Vec::new() } else { extract(f) };
+        .map(|(i, (f, raws))| {
             let mut targets: BTreeMap<String, Carried> = BTreeMap::new();
             let mut external = 0usize;
-            for r in raws {
-                match resolve(&f.path, f.lang, &r, &known, cfg) {
+            for r in raws.iter() {
+                match resolve(&f.path, f.lang, r, &env) {
                     Some(t) => {
                         for t in t {
                             if t != f.path {
-                                targets.entry(t).or_default().add(&r);
+                                targets.entry(t).or_default().add(r);
                             }
                         }
                     }
@@ -259,22 +322,22 @@ pub fn build(all: &[SourceFile], cfg: &Cfg) -> DepGraph {
 
     let mut graph: DiGraph<usize, ()> = DiGraph::new();
     let idx: HashMap<&str, NodeIndex> =
-        files.iter().enumerate().map(|(i, f)| (f.path.as_str(), graph.add_node(i))).collect();
+        files.iter().enumerate().map(|(i, (f, _))| (f.path.as_str(), graph.add_node(i))).collect();
     let mut out = DepGraph::default();
     let mut fan_in: HashMap<&str, usize> = HashMap::new();
     let mut test_refs: HashMap<&str, usize> = HashMap::new();
 
     for (i, targets, external) in per_file {
-        let src = files[i].path.as_str();
+        let src = files[i].0.path.as_str();
         let is_test = kind_of[src] == FileKind::Test;
         let fan_out = targets.len();
         for (t, carried) in targets {
             let (Some(&a), Some(&b)) = (idx.get(src), idx.get(t.as_str())) else { continue };
             graph.add_edge(a, b, ());
             if is_test {
-                *test_refs.entry(files[graph[b]].path.as_str()).or_default() += 1;
+                *test_refs.entry(files[graph[b]].0.path.as_str()).or_default() += 1;
             } else {
-                *fan_in.entry(files[graph[b]].path.as_str()).or_default() += 1;
+                *fan_in.entry(files[graph[b]].0.path.as_str()).or_default() += 1;
             }
             let edge = carried.into_edge(src, &t, cfg.glob_import_symbol_cost);
             out.edge_map.insert((src.to_string(), t), edge);
@@ -295,19 +358,21 @@ pub fn build(all: &[SourceFile], cfg: &Cfg) -> DepGraph {
         if scc.len() < 2 {
             continue;
         }
-        let mut members: Vec<String> = scc.iter().map(|n| files[graph[*n]].path.clone()).collect();
+        let mut members: Vec<String> = scc.iter().map(|n| files[graph[*n]].0.path.clone()).collect();
         members.sort();
         for m in &members {
             if let Some(d) = out.files.get_mut(m) {
                 d.in_cycle = true;
             }
         }
-        let rust = scc.iter().all(|n| files[graph[*n]].lang == Language::Rust);
+        let rust = scc.iter().all(|n| files[graph[*n]].0.lang == Language::Rust);
         let cuts = (members.len() >= cfg.min_cycle_size_to_cut && (cfg.cut_rust_cycles || !rust))
             .then(|| cuts_for(&members, &out.edge_map, cfg));
         out.file_cycles.push(Cycle { dir: common_dir(&members), members, cuts });
     }
-    out.file_cycles.sort_by_key(|c| std::cmp::Reverse(c.members.len()));
+    // Largest first, then by members: SCC order varies with hash-map iteration
+    // and the output must not.
+    out.file_cycles.sort_by(|a, b| b.members.len().cmp(&a.members.len()).then_with(|| a.members.cmp(&b.members)));
 
     // Directory-level cycles: collapse files to their directory, drop self-edges.
     let mut dgraph: DiGraph<String, ()> = DiGraph::new();
@@ -332,7 +397,7 @@ pub fn build(all: &[SourceFile], cfg: &Cfg) -> DepGraph {
         members.sort();
         out.dir_cycles.push(Cycle { dir: common_dir_of(members.iter().map(|m| m.as_str())), members, cuts: None });
     }
-    out.dir_cycles.sort_by_key(|c| std::cmp::Reverse(c.members.len()));
+    out.dir_cycles.sort_by(|a, b| b.members.len().cmp(&a.members.len()).then_with(|| a.members.cmp(&b.members)));
     out
 }
 
@@ -549,10 +614,8 @@ impl Cycle {
 
 // ---------- extraction ----------
 
-fn extract(file: &SourceFile) -> Vec<RawImport> {
-    let mut parser = file.lang.parser();
+fn extract(file: &SourceFile, tree: &Tree) -> Vec<RawImport> {
     let src = file.content.as_bytes();
-    let Some(tree) = parser.parse(src, None) else { return Vec::new() };
     let mut raws = Vec::new();
     let mut stack = vec![tree.root_node()];
     while let Some(n) = stack.pop() {
@@ -806,11 +869,11 @@ fn unquote(s: &str) -> String {
 
 // ---------- resolution ----------
 
-fn resolve(from: &str, lang: Language, imp: &RawImport, known: &HashSet<&str>, cfg: &Cfg) -> Option<Vec<String>> {
+fn resolve(from: &str, lang: Language, imp: &RawImport, env: &Env) -> Option<Vec<String>> {
     match lang {
-        Language::Python => resolve_python(from, imp, known),
-        Language::Rust => resolve_rust(from, imp, known),
-        _ => resolve_js(from, imp, known, cfg).map(|p| vec![p]),
+        Language::Python => resolve_python(from, imp, &env.known, &env.py_roots),
+        Language::Rust => resolve_rust(from, imp, &env.known),
+        _ => resolve_js(from, imp, env).map(|p| vec![p]),
     }
 }
 
@@ -847,7 +910,7 @@ fn py_candidates(base: &str, module: &str) -> [String; 2] {
     [format!("{p}.py"), format!("{p}/__init__.py")]
 }
 
-fn resolve_python(from: &str, imp: &RawImport, known: &HashSet<&str>) -> Option<Vec<String>> {
+fn resolve_python(from: &str, imp: &RawImport, known: &HashSet<&str>, py_roots: &[String]) -> Option<Vec<String>> {
     let dir = dir_of(from);
     let roots: Vec<String> = if imp.level > 0 {
         let mut d = dir.to_string();
@@ -856,7 +919,12 @@ fn resolve_python(from: &str, imp: &RawImport, known: &HashSet<&str>) -> Option<
         }
         vec![d]
     } else {
-        ancestors(dir)
+        // The importer's own ancestors first, then the repo's package roots:
+        // `tests/x/test_y.py` importing `pkg.y` from `src/pkg/y.py`.
+        let mut roots = ancestors(dir);
+        let extra: Vec<String> = py_roots.iter().filter(|r| !roots.contains(r)).cloned().collect();
+        roots.extend(extra);
+        roots
     };
     let mut hits = Vec::new();
     for root in &roots {
@@ -901,18 +969,24 @@ fn resolve_python(from: &str, imp: &RawImport, known: &HashSet<&str>) -> Option<
 
 const JS_EXTS: &[&str] = &[".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts"];
 
-fn resolve_js(from: &str, imp: &RawImport, known: &HashSet<&str>, cfg: &Cfg) -> Option<String> {
+fn resolve_js(from: &str, imp: &RawImport, env: &Env) -> Option<String> {
+    let known = &env.known;
     let dir = dir_of(from);
     let spec = imp.spec.as_str();
-    let alias = cfg.js_aliases.iter().find_map(|(pre, target)| spec.strip_prefix(pre.as_str()).map(|rest| (target, rest)));
-    let bases: Vec<String> = if spec.starts_with("./") || spec.starts_with("../") || spec == "." || spec == ".." {
+    let alias =
+        env.cfg.js_aliases.iter().find_map(|(pre, target)| spec.strip_prefix(pre.as_str()).map(|rest| (target, rest)));
+    let mut bases: Vec<String> = if spec.starts_with("./") || spec.starts_with("../") || spec == "." || spec == ".." {
         vec![join(dir, spec)]
-    } else if let Some((target, rest)) = alias {
-        // `@/x` -> `<nearest ancestor>/<target>/x`.
-        ancestors(dir).into_iter().map(|a| join(&join(&a, target), rest)).collect()
     } else {
-        return None;
+        // Bare specifier: tsconfig `paths` / `baseUrl` first, then the
+        // configured prefix aliases (`@/x` -> `<nearest ancestor>/<target>/x`).
+        let mut b = env.ts.candidates(dir, spec);
+        if let Some((target, rest)) = alias {
+            b.extend(ancestors(dir).into_iter().map(|a| join(&join(&a, target), rest)));
+        }
+        b
     };
+    bases.dedup();
     for base in bases {
         if known.contains(base.as_str()) {
             return Some(base);
@@ -996,6 +1070,48 @@ mod tests {
         let lang = Language::from_path(std::path::Path::new(path)).unwrap();
         let kind = crate::discover::classify(path, content, 1, &crate::config::Discover::default());
         SourceFile { path: path.into(), lang, kind, lines: 1, bytes: content.len(), content: content.into() }
+    }
+
+    fn build(files: &[SourceFile], cfg: &Cfg) -> DepGraph {
+        super::build(files, cfg, &TsConfigs::default())
+    }
+
+    #[test]
+    fn python_src_layout_resolves_from_tests_and_config_roots_override() {
+        let files = vec![
+            sf("src/pkg/__init__.py", ""),
+            sf("src/pkg/a.py", "from pkg import b\n"),
+            sf("src/pkg/b.py", ""),
+            sf("tests/__init__.py", ""),
+            sf("tests/test_a.py", "from pkg.a import f\nimport os\n"),
+            sf("lib/other/__init__.py", ""),
+        ];
+        let g = build(&files, &Cfg::default());
+        assert_eq!(g.files["src/pkg/a.py"].test_refs, 1, "{:?}", g.files["src/pkg/a.py"]);
+        assert_eq!(g.files["tests/test_a.py"].external, 1);
+        assert_eq!(g.files["src/pkg/a.py"].fan_out, 2); // pkg/__init__.py and pkg/b.py
+        let cfg = Cfg { py_roots: vec!["lib".into()], ..Cfg::default() };
+        assert_eq!(build(&files, &cfg).files["src/pkg/a.py"].test_refs, 0);
+    }
+
+    #[test]
+    fn tsconfig_paths_resolve_bare_specifiers() {
+        let dir = std::env::temp_dir().join(format!("scry-deps-ts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("tsconfig.json"), "{ \"compilerOptions\": { \"paths\": { \"sentry/*\": [\"./static/app/*\"] } } }").unwrap();
+        let ts = TsConfigs::load(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let files = vec![
+            sf("static/app/a.tsx", "import {b} from 'sentry/utils/b';\nimport c from 'sentry/c';\nimport react from 'react';\n"),
+            sf("static/app/utils/b.ts", "import {a} from 'sentry/a';\n"),
+            sf("static/app/c/index.ts", ""),
+        ];
+        let g = super::build(&files, &Cfg::default(), &ts);
+        assert_eq!(g.files["static/app/a.tsx"].fan_out, 2, "{:?}", g.files["static/app/a.tsx"]);
+        assert_eq!(g.files["static/app/a.tsx"].external, 1);
+        assert_eq!(g.file_cycles.len(), 1);
+        assert_eq!(super::build(&files, &Cfg::default(), &TsConfigs::default()).files["static/app/a.tsx"].external, 3);
     }
 
     #[test]

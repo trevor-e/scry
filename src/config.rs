@@ -232,6 +232,7 @@ impl Default for Metrics {
 pub struct Deps {
     /// JS/TS import-prefix aliases: `"@/" = "src"` maps `@/x` to `<nearest src>/x`.
     /// The target is looked for under every ancestor of the importing file.
+    /// `tsconfig.json` / `jsconfig.json` `paths` and `baseUrl` are read on top of this.
     pub js_aliases: BTreeMap<String, String>,
     /// A file cycle with at least this many members gets a cut suggestion; smaller ones only
     /// the deduped count line.
@@ -258,6 +259,10 @@ pub struct Deps {
     /// `no single import breaks this cycle` is appended when the best single cut still leaves
     /// a cycle of at least this share of the members.
     pub no_single_cut_share: f64,
+    /// Directories Python absolute imports resolve from, after the importing
+    /// file's own ancestors (`["src"]` for a src layout). Empty means detect:
+    /// every directory that directly holds a top-level package.
+    pub py_roots: Vec<String>,
 }
 
 impl Default for Deps {
@@ -273,6 +278,7 @@ impl Default for Deps {
             cut_rust_cycles: true,
             ignore_type_only_imports: true,
             no_single_cut_share: 0.8,
+            py_roots: vec![],
         }
     }
 }
