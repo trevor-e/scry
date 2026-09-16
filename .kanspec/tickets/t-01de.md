@@ -23,3 +23,6 @@ Deps: edge kinds and symbol counts, cheapest cycle cut, dedupe the per-member cy
 ## Log
 - 2026-09-14T15:30Z  todo     claude/021cf45b-81f4  new
 - 2026-09-15T13:32Z  doing    claude/021cf45b-81f4  start (branch created)
+
+## Landed
+- In main via a563183 (deps: edge kinds and symbol counts, cycle cut suggestions, deduped cycle reason (P61, W1-4)), built before this ticket was filed, so that commit carries no `Kanspec:` trailer; this note carries it for the merge ladder.
