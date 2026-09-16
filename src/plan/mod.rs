@@ -5,7 +5,7 @@
 //! file's import cycle, in a fixed kind order and with no predicted effect.
 //! Clone runs inside inline test regions fold into one step naming the region.
 
-use crate::clones::{CloneKind, ClonePair, Loc};
+use crate::clones::{CloneKind, ClonePair, CloneFamily, Loc};
 use crate::config::Plan as Cfg;
 use crate::deps::{symbol_count, symbol_names, Cycle};
 use crate::metrics::FunctionMetrics;
@@ -59,6 +59,7 @@ pub struct Facts<'a> {
     /// own: a side in test code folds, a source side is a canonicalise step even when its
     /// duplicate lies in test code elsewhere.
     pub pairs: &'a [&'a ClonePair],
+    pub families: &'a [CloneFamily],
     /// Whether a run side starts inside an inline test region or a Test-classified file.
     pub in_tests: &'a dyn Fn(&Loc) -> bool,
     /// The file's own test regions, named by the fold step.
@@ -90,7 +91,7 @@ pub fn build(f: &Facts, cfg: &Cfg) -> (Vec<Step>, usize) {
     // a canonicalise step (once per pair) naming the duplicate, wherever that lies.
     let mut fold: Vec<Option<usize>> = Vec::new(); // region index per folded run
     let mut canon: Vec<(&ClonePair, &Loc, &Loc)> = Vec::new(); // (pair, this file's side, the other)
-    for p in f.pairs {
+    for p in f.pairs.iter().filter(|p| p.kind == CloneKind::Logic) {
         for (mine, other) in [(&p.a, &p.b), (&p.b, &p.a)] {
             if mine.file != f.path {
                 continue;
@@ -128,11 +129,20 @@ pub fn build(f: &Facts, cfg: &Cfg) -> (Vec<Step>, usize) {
     if let Some(r) = rank(StepKind::CanonicaliseClone) {
         // Largest first; a same-file pair once, from its earlier side outside test code.
         canon.sort_by(|(p, _, _), (q, _, _)| q.tokens.cmp(&p.tokens).then_with(|| p.a.start_line.cmp(&q.a.start_line)).then_with(|| p.b.start_line.cmp(&q.b.start_line)));
+        for family in f.families {
+            let Some(mine) = family.members.iter().find(|m| m.file == f.path && !(f.in_tests)(m)) else { continue };
+            let target = family.members.iter().filter(|m| m.file != mine.file || m.start_line != mine.start_line)
+                .map(|m| side_text(m, f.path, false)).collect::<Vec<_>>().join(", ");
+            let text = format!("review shared logic in {} and {target}; compare differences before extracting a helper", side_text(mine, f.path, false));
+            steps.push((r, step(StepKind::CanonicaliseClone, Some(mine.symbol.clone()), Some((mine.start_line, mine.end_line)), Some(target), text)));
+        }
         for (p, mine, other) in canon {
+            if f.families.iter().any(|family| family.matches.iter().any(|q| q.a == p.a && q.b == p.b)) {
+                continue;
+            }
             let table = p.kind == CloneKind::Table;
             let target = side_text(other, f.path, table);
-            let keep = if other.file == f.path { ": keep one" } else { "" };
-            let text = format!("{} duplicates {target}, {} tokens{keep}", side_text(mine, f.path, table), p.tokens);
+            let text = format!("{} shares logic with {target}, {} tokens; compare differences before extracting a helper", side_text(mine, f.path, table), p.tokens);
             steps.push((r, step(StepKind::CanonicaliseClone, Some(mine.symbol.clone()), Some((mine.start_line, mine.end_line)), Some(target), text)));
         }
     }
@@ -232,31 +242,31 @@ mod tests {
         let units = [unit("ladder", 405, 656, 32, 5), unit("small", 1, 10, 3, 1), unit("done", 75, 257, 18, 2)];
         let funcs: Vec<&FunctionMetrics> = units.iter().collect();
         let cyc = cycle(this, "src/plan.rs");
-        let facts = Facts { path: this, pairs: &refs, in_tests: &in_tests, regions: &regions, functions: &funcs, cycle: Some(&cyc), cognitive_hard: 15 };
+        let facts = Facts { families: &[], path: this, pairs: &refs, in_tests: &in_tests, regions: &regions, functions: &funcs, cycle: Some(&cyc), cognitive_hard: 15 };
         let (steps, more) = build(&facts, &Cfg::default());
         let texts: Vec<&str> = steps.iter().map(|s| s.text.as_str()).collect();
         assert_eq!(texts, vec![
             "fold 3 clone runs in #[cfg(test)] mod at 1067-1469 into shared test helpers",
-            "park (932-962) duplicates drop_ticket (1010-1036), 239 tokens: keep one",
-            "ship (842-858) duplicates park (928-942), 112 tokens: keep one",
-            "render_text (577-594) duplicates src/derive.rs att (1080-1097), 103 tokens",
-            "Ticket table (30-43) duplicates Ticket table (153-166), 79 tokens: keep one",
+            "park (932-962) shares logic with drop_ticket (1010-1036), 239 tokens; compare differences before extracting a helper",
+            "ship (842-858) shares logic with park (928-942), 112 tokens; compare differences before extracting a helper",
+            "render_text (577-594) shares logic with src/derive.rs att (1080-1097), 103 tokens; compare differences before extracting a helper",
             "extract from ladder (cognitive 32, lines 405-656, nesting 5)",
+            "extract from done (cognitive 18, lines 75-257, nesting 2)",
         ], "{steps:?}");
-        assert_eq!(more, 2); // extract from done, cut the import
+        assert_eq!(more, 1); // cut the import
         assert_eq!(steps.iter().map(|s| s.n).collect::<Vec<_>>(), vec![1, 2, 3, 4, 5, 6]);
         assert_eq!((steps[0].kind, steps[0].lines), (StepKind::FoldTestClones, Some((1067, 1469))));
         assert_eq!((steps[1].symbol.as_deref(), steps[1].lines, steps[1].target.as_deref()), (Some("park"), Some((932, 962)), Some("drop_ticket (1010-1036)")));
         assert_eq!(steps[3].target.as_deref(), Some("src/derive.rs att (1080-1097)"));
         assert!(steps.iter().all(|s| !s.text.contains("score") && !s.text.contains('%') && !s.text.contains("rank")), "{texts:?}");
-        assert_eq!(render(this, &steps, more), "plan for src/flow.rs:\n  1) fold 3 clone runs in #[cfg(test)] mod at 1067-1469 into shared test helpers\n  2) park (932-962) duplicates drop_ticket (1010-1036), 239 tokens: keep one\n  3) ship (842-858) duplicates park (928-942), 112 tokens: keep one\n  4) render_text (577-594) duplicates src/derive.rs att (1080-1097), 103 tokens\n  5) Ticket table (30-43) duplicates Ticket table (153-166), 79 tokens: keep one\n  6) extract from ladder (cognitive 32, lines 405-656, nesting 5)\n  (+2 more)\n");
+        assert_eq!(render(this, &steps, more), "plan for src/flow.rs:\n  1) fold 3 clone runs in #[cfg(test)] mod at 1067-1469 into shared test helpers\n  2) park (932-962) shares logic with drop_ticket (1010-1036), 239 tokens; compare differences before extracting a helper\n  3) ship (842-858) shares logic with park (928-942), 112 tokens; compare differences before extracting a helper\n  4) render_text (577-594) shares logic with src/derive.rs att (1080-1097), 103 tokens; compare differences before extracting a helper\n  5) extract from ladder (cognitive 32, lines 405-656, nesting 5)\n  6) extract from done (cognitive 18, lines 75-257, nesting 2)\n  (+1 more)\n");
         // A wider cap shows the rest: extracts by cognitive, then the cut with P61's wording.
         let wide = Cfg { max_steps: 10, ..Cfg::default() };
         let (steps, more) = build(&facts, &wide);
         assert_eq!(more, 0);
-        assert_eq!(steps[6].text, "extract from done (cognitive 18, lines 75-257, nesting 2)");
-        assert_eq!(steps[7].text, "cut the import src/flow.rs -> src/plan.rs: 1 symbol (EntityRef, line 16) -> largest remaining cycle 1");
-        assert_eq!((steps[7].kind, steps[7].target.as_deref()), (StepKind::CutCycleEdge, Some("src/plan.rs")));
+        assert_eq!(steps[5].text, "extract from done (cognitive 18, lines 75-257, nesting 2)");
+        assert_eq!(steps[6].text, "cut the import src/flow.rs -> src/plan.rs: 1 symbol (EntityRef, line 16) -> largest remaining cycle 1");
+        assert_eq!((steps[6].kind, steps[6].target.as_deref()), (StepKind::CutCycleEdge, Some("src/plan.rs")));
         // Priority reorders; a kind left out is not planned; folding off drops the test runs silently.
         let order = Cfg { kind_priority: vec!["cut_cycle_edge".into(), "extract".into()], max_steps: 10, ..Cfg::default() };
         let (steps, _) = build(&facts, &order);
@@ -264,18 +274,18 @@ mod tests {
         let no_fold = Cfg { fold_test_clones: false, max_steps: 10, ..Cfg::default() };
         let (steps, _) = build(&facts, &no_fold);
         assert!(steps.iter().all(|s| s.kind != StepKind::FoldTestClones) && !steps.iter().any(|s| s.text.contains("t_one")), "{steps:?}");
-        assert_eq!(steps.iter().filter(|s| s.kind == StepKind::CanonicaliseClone).count(), 4);
+        assert_eq!(steps.iter().filter(|s| s.kind == StepKind::CanonicaliseClone).count(), 3);
     }
 
     #[test]
     fn the_cut_step_needs_this_file_as_the_edge_source_and_an_empty_plan_renders_no_plan() {
         let cyc = cycle("src/paths.rs", "src/plan.rs");
         let in_tests = |_: &Loc| false;
-        let facts = Facts { path: "src/plan.rs", pairs: &[], in_tests: &in_tests, regions: &[], functions: &[], cycle: Some(&cyc), cognitive_hard: 15 };
+        let facts = Facts { families: &[], path: "src/plan.rs", pairs: &[], in_tests: &in_tests, regions: &[], functions: &[], cycle: Some(&cyc), cognitive_hard: 15 };
         let (steps, more) = build(&facts, &Cfg::default());
         assert!(steps.is_empty() && more == 0);
         assert_eq!(render("src/plan.rs", &steps, more), "no plan\n");
-        let facts = Facts { path: "src/paths.rs", ..facts };
+        let facts = Facts { families: &[], path: "src/paths.rs", ..facts };
         let (steps, _) = build(&facts, &Cfg::default());
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].kind, StepKind::CutCycleEdge);
@@ -295,12 +305,12 @@ mod tests {
         let refs: Vec<&ClonePair> = pairs.iter().collect();
         let regions = vec![region(10, 60), region(100, 140)];
         let in_tests = |l: &Loc| l.file == "c.rs" || l.file == this && ((10..=60).contains(&l.start_line) || (100..=140).contains(&l.start_line));
-        let facts = Facts { path: this, pairs: &refs, in_tests: &in_tests, regions: &regions, functions: &[], cycle: None, cognitive_hard: 15 };
+        let facts = Facts { families: &[], path: this, pairs: &refs, in_tests: &in_tests, regions: &regions, functions: &[], cycle: None, cognitive_hard: 15 };
         let (steps, _) = build(&facts, &Cfg::default());
         assert_eq!(steps.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec![
             "fold 2 clone runs in #[cfg(test)] mod at 10-60 into shared test helpers, +2 in other test regions",
-            "alpha (70-80) duplicates c.rs t_far (1-10), 85 tokens",
-            "beta (82-90) duplicates t3 (110-118), 75 tokens: keep one",
+            "alpha (70-80) shares logic with c.rs t_far (1-10), 85 tokens; compare differences before extracting a helper",
+            "beta (82-90) shares logic with t3 (110-118), 75 tokens; compare differences before extracting a helper",
         ], "{steps:?}");
         // A cap that leaves no step still says how many were cut, as `--json` does.
         let none = Cfg { max_steps: 0, ..Cfg::default() };

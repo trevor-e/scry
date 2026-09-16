@@ -453,7 +453,10 @@ fn main() -> Result<()> {
             }
             let tables = r.pairs.iter().filter(|p| p.kind == clones::CloneKind::Table).count();
             println!("{} clone pairs (>= {} tokens, {} tables) across {} files\n", r.pairs.len(), cfg.clones.min_tokens, tables, r.files.len());
-            for p in r.pairs.iter().take(top) {
+            for family in r.families.iter().take(top) {
+                print!("{}", clones::render_family(family));
+            }
+            for p in r.pairs.iter().filter(|p| !r.families.iter().any(|family| family.matches.iter().any(|q| q.a == p.a && q.b == p.b))).take(top) {
                 println!("{}", report::pair_line(p));
             }
             let mut rows: Vec<(&String, &clones::FileClones)> = r.files.iter().collect();
@@ -471,11 +474,13 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             println!("{} files, {} in-repo edges\n", g.files.len(), g.edges);
-            println!("directory cycles ({}):", g.dir_cycles.len());
+            println!("runtime file cycles ({}):", g.runtime_file_cycles.len());
+            for members in g.runtime_file_cycles.iter().take(top) { println!("  {}", members.join(" <-> ")); }
+            println!("directory cycles (including type-only imports, {}):", g.dir_cycles.len());
             for c in g.dir_cycles.iter().take(top) {
                 println!("  {}", c.members.join("  <->  "));
             }
-            println!("\nfile cycles ({}):", g.file_cycles.len());
+            println!("\nstructural file cycles (including type-only imports, {}):", g.file_cycles.len());
             for c in g.file_cycles.iter().take(top) {
                 println!("  {}", c.headline());
                 println!("    files: {}", c.members.join(", "));
@@ -487,7 +492,7 @@ fn main() -> Result<()> {
             rows.sort_by_key(|(_, d)| std::cmp::Reverse(d.fan_in));
             println!("\n{:>6} {:>7} {:>5} {:>5}  most depended-on", "fan_in", "fan_out", "tests", "inst");
             for (p, d) in rows.iter().take(top) {
-                println!("{:>6} {:>7} {:>5} {:>5.2}  {}{}", d.fan_in, d.fan_out, d.test_refs, d.instability, p, if d.in_cycle { "  (cycle)" } else { "" });
+                println!("{:>6} {:>7} {:>5} {:>5.2}  {}{}", d.fan_in, d.fan_out, d.test_refs, d.instability, p, if d.in_runtime_cycle { "  (runtime cycle)" } else if d.in_cycle { "  (structural cycle only)" } else { "" });
             }
         }
         Cmd::Mentions { path, json, top } => {

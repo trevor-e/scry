@@ -14,6 +14,10 @@
 //! Every surviving run then resolves to a symbol: the innermost metrics unit
 //! holding its start line, else the nearest preceding top-level item, else `?`.
 
+mod classify;
+mod families;
+pub use families::{CloneFamily, render_family};
+
 use crate::config::{Clones as Cfg, SymbolFallback, Tests as TestsCfg};
 use crate::discover::SourceFile;
 use crate::lang::Language;
@@ -25,7 +29,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tree_sitter::{Node, Tree};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Loc {
     pub file: String,
     pub start_line: usize,
@@ -41,6 +45,8 @@ pub struct Loc {
 pub enum CloneKind {
     Logic,
     Table,
+    Signature,
+    Configuration,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,7 +54,7 @@ pub struct ClonePair {
     pub a: Loc,
     pub b: Loc,
     pub tokens: usize,
-    /// `table` when both sides lie in a run of uniform sibling entries; `logic` otherwise.
+    /// AST context on both sides distinguishes logic, tables, signatures and configuration.
     pub kind: CloneKind,
     /// Side A's container node kind (`match_block`, `array_expression`, `object`) when `kind` is table.
     pub container_kind: Option<String>,
@@ -67,12 +73,15 @@ pub struct TableRef {
 
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct FileClones {
-    /// Lines covered by at least one clone range (union) = `logic_clone_lines + table_clone_lines`.
+    /// Lines covered by at least one clone range (union) = the sum of the four disjoint kind counts.
     pub clone_lines: usize,
     /// Lines covered by at least one `logic` pair.
     pub logic_clone_lines: usize,
-    /// Lines covered only by `table` pairs.
+    /// Lines covered by tables, excluding logic.
     pub table_clone_lines: usize,
+    pub signature_clone_lines: usize,
+    pub configuration_clone_lines: usize,
+    pub weighted_clone_lines: f64,
     /// `(logic + table_weight x table) / lines`, against the lines outside inline test regions.
     pub clone_ratio: f64,
     pub pairs: usize,
@@ -82,6 +91,7 @@ pub struct FileClones {
 #[derive(Debug, Default, Serialize)]
 pub struct CloneReport {
     pub pairs: Vec<ClonePair>,
+    pub families: Vec<CloneFamily>,
     pub files: HashMap<String, FileClones>,
 }
 
@@ -158,6 +168,7 @@ pub fn detect_from(files: &[SourceFile], toks: Vec<Tokens>, cfg: &Cfg, fallback:
     let symbols: Vec<Option<SymbolIndex>> =
         toks.par_iter().zip(files.par_iter()).zip(used.par_iter()).map(|((t, f), u)| if *u { SymbolIndex::new(t, f) } else { None }).collect();
 
+    let contexts: Vec<_> = toks.iter().zip(files).map(|(t, f)| classify::contexts(t, f)).collect();
     let mut pairs: Vec<ClonePair> = by_pair
         .into_par_iter()
         .flat_map_iter(|((fa, fb), mut matches)| {
@@ -239,11 +250,13 @@ pub fn detect_from(files: &[SourceFile], toks: Vec<Tokens>, cfg: &Cfg, fallback:
                         (Some(t), Some(_)) => Some(t.clone()),
                         _ => None,
                     };
+                    let kind = classify::pair_kind(&contexts[fa][sa..sa + len], &contexts[fb][sb..sb + len], table.as_ref().map(|t| t.container_kind.as_str()), cfg.dominant_child_share);
+                    let table = table.filter(|_| kind == CloneKind::Table);
                     ClonePair {
                         a: loc(&files[fa].path, ta, sa, len, symbols[fa].as_ref(), fallback),
                         b: loc(&files[fb].path, tb, sb, len, symbols[fb].as_ref(), fallback),
                         tokens: len,
-                        kind: if table.is_some() { CloneKind::Table } else { CloneKind::Logic },
+                        kind,
                         container_kind: table.as_ref().map(|t| t.container_kind.clone()),
                         entry_count: table.as_ref().map(|t| t.entries),
                     }
@@ -253,8 +266,8 @@ pub fn detect_from(files: &[SourceFile], toks: Vec<Tokens>, cfg: &Cfg, fallback:
         .collect();
     // Full key: HashMap and rayon order vary between runs, and `--top` must not.
     pairs.sort_by(|p, q| {
-        q.tokens
-            .cmp(&p.tokens)
+        (p.kind != CloneKind::Logic).cmp(&(q.kind != CloneKind::Logic))
+            .then_with(|| q.tokens.cmp(&p.tokens))
             .then_with(|| p.a.file.cmp(&q.a.file))
             .then_with(|| p.a.start_line.cmp(&q.a.start_line))
             .then_with(|| p.b.file.cmp(&q.b.file))
@@ -267,7 +280,7 @@ pub fn detect_from(files: &[SourceFile], toks: Vec<Tokens>, cfg: &Cfg, fallback:
     for p in &pairs {
         for side in [&p.a, &p.b] {
             ranges.entry(&side.file).or_default().push((side.start_line, side.end_line, p.kind));
-            if let Some(kind) = &p.container_kind {
+            if p.kind == CloneKind::Table && let Some(kind) = &p.container_kind {
                 let refs = tables.entry(&side.file).or_default();
                 let symbol = (side.symbol != "?").then(|| side.symbol.clone());
                 match refs.iter_mut().find(|t| t.symbol == symbol && t.container_kind == *kind) {
@@ -289,7 +302,17 @@ pub fn detect_from(files: &[SourceFile], toks: Vec<Tokens>, cfg: &Cfg, fallback:
         let region_lines: Vec<(usize, usize)> = toks[fi].test_regions.iter().map(|r| (r.start_line, r.end_line)).collect();
         let clone_lines = covered_lines(rs.iter().map(|r| (r.0, r.1)), &region_lines);
         let logic = covered_lines(rs.iter().filter(|r| r.2 == CloneKind::Logic).map(|r| (r.0, r.1)), &region_lines);
-        let table = clone_lines - logic;
+        let mut occupied = region_lines.clone();
+        occupied.extend(rs.iter().filter(|r| r.2 == CloneKind::Logic).map(|r| (r.0, r.1)));
+        let mut count = |kind| {
+            let lines = covered_lines(rs.iter().filter(|r| r.2 == kind).map(|r| (r.0, r.1)), &occupied);
+            occupied.extend(rs.iter().filter(|r| r.2 == kind).map(|r| (r.0, r.1)));
+            lines
+        };
+        let table = count(CloneKind::Table);
+        let configuration = count(CloneKind::Configuration);
+        let signature = count(CloneKind::Signature);
+        let weighted = logic as f64 + cfg.table_weight * table as f64;
         let mut refs = tables.remove(f.path.as_str()).unwrap_or_default();
         refs.sort_by_key(|t| (t.start_line, t.end_line));
         per_file.insert(
@@ -298,17 +321,21 @@ pub fn detect_from(files: &[SourceFile], toks: Vec<Tokens>, cfg: &Cfg, fallback:
                 clone_lines,
                 logic_clone_lines: logic,
                 table_clone_lines: table,
+                signature_clone_lines: signature,
+                configuration_clone_lines: configuration,
+                weighted_clone_lines: weighted,
                 // Against the lines that could hold a clone: test regions emitted no tokens.
                 clone_ratio: match f.lines.saturating_sub(toks[fi].inline_test_lines) {
                     0 => 0.0,
-                    lines => (logic as f64 + cfg.table_weight * table as f64) / lines as f64,
+                    lines => weighted / lines as f64,
                 },
                 pairs: rs.len(),
                 tables: refs,
             },
         );
     }
-    CloneReport { pairs, files: per_file }
+    let families = families::build(&pairs, files, &toks);
+    CloneReport { pairs, files: per_file, families }
 }
 
 /// Size of the union of inclusive line ranges, less the lines any of `minus` covers.
@@ -1079,7 +1106,7 @@ mod tests {
         let files = [rs("a.rs", registry("A", 8)), rs("b.rs", registry("B", 8))];
         assert_eq!(detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem).pairs[0].kind, CloneKind::Table);
         let small = Cfg { table_max_entry_nodes: 5, ..Cfg::default() };
-        assert_eq!(detect(&files, &small, &TestsCfg::default(), SymbolFallback::PrecedingItem).pairs[0].kind, CloneKind::Logic);
+        assert_eq!(detect(&files, &small, &TestsCfg::default(), SymbolFallback::PrecedingItem).pairs[0].kind, CloneKind::Configuration);
         // Entries cycling through three shapes: the dominant one covers 3 of 8.
         let three = |name: &str| {
             let mut s = format!("pub static {name}: &[Check] = &[\n");
@@ -1095,7 +1122,7 @@ mod tests {
         let files = [rs("a.rs", three("A")), rs("b.rs", three("B"))];
         let r = detect(&files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert_eq!(r.pairs.len(), 1, "{:?}", r.pairs);
-        assert_eq!(r.pairs[0].kind, CloneKind::Logic);
+        assert_eq!(r.pairs[0].kind, CloneKind::Configuration);
         let loose = Cfg { table_min_dominant_shape: 0.3, ..Cfg::default() };
         assert_eq!(detect(&files, &loose, &TestsCfg::default(), SymbolFallback::PrecedingItem).pairs[0].kind, CloneKind::Table);
     }
@@ -1332,4 +1359,71 @@ async def handler(request):
         let r = detect(&[sf("a.py", a.into()), sf("b.py", b.into())], &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
         assert!(r.pairs.is_empty(), "{:?}", r.pairs);
     }
+
+    #[test]
+    fn signature_and_configuration_matches_do_not_count_as_logic() {
+        let params = (0..24).map(|i| format!("arg{i}: str = \"value\"")).collect::<Vec<_>>().join(",\n    ");
+        let signatures = [sf("a.py", format!("def create(\n    {params}\n):\n    pass\n")), sf("b.py", format!("def remove(\n    {params}\n):\n    pass\n"))];
+        let configs = [sf("a.py", format!("ALPHA = ModelDefinition(\n    {}\n)\n", (0..24).map(|i| format!("field{i}=\"x\",")).collect::<Vec<_>>().join("\n    "))),
+            sf("b.py", format!("BETA = ModelDefinition(\n    {}\n)\n", (0..24).map(|i| format!("field{i}=\"y\",")).collect::<Vec<_>>().join("\n    ")))];
+        for (files, expected) in [(&signatures, CloneKind::Signature), (&configs, CloneKind::Configuration)] {
+            let r = detect(files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
+            assert!(!r.pairs.is_empty());
+            assert!(r.pairs.iter().filter(|p| p.a.file != p.b.file).all(|p| p.kind == expected), "{:?}", r.pairs);
+            assert!(r.files.values().all(|f| f.logic_clone_lines == 0 && f.weighted_clone_lines == 0.0), "{:?}", r.files);
+            assert!(r.families.is_empty());
+        }
+    }
+
+    #[test]
+    fn cloned_functions_group_fragments_and_preserve_http_status_divergence() {
+        let prefix = "    name = span.get('description', 'unknown')\n    duration = span['end'] - span['start']\n    if duration < 0:\n        return ''\n    label = f'{name}: {duration}'\n";
+        let suffix = "    if span.get('children'):\n        label += str(len(span['children']))\n    return label.strip()\n";
+        let a = sf("a.py", format!("def format_span(span):\n{prefix}{suffix}"));
+        let b = sf("b.py", format!("def format_tree(span):\n{prefix}    status_code = span.get('status_code')\n    if status_code and status_code >= 400:\n        label += ' HTTP error'\n{suffix}"));
+        let files = [a, b];
+        let cfg = Cfg { k: 8, w: 4, min_tokens: 18, ..Cfg::default() };
+        let r = detect(&files, &cfg, &TestsCfg::default(), SymbolFallback::PrecedingItem);
+        assert_eq!(r.families.len(), 1, "{:?}", r.families);
+        let family = &r.families[0];
+        assert_eq!(family.members.len(), 2);
+        assert!(family.pair_count >= 2);
+        assert_eq!(family.comparisons.len(), 1);
+        let comparison = &family.comparisons[0];
+        assert!(!comparison.shared.is_empty());
+        let added = comparison.differences.iter().filter_map(|d| d.b.as_ref()).find(|e| e.code.contains("status_code >= 400")).unwrap();
+        assert!(added.code.contains("HTTP error"));
+        assert_eq!((added.location.file.as_str(), added.location.start_line, added.location.end_line), ("b.py", 7, 9));
+        let refs: Vec<_> = r.pairs.iter().collect();
+        let (steps, _) = crate::plan::build(&crate::plan::Facts { path: "a.py", pairs: &refs, families: &r.families, in_tests: &|_| false, regions: &[], functions: &[], cycle: None, cognitive_hard: 15 }, &crate::config::Plan::default());
+        assert_eq!(steps.len(), 1);
+        assert!(steps[0].text.contains("compare differences"));
+        assert!(!steps[0].text.contains("keep one"));
+        let again = detect(&files, &cfg, &TestsCfg::default(), SymbolFallback::PrecedingItem);
+        assert_eq!(serde_json::to_string(&r.families).unwrap(), serde_json::to_string(&again.families).unwrap());
+        let bleeding: Vec<_> = files.iter().map(|f| sf(&f.path, format!("{}\ndef duration(span):\n    return float(span['end']) - float(span['start'])\n", f.content))).collect();
+        let r = detect(&bleeding, &cfg, &TestsCfg::default(), SymbolFallback::PrecedingItem);
+        assert_eq!(r.families.len(), 1, "{:?}", r.families);
+        assert_eq!(r.families[0].members.len(), 2);
+        assert!(r.families[0].matches.iter().any(|p| p.a.end_line > r.families[0].members[0].end_line));
+        let refs: Vec<_> = r.pairs.iter().collect();
+        let (steps, _) = crate::plan::build(&crate::plan::Facts { path: "a.py", pairs: &refs, families: &r.families, in_tests: &|_| false, regions: &[], functions: &[], cycle: None, cognitive_hard: 15 }, &crate::config::Plan::default());
+        assert_eq!(steps.len(), 1, "{steps:?}");
+    }
+
+
+    #[test]
+    fn rust_and_typescript_interface_signatures_are_structural() {
+        let params = (0..24).map(|i| format!("arg{i}: String")).collect::<Vec<_>>().join(", ");
+        let rust = [rs("a.rs", format!("trait Create {{ fn create({params}) -> Result<()>; }}")), rs("b.rs", format!("trait Delete {{ fn delete({params}) -> Result<()>; }}"))];
+        let params = params.replace("String", "string");
+        let ts = |path: &str, name: &str| SourceFile { lang: Language::TypeScript, ..sf(path, format!("interface {name} {{ run({params}): void; }}")) };
+        let typescript = [ts("a.ts", "Create"), ts("b.ts", "Delete")];
+        for files in [&rust, &typescript] {
+            let r = detect(files, &Cfg::default(), &TestsCfg::default(), SymbolFallback::PrecedingItem);
+            assert!(!r.pairs.is_empty());
+            assert!(r.pairs.iter().all(|p| p.kind == CloneKind::Signature), "{:?}", r.pairs);
+        }
+    }
+
 }

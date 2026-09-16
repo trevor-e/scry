@@ -322,7 +322,7 @@ pub struct Clones {
     /// …and no entry contains one of these node kinds, per grammar (`rust`, `typescript`,
     /// `python`). Rust `try_expression` (`?`) must not be listed: it is in every dispatch arm.
     pub table_control_kinds: BTreeMap<String, Vec<String>>,
-    /// Weight of table clone lines in `clone_ratio`: `(logic + table_weight x table) / lines`.
+    /// Weight of table clone lines in ranking and `clone_ratio`: `(logic + table_weight x table) / lines`.
     /// 1.0 ranks parallel maps that must drift together; 0.25 dampens them.
     pub table_weight: f64,
     /// Print table pairs under a TABLES sub-heading of CLONES instead of inline.

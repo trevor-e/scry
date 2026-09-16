@@ -33,8 +33,8 @@ Run `scry --help` for all commands or `scry <command> --help` for options.
 |---|---|
 | History | Frequently changed files, fix commits, and files that change together. |
 | Metrics | Complex, deeply nested, or oversized functions. |
-| Dependencies | Import cycles and heavily depended-on files. |
-| Clones | Repeated code, with table-shaped matches identified separately. |
+| Dependencies | Runtime and type-only import cycles, and import coupling. |
+| Clones | Shared logic, signatures, configuration, and tables. |
 | Test mentions | Symbols referenced by tests and public symbols no test names. |
 | Dead symbols | Unused exports, test-only code, and unread Rust fields. |
 | Helpers | Similar helpers and helper bodies copied across files. |
@@ -53,7 +53,8 @@ and per-file refactor suggestions.
 
 Hotspot scores combine change frequency and complexity with signals such as
 coupling and duplication. Scores are relative to the scanned repository, not
-quality grades or defect probabilities.
+quality grades or defect probabilities. Each hotspot shows the score contributions
+and test-proximity multiplier.
 
 Findings include symbols and line ranges to inspect. Treat refactor suggestions
 as review candidates: matching code or values can be intentional, and test
@@ -65,6 +66,9 @@ Environment-name findings require a literal key in a recognized environment
 access, rather than uppercase spelling alone. Test-support directories such as
 `testutils`, `test_utils`, and `test_support` are classified as tests by default;
 override `[discover].test_dirs` for repositories with different conventions.
+
+Clone families include shared snippets and source differences to review before
+extracting a helper. See [report details](docs/report.md).
 
 ## Configuration
 
@@ -98,7 +102,7 @@ Settings apply in this order: defaults → repository `scry.toml` →
   for custom layouts or scripts with sibling imports, such as
   `[".", "src", "scripts/scm"]`. Namespace-package imports are supported.
 - Python `TYPE_CHECKING` and `typing.TYPE_CHECKING` guards are excluded from
-  runtime cycle-cut suggestions. Aliased guards and compound conditions are
+  runtime cycle scoring and cycle-cut suggestions. Aliased guards and compound conditions are
   not evaluated.
 
 ## Development

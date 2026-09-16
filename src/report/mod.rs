@@ -5,7 +5,7 @@
 //! is percentile-normalised within the repo so no thresholds need tuning per
 //! language, and every ranked file carries the reasons it ranked, in words.
 
-use crate::clones::{CloneKind, CloneReport, ClonePair, Loc, TableRef};
+use crate::clones::{CloneKind, CloneReport, ClonePair, CloneFamily, Loc, TableRef};
 use crate::clumps::{self, Clump, ClumpsReport};
 use crate::config::{Fallback as FallbackCfg, History as HistoryCfg, Naming as NamingCfg, Plan as PlanCfg, Report as Cfg, Tests as TestsCfg, Weights};
 use crate::dead::{self, DeadReport, FileDead, Shape, SymbolReport};
@@ -41,11 +41,15 @@ pub struct Signals {
     pub fan_in: usize,
     pub fan_out: usize,
     pub in_cycle: bool,
-    /// `logic_clone_lines + table_clone_lines`.
+    pub in_runtime_cycle: bool,
+    /// Union of lines in all four clone categories.
     pub clone_lines: usize,
     pub logic_clone_lines: usize,
     /// Cloned lines covered only by table pairs (uniform sibling entries, not duplicated logic).
     pub table_clone_lines: usize,
+    pub signature_clone_lines: usize,
+    pub configuration_clone_lines: usize,
+    pub weighted_clone_lines: f64,
     /// `(logic + [clones].table_weight x table) / (lines - inline_test_lines)`.
     pub clone_ratio: f64,
     /// Test units (functions in Test files, tests inside inline `#[cfg(test)]` regions) whose
@@ -86,9 +90,27 @@ pub struct Signals {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ScoreContribution {
+    pub signal: String,
+    pub normalized_value: f64,
+    pub weight: f64,
+    /// Score points before the test-proximity multiplier.
+    pub points: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScoreBreakdown {
+    pub contributions: Vec<ScoreContribution>,
+    pub subtotal: f64,
+    pub test_multiplier: f64,
+    pub total: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Hotspot {
     pub path: String,
     pub score: f64,
+    pub score_breakdown: ScoreBreakdown,
     pub signals: Signals,
     pub reasons: Vec<String>,
     /// The three highest-cognitive source units, each with its labelled `phases` (see
@@ -176,6 +198,7 @@ pub struct Report {
     pub hotspots: Vec<Hotspot>,
     pub dir_cycles: Vec<Cycle>,
     pub file_cycles: Vec<Cycle>,
+    pub runtime_file_cycles: Vec<Vec<String>>,
     pub hidden_coupling: Vec<HiddenCoupling>,
     /// Co-change pairs with no import between them that a shared import explains (`explained_by`).
     pub explained_coupling: Vec<HiddenCoupling>,
@@ -184,6 +207,8 @@ pub struct Report {
     pub sweep_note: Option<String>,
     /// Top pairs; only the `logic` ones when tables are listed separately.
     pub clones: Vec<ClonePair>,
+    pub clone_families: Vec<CloneFamily>,
+    pub structural_clones: Vec<ClonePair>,
     /// Top `table` pairs when `[clones].list_tables_separately`; empty otherwise (they sit in `clones`).
     pub tables: Vec<ClonePair>,
     pub directories: Vec<DirSummary>,
@@ -349,6 +374,10 @@ fn clone_reason(s: &Signals, tables: &[TableRef], path: &str, largest: Option<&C
         let table = p.kind == CloneKind::Table;
         format!("; largest: {} <-> {}, {} tokens", plan::side_text(mine, path, table), plan::side_text(other, path, table), p.tokens)
     });
+    if s.signature_clone_lines + s.configuration_clone_lines > 0 {
+        return format!("{:.0}% weighted clone ratio: {} logic, {} table, {} signature, {} configuration lines (signatures/configuration excluded from ranking){largest}",
+            s.clone_ratio * 100.0, s.logic_clone_lines, s.table_clone_lines, s.signature_clone_lines, s.configuration_clone_lines);
+    }
     if s.table_clone_lines == 0 {
         return format!("{:.0}% of its lines are duplicated elsewhere ({} lines){largest}", s.clone_ratio * 100.0, s.clone_lines);
     }
@@ -569,9 +598,13 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 fan_in: d.map_or(0, |d| d.fan_in),
                 fan_out: d.map_or(0, |d| d.fan_out),
                 in_cycle: d.is_some_and(|d| d.in_cycle),
+                in_runtime_cycle: d.is_some_and(|d| d.in_runtime_cycle),
                 clone_lines: c.map_or(0, |c| c.clone_lines),
                 logic_clone_lines: c.map_or(0, |c| c.logic_clone_lines),
                 table_clone_lines: c.map_or(0, |c| c.table_clone_lines),
+                signature_clone_lines: c.map_or(0, |c| c.signature_clone_lines),
+                configuration_clone_lines: c.map_or(0, |c| c.configuration_clone_lines),
+                weighted_clone_lines: c.map_or(0.0, |c| c.weighted_clone_lines),
                 clone_ratio: c.map_or(0.0, |c| c.clone_ratio),
                 test_units: mn.map_or(0, |m| m.test_units).max(usize::from(other_evidence)),
                 public_symbols: mn.map_or(0, |m| m.public_symbols),
@@ -595,7 +628,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
     let p_totcog = percentiles(&signals.iter().map(|s| s.total_cognitive).collect::<Vec<_>>());
     let p_lines = percentiles(&signals.iter().map(|s| s.lines.saturating_sub(s.inline_test_lines)).collect::<Vec<_>>());
     let p_fanin = percentiles(&signals.iter().map(|s| s.fan_in).collect::<Vec<_>>());
-    let p_clone = percentiles(&signals.iter().map(|s| s.clone_lines).collect::<Vec<_>>());
+    let p_clone = percentiles(&signals.iter().map(|s| s.weighted_clone_lines).collect::<Vec<_>>());
     let p_dead = percentiles(&signals.iter().map(|s| s.dead_ratio).collect::<Vec<_>>());
     let p_helpers = percentiles(&signals.iter().map(|s| s.helper_copies + s.inlined_idioms).collect::<Vec<_>>());
     let p_strings = percentiles(&signals.iter().map(|s| s.family_literals).collect::<Vec<_>>());
@@ -657,8 +690,8 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let ms = cfg.complexity_max_share;
             let cx = if s.max_cognitive == 0 { 0.0 } else { ms * p_maxcog[i] + (1.0 - ms) * p_totcog[i] };
             let hotspot = (churn * cx).sqrt();
-            let coupling = if s.fan_in == 0 { 0.0 } else { p_fanin[i] }.max(if s.in_cycle { cfg.cycle_coupling } else { 0.0 });
-            let clone = if s.clone_lines == 0 { 0.0 } else { p_clone[i] };
+            let coupling = if s.fan_in == 0 { 0.0 } else { p_fanin[i] }.max(if s.in_runtime_cycle { cfg.cycle_coupling } else { 0.0 });
+            let clone = if s.weighted_clone_lines == 0.0 { 0.0 } else { p_clone[i] };
             let fix = if s.fix_commits == 0 { 0.0 } else { p_fix[i] };
             let w: &Weights = if have_history { &cfg.with_history } else { &cfg.without_history };
             let dead_p = if s.dead_lines == 0 { 0.0 } else { p_dead[i] };
@@ -667,8 +700,19 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             let clumps_p = if s.clump_members == 0 { 0.0 } else { p_clumps[i] };
             let declared_p = if s.unread_knobs + s.test_seams == 0 { 0.0 } else { p_declared[i] };
             let naming_p = if s.short_binding_share.unwrap_or(0.0) == 0.0 { 0.0 } else { p_naming[i] };
-            let base = w.hotspot * hotspot + w.fixes * fix + w.complexity * cx + w.coupling * coupling + w.clones * clone + w.size * p_lines[i] + w.dead * dead_p + inp.helpers_weight * helpers_p + w.strings * strings_p + inp.clumps_weight * clumps_p + inp.declared_weight * declared_p + inp.naming.weight_into_complexity * naming_p;
-            let score = 100.0 * base * if s.test_units > 0 { 1.0 } else { cfg.no_tests_multiplier };
+            let contributions: Vec<_> = [
+                ("hotspot", hotspot, w.hotspot), ("fixes", fix, w.fixes), ("complexity", cx, w.complexity),
+                ("coupling", coupling, w.coupling), ("clones", clone, w.clones), ("size", p_lines[i], w.size),
+                ("dead", dead_p, w.dead), ("helpers", helpers_p, inp.helpers_weight), ("strings", strings_p, w.strings),
+                ("clumps", clumps_p, inp.clumps_weight), ("declared", declared_p, inp.declared_weight),
+                ("naming", naming_p, inp.naming.weight_into_complexity),
+            ].into_iter().map(|(name, value, weight)| ScoreContribution {
+                signal: name.into(), normalized_value: value, weight, points: 100.0 * value * weight,
+            }).collect();
+            let subtotal = contributions.iter().map(|c| c.points).sum::<f64>();
+            let test_multiplier = if s.test_units > 0 { 1.0 } else { cfg.no_tests_multiplier };
+            let score = subtotal * test_multiplier;
+            let score_breakdown = ScoreBreakdown { contributions, subtotal, test_multiplier, total: score };
 
             let mut reasons = Vec::new();
             let window = hist.window.trim_end_matches(" ago");
@@ -783,6 +827,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
                 &plan::Facts {
                     path: &f.path,
                     pairs,
+                    families: &inp.clones.families,
                     in_tests: &in_tests,
                     regions: &test_regions,
                     functions: units.get(f.path.as_str()).map_or(&[], Vec::as_slice),
@@ -794,6 +839,7 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
             Hotspot {
                 path: f.path.clone(),
                 score,
+                score_breakdown,
                 signals: s.clone(),
                 reasons,
                 worst_functions: worst.get(f.path.as_str()).map(|v| v.iter().map(|w| {
@@ -864,12 +910,15 @@ pub fn build(inp: Inputs, top: usize, cfg: &Cfg, test_dirs: &[String]) -> Report
         summary,
         hotspots,
         dir_cycles: inp.deps.dir_cycles.clone(),
+        runtime_file_cycles: inp.deps.runtime_file_cycles.clone(),
         file_cycles: inp.deps.file_cycles.clone(),
+        clone_families: inp.clones.families.iter().take(top).cloned().collect(),
+        structural_clones: inp.clones.pairs.iter().filter(|p| matches!(p.kind, CloneKind::Signature | CloneKind::Configuration)).take(top).cloned().collect(),
         tables: if inp.list_tables_separately { inp.clones.pairs.iter().filter(|p| p.kind == CloneKind::Table).take(top).cloned().collect() } else { Vec::new() },
         hidden_coupling: hidden,
         explained_coupling: explained,
         sweep_note: sweep_note(hist, inp.history_cfg.sweep_fraction),
-        clones: inp.clones.pairs.iter().filter(|p| !inp.list_tables_separately || p.kind == CloneKind::Logic).take(top).cloned().collect(),
+        clones: inp.clones.pairs.iter().filter(|p| p.kind == CloneKind::Logic || (!inp.list_tables_separately && p.kind == CloneKind::Table)).take(top).cloned().collect(),
         directories: directories.into_iter().take(top).collect(),
         dead: DeadSurface {
             totals: inp.dead.totals.clone(),
@@ -1405,9 +1454,9 @@ mod tests {
         let loc = |file: &str, s: usize, e: usize, sym: &str| Loc { file: file.into(), start_line: s, end_line: e, symbol: sym.into() };
         let table = ClonePair { a: loc("a.rs", 91, 134, "CHECKS"), b: loc("a.rs", 136, 174, "CHECKS"), tokens: 117, kind: CloneKind::Table, container_kind: Some("array_expression".into()), entry_count: Some(6) };
         let logic = ClonePair { a: loc("a.rs", 200, 230, "run"), b: loc("b.rs", 10, 40, "go"), tokens: 150, kind: CloneKind::Logic, container_kind: None, entry_count: None };
-        let mut clones = CloneReport { pairs: vec![logic, table], files: HashMap::new() };
+        let mut clones = CloneReport { pairs: vec![logic, table], files: HashMap::new(), ..Default::default() };
         clones.files.insert("a.rs".into(), FileClones {
-            clone_lines: 115, logic_clone_lines: 31, table_clone_lines: 84, clone_ratio: 0.23, pairs: 3,
+            clone_lines: 115, logic_clone_lines: 31, table_clone_lines: 84, weighted_clone_lines: 115.0, signature_clone_lines: 0, configuration_clone_lines: 0, clone_ratio: 0.23, pairs: 3,
             tables: vec![TableRef { symbol: Some("CHECKS".into()), container_kind: "array_expression".into(), start_line: 91, end_line: 174 }],
         });
         let files = vec![sf("a.rs"), sf("b.rs")];
@@ -1427,10 +1476,10 @@ mod tests {
         let a = r.hotspots.iter().find(|h| h.path == "a.rs").unwrap();
         assert_eq!((a.signals.logic_clone_lines, a.signals.table_clone_lines), (31, 84));
         assert!(a.reasons.iter().any(|r| r == "23% duplicated lines were 17% registry table (CHECKS, lines 91-174) and 6% logic; largest: run (200-230) <-> b.rs go (10-40), 150 tokens"), "{:?}", a.reasons);
-        // The plan: pairs largest first, both symbols, `keep one` only within the file.
+        // Tables stay visible in the report but do not propose merging public operations.
         let plan: Vec<&str> = a.plan.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(plan, vec!["run (200-230) duplicates b.rs go (10-40), 150 tokens", "CHECKS table (91-134) duplicates CHECKS table (136-174), 117 tokens: keep one"]);
-        assert!(text.contains("        PLAN\n          1) run (200-230) duplicates b.rs go (10-40), 150 tokens\n          2) CHECKS table (91-134) duplicates CHECKS table (136-174), 117 tokens: keep one\n"), "{text}");
+        assert_eq!(plan, vec!["run (200-230) shares logic with b.rs go (10-40), 150 tokens; compare differences before extracting a helper"]);
+        assert!(text.contains("        PLAN\n          1) run (200-230) shares logic with b.rs go (10-40), 150 tokens; compare differences before extracting a helper\n"), "{text}");
         assert!(!render_with(&r, 10, false).contains("PLAN"));
         // Inline: one list, the table pair annotated, no sub-heading.
         let r = build(inputs(false), 10, &Cfg::default(), &td());
@@ -1462,6 +1511,7 @@ mod tests {
                 pair(loc("a.rs", 30, 40, "gamma"), loc("b.rs", 5, 15, "delta"), 80),
             ],
             files: HashMap::new(),
+            ..Default::default()
         };
         let (deps, tests, hcfg, mentions, pcfg) = (DepGraph::default(), TestsCfg::default(), hcfg(), MentionIndex::default(), pcfg());
         fn constrain<'a, F: Fn(&'a PlanCfg) -> Inputs<'a>>(f: F) -> F { f }
@@ -1472,17 +1522,17 @@ mod tests {
         // alpha's duplicate lies in c.rs, a Test file for ranking: alpha's own side is source, so it keeps its step.
         assert_eq!(a.plan.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec![
             "fold 2 clone runs in #[cfg(test)] mod at 100-200 into shared test helpers",
-            "alpha (10-20) duplicates c.rs t_far (50-60), 90 tokens",
-            "gamma (30-40) duplicates b.rs delta (5-15), 80 tokens",
+            "alpha (10-20) shares logic with c.rs t_far (50-60), 90 tokens; compare differences before extracting a helper",
+            "gamma (30-40) shares logic with b.rs delta (5-15), 80 tokens; compare differences before extracting a helper",
         ], "{:?}", a.plan);
         assert_eq!((a.plan[0].kind, a.plan_more), (StepKind::FoldTestClones, 0));
         let b = r.hotspots.iter().find(|h| h.path == "b.rs").unwrap();
-        assert_eq!(b.plan.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec!["delta (5-15) duplicates a.rs gamma (30-40), 80 tokens"]);
+        assert_eq!(b.plan.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec!["delta (5-15) shares logic with a.rs gamma (30-40), 80 tokens; compare differences before extracting a helper"]);
         // Folding off: the test runs leave the plan without becoming canonicalise steps.
         let no_fold = PlanCfg { fold_test_clones: false, ..PlanCfg::default() };
         let r = build(inputs(&no_fold), 10, &Cfg::default(), &td());
         let a = r.hotspots.iter().find(|h| h.path == "a.rs").unwrap();
-        assert_eq!(a.plan.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec!["alpha (10-20) duplicates c.rs t_far (50-60), 90 tokens", "gamma (30-40) duplicates b.rs delta (5-15), 80 tokens"]);
+        assert_eq!(a.plan.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec!["alpha (10-20) shares logic with c.rs t_far (50-60), 90 tokens; compare differences before extracting a helper", "gamma (30-40) shares logic with b.rs delta (5-15), 80 tokens; compare differences before extracting a helper"]);
     }
 
     #[test]
@@ -1595,6 +1645,7 @@ mod tests {
         deps.file_cycles.push(crate::deps::Cycle { members: members("src/t", 6), dir: "src/t".into(), cuts: Some(no_cuts(1, 8, None)) });
         deps.file_cycles.push(crate::deps::Cycle { members: members("src/jsx", 6), dir: "src/jsx".into(), cuts: Some(no_cuts(4, 3, Some(EdgeCut { edge: edge("src/jsx/a.ts", "src/jsx/b.ts", &["X"]), largest_after: 2 }))) });
         deps.file_cycles.push(crate::deps::Cycle { members: vec!["src/b.rs".into(), "top.rs".into()], dir: ".".into(), cuts: None });
+        deps.runtime_file_cycles = vec![deps.file_cycles[0].members.clone(), deps.file_cycles[1].members.clone(), members("src/jsx", 4), deps.file_cycles[4].members.clone()];
         let clones = CloneReport::default();
         let tests = TestsCfg::default();
         let hcfg = hcfg();
@@ -1611,7 +1662,7 @@ mod tests {
         assert_eq!(reason("src/jsx/c.ts"), "in the 6-file src/jsx cycle (runtime cycle 4)");
         assert_eq!(reason("top.rs"), "in the 2-file top-level cycle");
         let text = render(&r, 10);
-        assert!(text.contains("\nCYCLES\n  4-file cycle in src: cheapest cut src/paths.rs -> src/plan.rs imports 1 symbol (EntityRef, line 16) -> largest remaining cycle 4; hub cut: drop paths.rs's 4 imports (9 symbols) -> 3; no single import breaks this cycle\n    files: src/paths.rs, src/plan.rs, src/scan.rs, src/ctx.rs\n    cut set of 2 imports dissolves it: src/paths.rs -> src/plan.rs (EntityRef), src/plan.rs -> src/scan.rs (ScanToken, Tok)\n  2-file cycle in src\n    files: src/a.rs, src/b.rs\n"), "{text}");
+        assert!(text.contains("\nCYCLES\n  4-file cycle in src: cheapest cut src/paths.rs -> src/plan.rs imports 1 symbol (EntityRef, line 16) -> largest remaining cycle 4; hub cut: drop paths.rs's 4 imports (9 symbols) -> 3; no single import breaks this cycle\n    files: src/paths.rs, src/plan.rs, src/scan.rs, src/ctx.rs\n    runtime: src/paths.rs <-> src/plan.rs <-> src/scan.rs <-> src/ctx.rs\n    cut set of 2 imports dissolves it: src/paths.rs -> src/plan.rs (EntityRef), src/plan.rs -> src/scan.rs (ScanToken, Tok)\n  2-file cycle in src\n    files: src/a.rs, src/b.rs\n"), "{text}");
         assert!(text.contains("\n  6-file cycle in src/t: 8 type-only imports ignored, largest runtime cycle 1; no runtime cycle\n"), "{text}");
         assert!(text.contains("\n  6-file cycle in src/jsx: 3 type-only imports ignored, largest runtime cycle 4; cheapest cut src/jsx/a.ts -> src/jsx/b.ts imports 1 symbol (X, line 16) -> largest remaining cycle 2\n"), "{text}");
         assert!(text.contains("\n  2-file cycle at the repo root\n    files: src/b.rs, top.rs\n"), "{text}");
@@ -1681,6 +1732,50 @@ mod tests {
         assert_eq!(test_scope("tests/test_x.py", &td()), "");
         assert_eq!(test_scope("test_x.py", &td()), "");
         assert_eq!(test_scope("src/a/__tests__/x.test.ts", &td()), "src/a");
+    }
+
+    #[test]
+    fn weighted_clone_lines_change_ranking_and_breakdown_reconstructs_score() {
+        let sf = |path: &str, lang, content: String| SourceFile { path: path.into(), lang, kind: FileKind::Source, lines: content.lines().count(), bytes: content.len(), content };
+        let registry = |name: &str| format!("static {name}: &[Entry] = &[\n{}];\n", (0..24).map(|i| format!("Entry {{ id: {i}, label: \"item\", action: run_{i}, enabled: true }},\n")).collect::<String>());
+        let logic = |name: &str| format!("def {name}(items):\n    total = 0\n    for item in items:\n        if item['ready']:\n            total += item['weight'] * 3\n        else:\n            total -= item['penalty']\n    if total > 10:\n        emit(total, items[0], True)\n    while total < 0:\n        total += 2\n    return max(total, 0)\n");
+        let files = [sf("table_a.rs", crate::lang::Language::Rust, registry("A")), sf("table_b.rs", crate::lang::Language::Rust, registry("B")),
+            sf("logic_a.py", crate::lang::Language::Python, logic("alpha")), sf("logic_b.py", crate::lang::Language::Python, logic("beta"))];
+        let fm: Vec<_> = files.iter().map(|f| fmetrics(&f.path, 1, 1, 0)).collect();
+        let (deps, tests, hcfg, mentions, pcfg) = (DepGraph::default(), TestsCfg::default(), hcfg(), MentionIndex::default(), pcfg());
+        let only_clones = Cfg { without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 0.0, clones: 1.0, size: 0.0, dead: 0.0, strings: 0.0 }, no_tests_multiplier: 1.2, ..Cfg::default() };
+        for weight in [1.0, 0.01, 0.0] {
+            let cfg = crate::config::Clones { table_weight: weight, min_tokens: 40, ..Default::default() };
+            let clones = crate::clones::detect(&files, &cfg, &tests, pcfg.symbol_fallback);
+            assert!(clones.files["table_a.rs"].table_clone_lines > 0);
+            assert!(clones.files["logic_a.py"].logic_clone_lines > 0);
+            let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming(), fallback: nofallback() }, 10, &only_clones, &td());
+            let score = |path| r.hotspots.iter().find(|h| h.path == path).unwrap().score;
+            assert_eq!(score("table_a.rs") > score("logic_a.py"), weight == 1.0, "weight {weight}: {:?}", r.hotspots);
+            if weight == 0.0 { assert_eq!(score("table_a.rs"), 0.0); }
+            for h in &r.hotspots {
+                let b = &h.score_breakdown;
+                let sum = b.contributions.iter().map(|c| { assert_eq!(c.points, 100.0 * c.normalized_value * c.weight); c.points }).sum::<f64>();
+                assert!((sum * b.test_multiplier - h.score).abs() < 1e-9);
+                assert_eq!(b.total, h.score);
+                assert_eq!(b.subtotal, sum);
+            }
+        }
+    }
+
+    #[test]
+    fn structural_cycle_does_not_receive_runtime_score_boost() {
+        let files: Vec<_> = ["type.py", "runtime.py", "plain.py"].into_iter().map(|path| SourceFile { path: path.into(), lang: crate::lang::Language::Python, kind: FileKind::Source, lines: 1, bytes: 0, content: String::new() }).collect();
+        let fm: Vec<_> = files.iter().map(|f| fmetrics(&f.path, 0, 0, 0)).collect();
+        let mut deps = DepGraph::default();
+        deps.files.insert("type.py".into(), crate::deps::FileDeps { in_cycle: true, ..Default::default() });
+        deps.files.insert("runtime.py".into(), crate::deps::FileDeps { in_cycle: true, in_runtime_cycle: true, ..Default::default() });
+        let (clones, tests, hcfg, mentions, pcfg) = (CloneReport::default(), TestsCfg::default(), hcfg(), MentionIndex::default(), pcfg());
+        let cfg = Cfg { without_history: Weights { hotspot: 0.0, fixes: 0.0, complexity: 0.0, coupling: 1.0, clones: 0.0, size: 0.0, dead: 0.0, strings: 0.0 }, no_tests_multiplier: 1.0, ..Cfg::default() };
+        let r = build(Inputs { root: String::new(), files: &files, history: None, file_metrics: &fm, functions: &[], deps: &deps, clones: &clones, cognitive_hard: 15, mentions: &mentions, tests: &tests, list_tables_separately: true, history_cfg: &hcfg, dedupe_cycle_reason: true, plan: &pcfg, dead: nodead(), helpers: nohelpers(), helpers_weight: 0.0, strings: nostrings(), clumps: noclumps(), clumps_weight: 0.0, clumps_prefix: "_", declared: nodeclared(), declared_weight: 0.0, comments: nocomments(), naming: nonaming(), fallback: nofallback() }, 10, &cfg, &td());
+        assert_eq!(r.hotspots[0].path, "runtime.py");
+        assert_eq!(r.hotspots[0].score, 100.0 * cfg.cycle_coupling);
+        assert!(r.hotspots.iter().skip(1).all(|h| h.score == 0.0));
     }
 
     #[test]
@@ -1768,7 +1863,7 @@ pub fn table_note(c: &ClonePair) -> String {
 /// container note.
 pub fn pair_line(c: &ClonePair) -> String {
     let table = c.kind == CloneKind::Table;
-    format!("{:>4} tok  {}  <->  {}{}", c.tokens, plan::side_text(&c.a, "", table), plan::side_text(&c.b, &c.a.file, table), table_note(c))
+    format!("{:>4} tok  {}  <->  {}{}{}", c.tokens, plan::side_text(&c.a, "", table), plan::side_text(&c.b, &c.a.file, table), table_note(c), match c.kind { CloneKind::Signature => " [signature]", CloneKind::Configuration => " [configuration]", _ => "" })
 }
 
 /// The `PLAN` block under a hotspot, or nothing when the plan is empty.
@@ -1811,6 +1906,12 @@ pub fn render_with(r: &Report, top: usize, plans: bool) -> String {
     for (i, h) in r.hotspots.iter().take(top).enumerate() {
         let note = h.inline_test_note.as_ref().map(|n| format!(", {n}")).unwrap_or_default();
         let _ = writeln!(o, "{:>2}. {:>5.1}  {}  ({} lines{note})", i + 1, h.score, h.path, h.signals.lines);
+        let parts: Vec<_> = h.score_breakdown.contributions.iter().filter(|c| c.points > 0.0)
+            .map(|c| format!("{} {:.1}", c.signal, c.points)).collect();
+        let _ = writeln!(o, "        score: ({}) x {:.2} test multiplier = {:.1}", parts.join(" + "), h.score_breakdown.test_multiplier, h.score);
+        if h.signals.in_cycle {
+            let _ = writeln!(o, "        cycle membership: {}", if h.signals.in_runtime_cycle { "runtime" } else { "structural only; no runtime cycle boost" });
+        }
         for reason in &h.reasons {
             // A reason's continuation lines (the phase sub-lines) indent under it.
             let mut lines = reason.split('\n');
@@ -1836,6 +1937,12 @@ pub fn render_with(r: &Report, top: usize, plans: bool) -> String {
     for c in r.file_cycles.iter().take(top) {
         let _ = writeln!(o, "  {}", c.headline());
         let _ = writeln!(o, "    files: {}", c.members.join(", "));
+        let runtime: Vec<_> = r.runtime_file_cycles.iter().filter(|members| members.iter().any(|m| c.members.contains(m))).collect();
+        if runtime.is_empty() {
+            let _ = writeln!(o, "    structural only: no runtime cycle after removing type-only imports");
+        } else {
+            for members in runtime { let _ = writeln!(o, "    runtime: {}", members.join(" <-> ")); }
+        }
         if let Some(l) = c.cut_set_line() {
             let _ = writeln!(o, "    {l}");
         }
@@ -1867,8 +1974,15 @@ pub fn render_with(r: &Report, top: usize, plans: bool) -> String {
     if r.clones.is_empty() {
         let _ = writeln!(o, "  none");
     }
-    for c in r.clones.iter().take(top) {
+    for family in r.clone_families.iter().take(top) {
+        o.push_str(&crate::clones::render_family(family));
+    }
+    for c in r.clones.iter().filter(|c| !r.clone_families.iter().any(|family| family.matches.iter().any(|q| q.a == c.a && q.b == c.b))).take(top) {
         let _ = writeln!(o, "  {}", pair_line(c));
+    }
+    if !r.structural_clones.is_empty() {
+        let _ = writeln!(o, "  SHARED STRUCTURE  (signatures/configuration; excluded from clone score and extraction plans)");
+        for c in r.structural_clones.iter().take(top) { let _ = writeln!(o, "  {}", pair_line(c)); }
     }
     if !r.tables.is_empty() {
         let _ = writeln!(o, "  TABLES  (uniform entries on both sides, not duplicated logic)");

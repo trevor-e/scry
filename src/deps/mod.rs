@@ -31,6 +31,8 @@ pub struct FileDeps {
     /// Bare specifiers / third-party modules that did not resolve in-repo.
     pub external: usize,
     pub in_cycle: bool,
+    /// Membership after removing type-only edges, independent of cut-analysis thresholds.
+    pub in_runtime_cycle: bool,
     /// fan_out / (fan_in + fan_out); 1.0 = depends on everything, nothing depends on it.
     pub instability: f64,
 }
@@ -113,6 +115,8 @@ pub struct Cycle {
 pub struct DepGraph {
     pub files: HashMap<String, FileDeps>,
     pub file_cycles: Vec<Cycle>,
+    /// Strongly connected components after removing all type-only imports.
+    pub runtime_file_cycles: Vec<Vec<String>>,
     pub dir_cycles: Vec<Cycle>,
     pub edges: usize,
     #[serde(skip)]
@@ -351,6 +355,20 @@ pub fn build_from(all: &[SourceFile], raws: &[Vec<RawImport>], cfg: &Cfg, ts: &T
         let total = d.fan_in + d.fan_out;
         d.instability = if total == 0 { 0.0 } else { d.fan_out as f64 / total as f64 };
     }
+
+    let mut runtime = graph.clone();
+    runtime.retain_edges(|g, e| {
+        let (a, b) = g.edge_endpoints(e).unwrap();
+        out.edge_map[&(files[g[a]].0.path.clone(), files[g[b]].0.path.clone())].kind != EdgeKind::TypeOnly
+    });
+    for scc in tarjan_scc(&runtime).into_iter().filter(|scc| scc.len() > 1) {
+        let mut members: Vec<_> = scc.iter().map(|n| files[runtime[*n]].0.path.clone()).collect();
+        members.sort();
+        for member in &members { out.files.get_mut(member).unwrap().in_runtime_cycle = true; }
+        out.runtime_file_cycles.push(members);
+    }
+
+    out.runtime_file_cycles.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
 
     // File-level cycles.
     for scc in tarjan_scc(&graph) {
@@ -1459,4 +1477,22 @@ mod tests {
         assert_eq!(common_dir(&["crates/x/src/a.rs".to_string(), "crates/x/src/b/c.rs".to_string()]), "crates/x/src");
         assert_eq!(common_dir(&["a.rs".to_string(), "src/b.rs".to_string()]), ".");
     }
+
+    #[test]
+    fn runtime_cycle_membership_ignores_type_edges_and_cut_threshold() {
+        for type_only in [true, false] {
+            let import = if type_only { "if TYPE_CHECKING:\n    import b\n" } else { "import b\n" };
+            let files = [sf("a.py", import), sf("b.py", "import a\n")];
+            let cfg = Cfg { min_cycle_size_to_cut: 10, ..Cfg::default() };
+            let g = build(&files, &cfg);
+            assert_eq!(g.file_cycles.len(), 1);
+            assert_eq!(g.runtime_file_cycles.is_empty(), type_only);
+            assert!(g.file_cycles[0].cuts.is_none());
+            for path in ["a.py", "b.py"] {
+                assert!(g.files[path].in_cycle);
+                assert_eq!(g.files[path].in_runtime_cycle, !type_only);
+            }
+        }
+    }
+
 }
