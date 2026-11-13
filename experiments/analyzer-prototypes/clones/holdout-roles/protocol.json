@@ -1,0 +1,105 @@
+{
+  "experiment": "fresh-corpus-frozen-input-roles",
+  "detector_revision": "7e198b56453eea8823aaf5a2a7a72a56c9a753b0",
+  "detector_sha256": {
+    "probe.py": "723d4e7b65580c299f831a1e99041f1336cbb4707b21415636b4bf7898dc2d0d",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8",
+    "input_roles.py": "210aa2ac263865f643de36f59dc99bdc0d5f58ce9c41515b419cf893d61744b3"
+  },
+  "parameters": {
+    "matching": "roles",
+    "commits": 200,
+    "similarity": 0.85
+  },
+  "dependencies": {
+    "tree-sitter": "0.26.1",
+    "tree-sitter-rust": "0.24.2",
+    "tree-sitter-typescript": "0.23.2"
+  },
+  "clone_depth": 300,
+  "selection": "Fixed ten-repository set selected and committed before downloading or scanning; no overlap with either prior corpus and no replacements based on results.",
+  "execution": "Tracked source and Git history only. No corpus application code, tests, builds, or registry requests.",
+  "audit": {
+    "emitted": "Audit every emitted pair as useful_review, false_positive, or unresolved, distinguishing exact acceptance from the new input-regrouping fallback.",
+    "rejected_sample": {
+      "maximum": 12,
+      "per_language_initial": 6,
+      "seed": "scry-roles-holdout-2026-11-13",
+      "identity_fields": [
+        "repo",
+        "commit",
+        "changed.path",
+        "changed.symbol",
+        "survivor.path",
+        "survivor.symbol"
+      ],
+      "identity_encoding": "Compact JSON array of the six strings, ensure_ascii=True, separators comma and colon.",
+      "candidate_rank": "SHA256 of UTF-8 seed + newline + encoded identity; identity breaks ties.",
+      "repo_rank": "SHA256 of UTF-8 seed + newline + repo: + repository name; name breaks ties.",
+      "selection": "Group by changed-source language (Rust .rs; TypeScript .ts/.tsx). Within each language, hash-rank pairs inside each repository and hash-rank repositories; take one pair per repository per round. Select first six from each language. Fill unused quota from the remaining language order to reach min(12,total rejected). Record complete ranks and selected identities before source auditing.",
+      "interpretation": "The stratified sample diagnoses missed leads and false positives; it does not measure overall recall. Unreviewed pairs remain unclassified."
+    }
+  },
+  "repositories": [
+    {
+      "name": "axum",
+      "origin": "https://github.com/tokio-rs/axum.git",
+      "primary_language": "Rust",
+      "path": "/private/tmp/scry-clone-roles-holdout/axum"
+    },
+    {
+      "name": "hyper",
+      "origin": "https://github.com/hyperium/hyper.git",
+      "primary_language": "Rust",
+      "path": "/private/tmp/scry-clone-roles-holdout/hyper"
+    },
+    {
+      "name": "uv",
+      "origin": "https://github.com/astral-sh/uv.git",
+      "primary_language": "Rust",
+      "path": "/private/tmp/scry-clone-roles-holdout/uv"
+    },
+    {
+      "name": "helix",
+      "origin": "https://github.com/helix-editor/helix.git",
+      "primary_language": "Rust",
+      "path": "/private/tmp/scry-clone-roles-holdout/helix"
+    },
+    {
+      "name": "bevy",
+      "origin": "https://github.com/bevyengine/bevy.git",
+      "primary_language": "Rust",
+      "path": "/private/tmp/scry-clone-roles-holdout/bevy"
+    },
+    {
+      "name": "typescript",
+      "origin": "https://github.com/microsoft/TypeScript.git",
+      "primary_language": "TypeScript",
+      "path": "/private/tmp/scry-clone-roles-holdout/typescript"
+    },
+    {
+      "name": "vscode",
+      "origin": "https://github.com/microsoft/vscode.git",
+      "primary_language": "TypeScript",
+      "path": "/private/tmp/scry-clone-roles-holdout/vscode"
+    },
+    {
+      "name": "angular",
+      "origin": "https://github.com/angular/angular.git",
+      "primary_language": "TypeScript",
+      "path": "/private/tmp/scry-clone-roles-holdout/angular"
+    },
+    {
+      "name": "trpc",
+      "origin": "https://github.com/trpc/trpc.git",
+      "primary_language": "TypeScript",
+      "path": "/private/tmp/scry-clone-roles-holdout/trpc"
+    },
+    {
+      "name": "excalidraw",
+      "origin": "https://github.com/excalidraw/excalidraw.git",
+      "primary_language": "TypeScript",
+      "path": "/private/tmp/scry-clone-roles-holdout/excalidraw"
+    }
+  ]
+}
