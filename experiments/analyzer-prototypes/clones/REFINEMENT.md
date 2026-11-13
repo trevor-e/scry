@@ -81,7 +81,7 @@ From the repository root, using the existing pinned corpus and environment:
 /private/tmp/scry-analyzer-venv/bin/python experiments/analyzer-prototypes/clones/test_tightened.py
 ```
 
-The checker defaults to `--matching exact`. Pass `--matching loose` directly to `clones/probe.py` to recover the original detection behavior. The comparison command fails if revisions, scope counters, broad candidates, or audit identities changed.
+This run used `--matching exact`. The current default additionally supports [bounded TypeScript input regrouping](relaxed/README.md); pass `--matching exact` directly to preserve this report's strict rule, or `--matching loose` to recover the original detection behavior. The comparison command fails if revisions, scope counters, broad candidates, or audit identities changed.
 
 Artifacts:
 

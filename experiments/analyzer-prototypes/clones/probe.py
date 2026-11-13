@@ -15,6 +15,7 @@ import tree_sitter_rust
 import tree_sitter_typescript
 
 from bindings import fingerprint
+from input_roles import compare_input_roles
 
 
 def main():
@@ -22,13 +23,13 @@ def main():
     cli.add_argument('repos', type=Path, nargs='+')
     cli.add_argument('--commits', type=int, default=200)
     cli.add_argument('--similarity', type=float, default=0.85)
-    cli.add_argument('--matching', choices=['exact', 'loose'], default='exact',
-                     help='exact requires whole pre-fix signature/body equality with conservative local renaming')
+    cli.add_argument('--matching', choices=['roles', 'exact', 'loose'], default='roles',
+                     help='roles also permits bounded TypeScript input repacking; exact preserves signature/body equality')
     args = cli.parse_args()
     print(json.dumps([scan(p.resolve(), args.commits, args.similarity, args.matching) for p in args.repos], indent=2))
 
 
-def scan(repo, commit_limit, similarity, matching='exact'):
+def scan(repo, commit_limit, similarity, matching='roles'):
     parsers = {
         '.rs': ts.Parser(ts.Language(tree_sitter_rust.language())),
         '.ts': ts.Parser(ts.Language(tree_sitter_typescript.language_typescript())),
@@ -111,10 +112,16 @@ def scan(repo, commit_limit, similarity, matching='exact'):
                 matched.sort(key=lambda x: (-x['similarity'], x['survivor']['path'], x['survivor']['line']))
                 truncated_candidates += max(0, len(matched) - 10)
                 for finding in matched[:10]:
-                    if matching == 'exact':
+                    if matching != 'loose':
                         other = next(head_units[index] for index in candidates
                             if head_units[index].location() == finding['survivor'])
                         verdict = compare_bindings(old, other)
+                        if matching == 'roles' and verdict['decision'] != 'accepted':
+                            role_verdict = compare_input_roles(old, other)
+                            verdict['input_role_comparison'] = role_verdict
+                            if role_verdict['decision'] == 'accepted':
+                                verdict['exact_rejection_reason'] = verdict['reason']
+                                verdict.update(decision='accepted', reason=role_verdict['reason'])
                         finding['structural_comparison'] = verdict
                         if verdict['decision'] != 'accepted':
                             rejected.append(finding)
@@ -132,6 +139,7 @@ def scan(repo, commit_limit, similarity, matching='exact'):
             'Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.',
             'No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.',
             'Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.',
+            'Roles mode additionally accepts completely matching TypeScript bodies with conservatively mapped repacked inputs and matched nominal return assertions.',
             'Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.',
             'Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.',
             'Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed.'])

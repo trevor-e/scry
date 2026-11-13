@@ -1,5 +1,7 @@
 # Frozen missed-clone detector on ten fresh repositories
 
+This is the historical frozen evaluation at checkout `5ed5432`. The current matcher and the rerun of both corpora are documented in [the subsequent refinement](../relaxed/README.md). Use that historical checkout to reproduce this report with its hash-enforcing runner.
+
 The unchanged detector emitted **one useful review lead in Playwright** and no clearly false-positive alerts. It emitted nothing in the other nine repositories. A manual sample of rejected pairs found **six avoided false positives and one useful pnpm lead that the strict matcher missed**. These are source-review judgments; neither useful lead was reproduced as a runtime defect.
 
 The ten projects were selected and committed in `ddbe489` before downloading/scanning them. None appeared in the original corpus. No repositories were added after seeing results, and no detection rules, thresholds, or exclusions changed.
@@ -62,7 +64,7 @@ Existing limits remain: tests/examples/generated/vendor paths are excluded; smal
 
 ## Frozen configuration and reproduction
 
-The detector remains byte-for-byte identical to commit `f11f4268a0be6934425de33c4f3e494579de473a`:
+This evaluation used the detector byte-for-byte identical to commit `f11f4268a0be6934425de33c4f3e494579de473a`:
 
 | File | SHA-256 |
 |---|---|

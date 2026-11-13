@@ -1,0 +1,28 @@
+{
+  "repo": "bat",
+  "root": "/private/tmp/scry-clone-holdout/bat",
+  "revision": "8cf33bdde9a6e4c11d0f866415b1fc867df0cd40",
+  "matching": "roles",
+  "broad_candidates": 0,
+  "rejected_candidates": [],
+  "source_files": 45,
+  "function_bodies": 390,
+  "history_commits": 200,
+  "fix_labelled_commits": 52,
+  "changed_functions_compared": 13,
+  "missing_history_parents": 0,
+  "parse_error_files": [],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Roles mode additionally accepts completely matching TypeScript bodies with conservatively mapped repacked inputs and matched nominal return assertions.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

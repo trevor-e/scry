@@ -8,6 +8,8 @@ These are standalone experiments. They do not change scry's scan output, scoring
 
 **Fresh-corpus evaluation:** the frozen matcher emitted one useful Playwright review lead across ten new repositories. A sample of rejected pairs contained six avoided false positives and one useful pnpm lead suppressed by signature differences. See [the holdout report](clones/holdout/README.md); this is separate from the initial results below.
 
+**Input-regrouping follow-up:** the current default also recognizes bounded TypeScript parameter repacking. Rerunning both corpora adds only the missed pnpm lead (4 → 5 useful locations total); all fourteen audited false-positive pairs remain filtered. See [the comparison and validation](clones/relaxed/README.md). Both corpora now inform development.
+
 ## Results
 
 | Prototype | Actual analysis coverage | Emitted candidates | Source-review outcome |

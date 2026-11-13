@@ -1,0 +1,178 @@
+{
+  "repo": "tauri",
+  "root": "/private/tmp/scry-analyzer-corpus/tauri",
+  "revision": "5edd31c8a8914674c217b21a660a914823da2dae",
+  "matching": "roles",
+  "broad_candidates": 2,
+  "rejected_candidates": [
+    {
+      "check": "missed_clone_fix",
+      "commit": "a1ea1b5e5ad4b75759fa773b7b78db288128b4af",
+      "subject": "fix(utils): keep the drive prefix of absolute resource paths on Windows (#16453)",
+      "changed": {
+        "path": "crates/tauri-utils/src/resources.rs",
+        "symbol": "normalize#1",
+        "line": 31,
+        "end_line": 43
+      },
+      "changed_at_fix": {
+        "path": "crates/tauri-utils/src/resources.rs",
+        "symbol": "normalize#1",
+        "line": 31,
+        "end_line": 42
+      },
+      "survivor": {
+        "path": "crates/tauri-utils/src/resources.rs",
+        "symbol": "resource_relpath#1",
+        "line": 17,
+        "end_line": 29
+      },
+      "similarity": 0.9756,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "replace",
+          "old_line": 35,
+          "new_line": 35,
+          "survivor_line": 21,
+          "removed_tokens": [
+            "=>",
+            "{",
+            "}"
+          ],
+          "added_tokens": [
+            "|"
+          ],
+          "old_excerpt": "    match component {\n      Component::Prefix(_) => {}\n      Component::RootDir => dest.push(\"/\"),",
+          "new_excerpt": "    match component {\n      Component::Prefix(_) | Component::RootDir => dest.push(component),\n      Component::CurDir => {}"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: match_expression",
+        "right_fallback_reason": "unsupported binding context: match_expression",
+        "decision": "rejected",
+        "reason": "different_function_signature",
+        "input_role_comparison": {
+          "decision": "rejected",
+          "reason": "input_regrouping_is_typescript_only"
+        }
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "141d1c0d6f3a746f7f34618d00c2676c902dca67",
+      "subject": "fix(acl): resolve permission files after the target dir is moved (#16199)",
+      "changed": {
+        "path": "crates/tauri-utils/src/acl/build.rs",
+        "symbol": "read_permissions#1",
+        "line": 114,
+        "end_line": 146
+      },
+      "changed_at_fix": {
+        "path": "crates/tauri-utils/src/acl/build.rs",
+        "symbol": "read_permissions#1",
+        "line": 136,
+        "end_line": 164
+      },
+      "survivor": {
+        "path": "crates/tauri-utils/src/acl/build.rs",
+        "symbol": "read_global_scope_schemas#1",
+        "line": 189,
+        "end_line": 219
+      },
+      "similarity": 0.9591,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "replace",
+          "old_line": 129,
+          "new_line": 151,
+          "survivor_line": 204,
+          "removed_tokens": [
+            "PathBuf"
+          ],
+          "added_tokens": [
+            "read_permission_files",
+            "(",
+            "Path"
+          ],
+          "old_excerpt": "    {\n      let permissions_path = PathBuf::from(value);\n      let permissions_str =",
+          "new_excerpt": "    {\n      let permissions = read_permission_files(Path::new(&value))?;\n"
+        },
+        {
+          "operation": "replace",
+          "old_line": 129,
+          "new_line": 151,
+          "survivor_line": 204,
+          "removed_tokens": [
+            "from",
+            "(",
+            "$id",
+            ")",
+            ";",
+            "let",
+            "$id",
+            "=",
+            "fs",
+            "::",
+            "read_to_string"
+          ],
+          "added_tokens": [
+            "new"
+          ],
+          "old_excerpt": "    {\n      let permissions_path = PathBuf::from(value);\n      let permissions_str =\n        fs::read_to_string(&permissions_path).map_err(|e| Error::ReadFile(e, permissions_path))?;\n      let permissions: Vec<PathBuf> = serde_json::from_str(&permissions_str)?;",
+          "new_excerpt": "    {\n      let permissions = read_permission_files(Path::new(&value))?;\n"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "non-identifier binding",
+        "right_fallback_reason": "non-identifier binding",
+        "decision": "rejected",
+        "reason": "different_function_signature",
+        "input_role_comparison": {
+          "decision": "rejected",
+          "reason": "input_regrouping_is_typescript_only"
+        }
+      }
+    }
+  ],
+  "source_files": 314,
+  "function_bodies": 3679,
+  "history_commits": 120,
+  "fix_labelled_commits": 53,
+  "changed_functions_compared": 46,
+  "missing_history_parents": 0,
+  "parse_error_files": [
+    "crates/tauri-cli/templates/plugin/__example-api/tauri-app/src-tauri/src/lib.rs",
+    "crates/tauri-cli/templates/plugin/__example-basic/vanilla/src-tauri/src/lib.rs",
+    "crates/tauri-cli/templates/plugin/guest-js/index.ts",
+    "crates/tauri-cli/templates/plugin/src/commands.rs",
+    "crates/tauri-cli/templates/plugin/src/desktop.rs",
+    "crates/tauri-cli/templates/plugin/src/error.rs",
+    "crates/tauri-cli/templates/plugin/src/lib.rs",
+    "crates/tauri-cli/templates/plugin/src/mobile.rs",
+    "crates/tauri-cli/templates/plugin/src/models.rs",
+    "crates/tauri-runtime-wry/src/lib.rs",
+    "crates/tauri-utils/src/acl/resolved.rs",
+    "crates/tauri/src/protocol/tauri.rs"
+  ],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Roles mode additionally accepts completely matching TypeScript bodies with conservatively mapped repacked inputs and matched nominal return assertions.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

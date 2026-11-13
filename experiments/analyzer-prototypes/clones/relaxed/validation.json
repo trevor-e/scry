@@ -1,0 +1,68 @@
+{
+  "status": "passed",
+  "source_sha256": {
+    "probe.py": "723d4e7b65580c299f831a1e99041f1336cbb4707b21415636b4bf7898dc2d0d",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8",
+    "input_roles.py": "210aa2ac263865f643de36f59dc99bdc0d5f58ce9c41515b419cf893d61744b3"
+  },
+  "strict_comparator_ast_unchanged": true,
+  "binding_normalizer_and_prior_raw_evidence_unchanged": true,
+  "full_cli_reruns": 20,
+  "scope_and_broad_evidence_unchanged": true,
+  "totals": {
+    "source_files": 16079,
+    "function_bodies": 132892,
+    "history_commits": 3508,
+    "fix_labelled_commits": 1147,
+    "changed_functions_compared": 3234,
+    "missing_history_parents": 2,
+    "candidates_omitted_by_per_function_cap": 0,
+    "head_files_with_parse_errors": 62
+  },
+  "outcomes": {
+    "emitted_before": 4,
+    "emitted_after": 5,
+    "newly_emitted": 1,
+    "previous_findings_lost": 0,
+    "known_false_positives_rejected": 14,
+    "known_false_positives_emitted": 0,
+    "unclassified_rejected": 10,
+    "unclassified_emitted": 0,
+    "runtime_confirmed": 0
+  },
+  "tests": [
+    {
+      "command": "/private/tmp/scry-analyzer-venv/bin/python experiments/analyzer-prototypes/clones/test_input_roles.py",
+      "status": "passed",
+      "unittest_methods": 3,
+      "focused_cases": 33,
+      "inherited_cases": 19,
+      "cli_invocations": 55,
+      "all_named_cases_reach_broad_discovery": true,
+      "regressions": [
+        "repacking positive and propagation",
+        "property/position/type and runtime-token preservation",
+        "unsupported binding contexts and defaults",
+        "direct, shorthand, and escaped arguments"
+      ]
+    },
+    {
+      "command": "/private/tmp/scry-analyzer-venv/bin/python experiments/analyzer-prototypes/clones/test_probe.py",
+      "status": "passed",
+      "unittest_methods": 1,
+      "language_subcases": [
+        "Rust",
+        "TypeScript"
+      ]
+    }
+  ],
+  "reviews": [
+    "Independent matcher review found escaped arguments bypass; whole-function escaped-identifier abstention and CLI regression verified.",
+    "Every output delta reconciled with prior source audits."
+  ],
+  "limits": [
+    "Both corpora now inform development; not held-out precision/recall evidence.",
+    "Useful means source-supported review lead, not reproduced runtime defect.",
+    "No corpus application code, tests, builds, or registry requests executed."
+  ]
+}

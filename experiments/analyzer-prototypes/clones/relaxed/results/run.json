@@ -1,0 +1,461 @@
+{
+  "parameters": {
+    "matching": "roles",
+    "commits": 200,
+    "similarity": 0.85
+  },
+  "source_sha256_before": {
+    "probe.py": "723d4e7b65580c299f831a1e99041f1336cbb4707b21415636b4bf7898dc2d0d",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8",
+    "input_roles.py": "210aa2ac263865f643de36f59dc99bdc0d5f58ce9c41515b419cf893d61744b3"
+  },
+  "source_sha256_after": {
+    "probe.py": "723d4e7b65580c299f831a1e99041f1336cbb4707b21415636b4bf7898dc2d0d",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8",
+    "input_roles.py": "210aa2ac263865f643de36f59dc99bdc0d5f58ce9c41515b419cf893d61744b3"
+  },
+  "python": "3.15.2 (main, Oct 25 2026, 16:57:51) [Clang 21.0.0 (clang-2100.3.34.2)]",
+  "dependencies": {
+    "tree-sitter": "0.26.1",
+    "tree-sitter-rust": "0.24.2",
+    "tree-sitter-typescript": "0.23.2"
+  },
+  "manifests": {
+    "original": [
+      {
+        "name": "adulting",
+        "path": "/private/tmp/scry-analyzer-corpus/adulting",
+        "revision": "c8baee7ca4cecbfdfc687dff7f4823c278720596",
+        "origin": "/Users/telkins/dev/adulting",
+        "shallow": false,
+        "rust_files": 486,
+        "typescript_files": 438,
+        "build_scripts": 1
+      },
+      {
+        "name": "hono",
+        "path": "/private/tmp/scry-analyzer-corpus/hono",
+        "revision": "f6fbaf0299c48eea9e656e03e2ffe7ac755e8823",
+        "origin": "https://github.com/honojs/hono.git",
+        "shallow": true,
+        "rust_files": 0,
+        "typescript_files": 431,
+        "build_scripts": 0
+      },
+      {
+        "name": "kanspec",
+        "path": "/private/tmp/scry-analyzer-corpus/kanspec",
+        "revision": "a99893d88d98b43616c07f5cfcf02d03c7048bf6",
+        "origin": "/Users/telkins/dev/kanspec",
+        "shallow": false,
+        "rust_files": 85,
+        "typescript_files": 0,
+        "build_scripts": 1
+      },
+      {
+        "name": "nushell",
+        "path": "/private/tmp/scry-analyzer-corpus/nushell",
+        "revision": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+        "origin": "https://github.com/nushell/nushell.git",
+        "shallow": true,
+        "rust_files": 1992,
+        "typescript_files": 0,
+        "build_scripts": 4
+      },
+      {
+        "name": "oh-my-pi",
+        "path": "/private/tmp/scry-analyzer-corpus/oh-my-pi",
+        "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+        "origin": "/Users/telkins/dev/oh-my-pi",
+        "shallow": false,
+        "rust_files": 447,
+        "typescript_files": 4220,
+        "build_scripts": 2
+      },
+      {
+        "name": "ripgrep",
+        "path": "/private/tmp/scry-analyzer-corpus/ripgrep",
+        "revision": "178cc027e283fd965cb72d0a7395b219eada170c",
+        "origin": "https://github.com/BurntSushi/ripgrep.git",
+        "shallow": true,
+        "rust_files": 102,
+        "typescript_files": 0,
+        "build_scripts": 1
+      },
+      {
+        "name": "scry",
+        "path": "/private/tmp/scry-analyzer-corpus/scry",
+        "revision": "7927f36440ffc34469da551c782a6487826f05d1",
+        "origin": "/Users/telkins/dev/scry",
+        "shallow": false,
+        "rust_files": 23,
+        "typescript_files": 0,
+        "build_scripts": 0
+      },
+      {
+        "name": "tauri",
+        "path": "/private/tmp/scry-analyzer-corpus/tauri",
+        "revision": "5edd31c8a8914674c217b21a660a914823da2dae",
+        "origin": "https://github.com/tauri-apps/tauri.git",
+        "shallow": true,
+        "rust_files": 331,
+        "typescript_files": 46,
+        "build_scripts": 24
+      },
+      {
+        "name": "typescript-eslint",
+        "path": "/private/tmp/scry-analyzer-corpus/typescript-eslint",
+        "revision": "2838b498d03ef3a3808fa714f43ea653f4e589b0",
+        "origin": "https://github.com/typescript-eslint/typescript-eslint.git",
+        "shallow": true,
+        "rust_files": 0,
+        "typescript_files": 2721,
+        "build_scripts": 0
+      },
+      {
+        "name": "vite",
+        "path": "/private/tmp/scry-analyzer-corpus/vite",
+        "revision": "61622b8df68b7a8e657caa6f98d9b70069643abf",
+        "origin": "https://github.com/vitejs/vite.git",
+        "shallow": true,
+        "rust_files": 0,
+        "typescript_files": 625,
+        "build_scripts": 0
+      }
+    ],
+    "holdout": [
+      {
+        "name": "tokio",
+        "origin": "https://github.com/tokio-rs/tokio.git",
+        "primary_language": "Rust",
+        "path": "/private/tmp/scry-clone-holdout/tokio",
+        "revision": "ab0814fc8c62b3d8be40aad068e2fed6562cfeb0",
+        "shallow": true,
+        "available_commits": 1613,
+        "rust_files": 816,
+        "typescript_files": 0
+      },
+      {
+        "name": "clap",
+        "origin": "https://github.com/clap-rs/clap.git",
+        "primary_language": "Rust",
+        "path": "/private/tmp/scry-clone-holdout/clap",
+        "revision": "ec93e71255c0b833a34f50662a3fdb22f53f6ded",
+        "shallow": true,
+        "available_commits": 1103,
+        "rust_files": 337,
+        "typescript_files": 0
+      },
+      {
+        "name": "ruff",
+        "origin": "https://github.com/astral-sh/ruff.git",
+        "primary_language": "Rust",
+        "path": "/private/tmp/scry-clone-holdout/ruff",
+        "revision": "124210f4fde57836a8d8270fdcfb10ae3dacab31",
+        "shallow": true,
+        "available_commits": 300,
+        "rust_files": 2048,
+        "typescript_files": 49
+      },
+      {
+        "name": "starship",
+        "origin": "https://github.com/starship/starship.git",
+        "primary_language": "Rust",
+        "path": "/private/tmp/scry-clone-holdout/starship",
+        "revision": "e3b64da0b660552377de8f7101a73a36b145791c",
+        "shallow": true,
+        "available_commits": 300,
+        "rust_files": 257,
+        "typescript_files": 0
+      },
+      {
+        "name": "bat",
+        "origin": "https://github.com/sharkdp/bat.git",
+        "primary_language": "Rust",
+        "path": "/private/tmp/scry-clone-holdout/bat",
+        "revision": "8cf33bdde9a6e4c11d0f866415b1fc867df0cd40",
+        "shallow": true,
+        "available_commits": 1515,
+        "rust_files": 67,
+        "typescript_files": 4
+      },
+      {
+        "name": "pnpm",
+        "origin": "https://github.com/pnpm/pnpm.git",
+        "primary_language": "TypeScript",
+        "path": "/private/tmp/scry-clone-holdout/pnpm",
+        "revision": "63765162e6346aa5a667be9c1b5ef61103f1c58a",
+        "shallow": true,
+        "available_commits": 300,
+        "rust_files": 4618,
+        "typescript_files": 2271
+      },
+      {
+        "name": "query",
+        "origin": "https://github.com/TanStack/query.git",
+        "primary_language": "TypeScript",
+        "path": "/private/tmp/scry-clone-holdout/query",
+        "revision": "19f555cf919a1438885d7d20c95b17b26d6d6859",
+        "shallow": true,
+        "available_commits": 300,
+        "rust_files": 0,
+        "typescript_files": 2022
+      },
+      {
+        "name": "playwright",
+        "origin": "https://github.com/microsoft/playwright.git",
+        "primary_language": "TypeScript",
+        "path": "/private/tmp/scry-clone-holdout/playwright",
+        "revision": "8534271f0413bae6a455b7cf43b2637391bc614b",
+        "shallow": true,
+        "available_commits": 300,
+        "rust_files": 0,
+        "typescript_files": 1412
+      },
+      {
+        "name": "vitest",
+        "origin": "https://github.com/vitest-dev/vitest.git",
+        "primary_language": "TypeScript",
+        "path": "/private/tmp/scry-clone-holdout/vitest",
+        "revision": "47c87ebb5025010141cf8aa5dc69c5b57c10d2fa",
+        "shallow": true,
+        "available_commits": 300,
+        "rust_files": 0,
+        "typescript_files": 2211
+      },
+      {
+        "name": "vue-core",
+        "origin": "https://github.com/vuejs/core.git",
+        "primary_language": "TypeScript",
+        "path": "/private/tmp/scry-clone-holdout/vue-core",
+        "revision": "21738b527bac4a91eef9cbdfc2cc5ac1f3dbdec9",
+        "shallow": true,
+        "available_commits": 300,
+        "rust_files": 0,
+        "typescript_files": 491
+      }
+    ]
+  },
+  "commands": [
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/bat",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/clap",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/playwright",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/pnpm",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/query",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/ruff",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/starship",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/tokio",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/vitest",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/vue-core",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-analyzer-corpus/adulting",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-analyzer-corpus/hono",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-analyzer-corpus/kanspec",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-analyzer-corpus/nushell",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-analyzer-corpus/oh-my-pi",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-analyzer-corpus/ripgrep",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-analyzer-corpus/scry",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-analyzer-corpus/tauri",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-analyzer-corpus/typescript-eslint",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-analyzer-corpus/vite",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ]
+  ]
+}

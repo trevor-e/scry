@@ -1,0 +1,28 @@
+{
+  "repo": "ripgrep",
+  "root": "/private/tmp/scry-analyzer-corpus/ripgrep",
+  "revision": "178cc027e283fd965cb72d0a7395b219eada170c",
+  "matching": "roles",
+  "broad_candidates": 0,
+  "rejected_candidates": [],
+  "source_files": 84,
+  "function_bodies": 2233,
+  "history_commits": 160,
+  "fix_labelled_commits": 23,
+  "changed_functions_compared": 21,
+  "missing_history_parents": 1,
+  "parse_error_files": [],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Roles mode additionally accepts completely matching TypeScript bodies with conservatively mapped repacked inputs and matched nominal return assertions.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

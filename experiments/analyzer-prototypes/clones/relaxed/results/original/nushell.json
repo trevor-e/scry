@@ -1,0 +1,239 @@
+{
+  "repo": "nushell",
+  "root": "/private/tmp/scry-analyzer-corpus/nushell",
+  "revision": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+  "matching": "roles",
+  "broad_candidates": 3,
+  "rejected_candidates": [
+    {
+      "check": "missed_clone_fix",
+      "commit": "06e65cd925c0bc96b671612b8671010c5502ac48",
+      "subject": "fix(commands): reject duplicate column names in split column (#19362)",
+      "changed": {
+        "path": "crates/nu-command/src/strings/split/column.rs",
+        "symbol": "split_column#1",
+        "line": 205,
+        "end_line": 233
+      },
+      "changed_at_fix": {
+        "path": "crates/nu-command/src/strings/split/column.rs",
+        "symbol": "split_column#1",
+        "line": 206,
+        "end_line": 235
+      },
+      "survivor": {
+        "path": "crates/nu-command/src/strings/split/row.rs",
+        "symbol": "split_row#1",
+        "line": 180,
+        "end_line": 197
+      },
+      "similarity": 0.9346,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 211,
+          "new_line": 212,
+          "survivor_line": 186,
+          "removed_tokens": [],
+          "added_tokens": [
+            "check_duplicate_columns",
+            "(",
+            "&",
+            "$id",
+            ".",
+            "rest",
+            ")",
+            "?",
+            ";"
+          ],
+          "old_excerpt": ") -> Result<PipelineData, ShellError> {\n    let name_span = call.head;\n    let pattern = if args.has_regex {",
+          "new_excerpt": ") -> Result<PipelineData, ShellError> {\n    check_duplicate_columns(&args.rest)?;\n    let name_span = call.head;"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_complete_body",
+        "input_role_comparison": {
+          "decision": "rejected",
+          "reason": "input_regrouping_is_typescript_only"
+        }
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "cf0c9a7734f11c376ec78e8547f01810e3b00490",
+      "subject": "fix(cli): correct the `--mcp-host` help text and example (#19268)",
+      "changed": {
+        "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+        "symbol": "StateWorkingSet<'a>::find_type_alias#1",
+        "line": 629,
+        "end_line": 642
+      },
+      "changed_at_fix": {
+        "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+        "symbol": "StateWorkingSet<'a>::find_type_alias#1",
+        "line": 688,
+        "end_line": 707
+      },
+      "survivor": {
+        "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+        "symbol": "StateWorkingSet<'a>::find_variable_in_current_frame#1",
+        "line": 860,
+        "end_line": 872
+      },
+      "similarity": 0.8917,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 630,
+          "new_line": 689,
+          "survivor_line": 861,
+          "removed_tokens": [],
+          "added_tokens": [
+            ";",
+            "let",
+            "mut",
+            "$id",
+            "=",
+            "VisibilityStack",
+            "::",
+            "default",
+            "(",
+            ")"
+          ],
+          "old_excerpt": "    pub fn find_type_alias(&self, name: &[u8]) -> Option<TypeAliasId> {\n        let mut removed_overlays = vec![];\n",
+          "new_excerpt": "    pub fn find_type_alias(&self, name: &[u8]) -> Option<TypeAliasId> {\n        let mut removed_overlays = vec![];\n\n        let mut visibility = VisibilityStack::default();\n"
+        },
+        {
+          "operation": "insert",
+          "old_line": 634,
+          "new_line": 695,
+          "survivor_line": 865,
+          "removed_tokens": [],
+          "added_tokens": [
+            "$id",
+            ".",
+            "push",
+            "(",
+            "&",
+            "$id",
+            ".",
+            "visibility",
+            ")",
+            ";"
+          ],
+          "old_excerpt": "            for overlay_frame in scope_frame.active_overlays(&mut removed_overlays).rev() {\n                if let Some(type_alias_id) = overlay_frame.type_aliases.get(name) {\n                    return Some(*type_alias_id);",
+          "new_excerpt": "            for overlay_frame in scope_frame.active_overlays(&mut removed_overlays).rev() {\n                visibility.push(&overlay_frame.visibility);\n"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: macro_invocation",
+        "right_fallback_reason": "unsupported binding context: macro_invocation",
+        "decision": "rejected",
+        "reason": "different_function_signature",
+        "input_role_comparison": {
+          "decision": "rejected",
+          "reason": "input_regrouping_is_typescript_only"
+        }
+      }
+    }
+  ],
+  "source_files": 1576,
+  "function_bodies": 14100,
+  "history_commits": 162,
+  "fix_labelled_commits": 69,
+  "changed_functions_compared": 370,
+  "missing_history_parents": 0,
+  "parse_error_files": [
+    "crates/nu-plugin-core/src/communication_mode/mod.rs"
+  ],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [
+    {
+      "check": "missed_clone_fix",
+      "commit": "ab6c901127083f940c39e68670850dbd69f1ee10",
+      "subject": "fix(modules): reloading a module picks up edits and drops what the file no longer exports (#19468)",
+      "changed": {
+        "path": "crates/nu-cmd-lang/src/core_commands/use_.rs",
+        "symbol": "Use::run#1",
+        "line": 60,
+        "end_line": 169
+      },
+      "changed_at_fix": {
+        "path": "crates/nu-cmd-lang/src/core_commands/use_.rs",
+        "symbol": "Use::run#1",
+        "line": 63,
+        "end_line": 174
+      },
+      "survivor": {
+        "path": "crates/nu-cmd-lang/src/core_commands/export_use.rs",
+        "symbol": "ExportUse::run#1",
+        "line": 49,
+        "end_line": 158
+      },
+      "similarity": 1.0,
+      "normalized_exact": true,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 117,
+          "new_line": 122,
+          "survivor_line": 106,
+          "removed_tokens": [],
+          "added_tokens": [
+            ".",
+            "or_else",
+            "(",
+            "|",
+            "|",
+            "$id",
+            ".",
+            "real_file",
+            "(",
+            ")",
+            ".",
+            "map",
+            "(",
+            "Path",
+            "::",
+            "to_path_buf",
+            ")",
+            ")"
+          ],
+          "old_excerpt": "                    get_dirs_var_from_call(caller_stack, call),\n                )?;\n                // module_arg_str maybe a directory, in this case",
+          "new_excerpt": "                // A bare module name isn't a path, but the module remembers its file.\n                .or_else(|| module.real_file().map(Path::to_path_buf));\n                // module_arg_str maybe a directory, in this case"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "destructured Rust let",
+        "right_fallback_reason": "destructured Rust let",
+        "decision": "accepted",
+        "reason": "same_complete_pre_fix_structure"
+      }
+    }
+  ],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Roles mode additionally accepts completely matching TypeScript bodies with conservatively mapped repacked inputs and matched nominal return assertions.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

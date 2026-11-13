@@ -1,0 +1,1232 @@
+{
+  "methodology": "Both corpora now inform matcher development; this is an in-sample comparison, not a fresh holdout.",
+  "corpora": [
+    {
+      "corpus": "original",
+      "scope_unchanged": true,
+      "broad_candidates_and_evidence_unchanged": true,
+      "before": 3,
+      "after": 3,
+      "useful_emitted": 3,
+      "known_false_positives_emitted": 0,
+      "unaudited_emitted": 0,
+      "newly_emitted": [],
+      "newly_suppressed": [],
+      "repositories": [
+        {
+          "repo": "adulting",
+          "revision": "c8baee7ca4cecbfdfc687dff7f4823c278720596",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "hono",
+          "revision": "f6fbaf0299c48eea9e656e03e2ffe7ac755e8823",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "kanspec",
+          "revision": "a99893d88d98b43616c07f5cfcf02d03c7048bf6",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "nushell",
+          "revision": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+          "before": 1,
+          "after": 1,
+          "rejected": 2
+        },
+        {
+          "repo": "oh-my-pi",
+          "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+          "before": 2,
+          "after": 2,
+          "rejected": 4
+        },
+        {
+          "repo": "ripgrep",
+          "revision": "178cc027e283fd965cb72d0a7395b219eada170c",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "scry",
+          "revision": "7927f36440ffc34469da551c782a6487826f05d1",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "tauri",
+          "revision": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "before": 0,
+          "after": 0,
+          "rejected": 2
+        },
+        {
+          "repo": "typescript-eslint",
+          "revision": "2838b498d03ef3a3808fa714f43ea653f4e589b0",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "vite",
+          "revision": "61622b8df68b7a8e657caa6f98d9b70069643abf",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        }
+      ],
+      "candidates": [
+        {
+          "repo": "nushell",
+          "commit": "ab6c901127083f940c39e68670850dbd69f1ee10",
+          "changed": {
+            "path": "crates/nu-cmd-lang/src/core_commands/use_.rs",
+            "symbol": "Use::run#1",
+            "line": 60,
+            "end_line": 169
+          },
+          "survivor": {
+            "path": "crates/nu-cmd-lang/src/core_commands/export_use.rs",
+            "symbol": "ExportUse::run#1",
+            "line": 49,
+            "end_line": 158
+          },
+          "prior_judgment": "useful_review",
+          "emitted_before": true,
+          "emitted_after": true,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "destructured Rust let",
+            "right_fallback_reason": "destructured Rust let",
+            "decision": "accepted",
+            "reason": "same_complete_pre_fix_structure"
+          }
+        },
+        {
+          "repo": "nushell",
+          "commit": "06e65cd925c0bc96b671612b8671010c5502ac48",
+          "changed": {
+            "path": "crates/nu-command/src/strings/split/column.rs",
+            "symbol": "split_column#1",
+            "line": 205,
+            "end_line": 233
+          },
+          "survivor": {
+            "path": "crates/nu-command/src/strings/split/row.rs",
+            "symbol": "split_row#1",
+            "line": 180,
+            "end_line": 197
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_complete_body",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "nushell",
+          "commit": "cf0c9a7734f11c376ec78e8547f01810e3b00490",
+          "changed": {
+            "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+            "symbol": "StateWorkingSet<'a>::find_type_alias#1",
+            "line": 629,
+            "end_line": 642
+          },
+          "survivor": {
+            "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+            "symbol": "StateWorkingSet<'a>::find_variable_in_current_frame#1",
+            "line": 860,
+            "end_line": 872
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: macro_invocation",
+            "right_fallback_reason": "unsupported binding context: macro_invocation",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "oh-my-pi",
+          "commit": "f948c61256e3c833166801c495ca7bd9eb7731b2",
+          "changed": {
+            "path": "packages/coding-agent/src/config/model-discovery.ts",
+            "symbol": "withTimeoutSignal#1",
+            "line": 52,
+            "end_line": 63
+          },
+          "survivor": {
+            "path": "packages/catalog/src/discovery/openai-compatible.ts",
+            "symbol": "withOpenAICompatibleDiscoveryTimeout#1",
+            "line": 12,
+            "end_line": 26
+          },
+          "prior_judgment": "useful_review",
+          "emitted_before": true,
+          "emitted_after": true,
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "accepted",
+            "reason": "same_complete_pre_fix_structure"
+          }
+        },
+        {
+          "repo": "oh-my-pi",
+          "commit": "f948c61256e3c833166801c495ca7bd9eb7731b2",
+          "changed": {
+            "path": "packages/coding-agent/src/config/model-discovery.ts",
+            "symbol": "withTimeoutSignal#1",
+            "line": 52,
+            "end_line": 63
+          },
+          "survivor": {
+            "path": "packages/catalog/src/provider-models/openai-compat.ts",
+            "symbol": "withCatalogDiscoveryTimeout#1",
+            "line": 46,
+            "end_line": 57
+          },
+          "prior_judgment": "useful_review",
+          "emitted_before": true,
+          "emitted_after": true,
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "accepted",
+            "reason": "same_complete_pre_fix_structure"
+          }
+        },
+        {
+          "repo": "oh-my-pi",
+          "commit": "fe84294538441c4aa135ffdd1e9cbaa9c3210eb5",
+          "changed": {
+            "path": "packages/ai/src/usage/openai-codex.ts",
+            "symbol": "buildUsageStatus#1",
+            "line": 266,
+            "end_line": 272
+          },
+          "survivor": {
+            "path": "packages/coding-agent/src/cli/usage-cli.ts",
+            "symbol": "historyStatus#1",
+            "line": 747,
+            "end_line": 753
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "optional_default_or_unsupported_parameter"
+            }
+          }
+        },
+        {
+          "repo": "oh-my-pi",
+          "commit": "91467c2f27f21c9cceb72ac434f569aa425632fa",
+          "changed": {
+            "path": "packages/coding-agent/src/modes/components/agent-hub.ts",
+            "symbol": "AgentHubOverlayComponent::#orderAsTree#1",
+            "line": 653,
+            "end_line": 740
+          },
+          "survivor": {
+            "path": "packages/coding-agent/src/modes/components/agent-hub-projection.ts",
+            "symbol": "projectAgentTree#1",
+            "line": 162,
+            "end_line": 248
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "TypeScript loop binding scope",
+            "right_fallback_reason": "TypeScript loop binding scope",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_requires_named_function"
+            }
+          }
+        },
+        {
+          "repo": "oh-my-pi",
+          "commit": "7a1183da91225eec2dd4e46dfa037e66567d8980",
+          "changed": {
+            "path": "packages/coding-agent/src/modes/components/btw-panel.ts",
+            "symbol": "BtwPanelComponent::#rebuild#1",
+            "line": 81,
+            "end_line": 97
+          },
+          "survivor": {
+            "path": "packages/coding-agent/src/modes/components/omfg-panel.ts",
+            "symbol": "OmfgPanelComponent::#rebuild#1",
+            "line": 95,
+            "end_line": 108
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_complete_body",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_requires_named_function"
+            }
+          }
+        },
+        {
+          "repo": "oh-my-pi",
+          "commit": "7a1183da91225eec2dd4e46dfa037e66567d8980",
+          "changed": {
+            "path": "packages/coding-agent/src/modes/controllers/btw-controller.ts",
+            "symbol": "BtwController::start#1",
+            "line": 106,
+            "end_line": 132
+          },
+          "survivor": {
+            "path": "packages/coding-agent/src/modes/controllers/omfg-controller.ts",
+            "symbol": "OmfgController::start#1",
+            "line": 58,
+            "end_line": 83
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_complete_body",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_requires_named_function"
+            }
+          }
+        },
+        {
+          "repo": "tauri",
+          "commit": "a1ea1b5e5ad4b75759fa773b7b78db288128b4af",
+          "changed": {
+            "path": "crates/tauri-utils/src/resources.rs",
+            "symbol": "normalize#1",
+            "line": 31,
+            "end_line": 43
+          },
+          "survivor": {
+            "path": "crates/tauri-utils/src/resources.rs",
+            "symbol": "resource_relpath#1",
+            "line": 17,
+            "end_line": 29
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: match_expression",
+            "right_fallback_reason": "unsupported binding context: match_expression",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "tauri",
+          "commit": "141d1c0d6f3a746f7f34618d00c2676c902dca67",
+          "changed": {
+            "path": "crates/tauri-utils/src/acl/build.rs",
+            "symbol": "read_permissions#1",
+            "line": 114,
+            "end_line": 146
+          },
+          "survivor": {
+            "path": "crates/tauri-utils/src/acl/build.rs",
+            "symbol": "read_global_scope_schemas#1",
+            "line": 189,
+            "end_line": 219
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "non-identifier binding",
+            "right_fallback_reason": "non-identifier binding",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "corpus": "holdout",
+      "scope_unchanged": true,
+      "broad_candidates_and_evidence_unchanged": true,
+      "before": 1,
+      "after": 2,
+      "useful_emitted": 2,
+      "known_false_positives_emitted": 0,
+      "unaudited_emitted": 0,
+      "newly_emitted": [
+        {
+          "repo": "pnpm",
+          "commit": "f876766c67811c61bd6421dcf9f61481718cc72a",
+          "changed": {
+            "path": "pnpm11/registry-access/commands/src/deprecation/common.ts",
+            "symbol": "fetchPackageMeta#1",
+            "line": 81,
+            "end_line": 98
+          },
+          "survivor": {
+            "path": "pnpm11/registry-access/commands/src/star/common.ts",
+            "symbol": "fetchPackumentWithStars#1",
+            "line": 120,
+            "end_line": 137
+          },
+          "prior_judgment": "useful_review",
+          "emitted_before": false,
+          "emitted_after": true,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "destructured or non-identifier parameter",
+            "right_fallback_reason": "destructured or non-identifier parameter",
+            "decision": "accepted",
+            "reason": "same_complete_body_after_input_regrouping",
+            "input_role_comparison": {
+              "decision": "accepted",
+              "reason": "same_complete_body_after_input_regrouping",
+              "input_mapping": [
+                {
+                  "left": {
+                    "kind": "positional",
+                    "position": 0,
+                    "name": "fetchFromRegistry",
+                    "annotation": [
+                      ":::",
+                      "type_identifier:FetchFromRegistry"
+                    ]
+                  },
+                  "right": {
+                    "kind": "property",
+                    "position": 0,
+                    "name": "fetchFromRegistry",
+                    "key": "fetchFromRegistry"
+                  }
+                },
+                {
+                  "left": {
+                    "kind": "property",
+                    "position": 1,
+                    "name": "authHeader",
+                    "key": "authHeader"
+                  },
+                  "right": {
+                    "kind": "property",
+                    "position": 0,
+                    "name": "authHeader",
+                    "key": "authHeader"
+                  }
+                },
+                {
+                  "left": {
+                    "kind": "property",
+                    "position": 1,
+                    "name": "packageName",
+                    "key": "packageName"
+                  },
+                  "right": {
+                    "kind": "property",
+                    "position": 0,
+                    "name": "packageName",
+                    "key": "packageName"
+                  }
+                },
+                {
+                  "left": {
+                    "kind": "property",
+                    "position": 1,
+                    "name": "packageUrl",
+                    "key": "packageUrl"
+                  },
+                  "right": {
+                    "kind": "positional",
+                    "position": 1,
+                    "name": "pkgUrl",
+                    "annotation": [
+                      ":::",
+                      "string:string"
+                    ]
+                  }
+                }
+              ],
+              "regrouped_inputs": 2,
+              "return_aliases": {
+                "left": "PackageMeta",
+                "right": "PackumentWithStars"
+              }
+            },
+            "exact_rejection_reason": "different_function_signature"
+          }
+        }
+      ],
+      "newly_suppressed": [],
+      "repositories": [
+        {
+          "repo": "tokio",
+          "revision": "ab0814fc8c62b3d8be40aad068e2fed6562cfeb0",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "clap",
+          "revision": "ec93e71255c0b833a34f50662a3fdb22f53f6ded",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "ruff",
+          "revision": "124210f4fde57836a8d8270fdcfb10ae3dacab31",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "starship",
+          "revision": "e3b64da0b660552377de8f7101a73a36b145791c",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "bat",
+          "revision": "8cf33bdde9a6e4c11d0f866415b1fc867df0cd40",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "pnpm",
+          "revision": "63765162e6346aa5a667be9c1b5ef61103f1c58a",
+          "before": 0,
+          "after": 1,
+          "rejected": 15
+        },
+        {
+          "repo": "query",
+          "revision": "19f555cf919a1438885d7d20c95b17b26d6d6859",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        },
+        {
+          "repo": "playwright",
+          "revision": "8534271f0413bae6a455b7cf43b2637391bc614b",
+          "before": 1,
+          "after": 1,
+          "rejected": 0
+        },
+        {
+          "repo": "vitest",
+          "revision": "47c87ebb5025010141cf8aa5dc69c5b57c10d2fa",
+          "before": 0,
+          "after": 0,
+          "rejected": 1
+        },
+        {
+          "repo": "vue-core",
+          "revision": "21738b527bac4a91eef9cbdfc2cc5ac1f3dbdec9",
+          "before": 0,
+          "after": 0,
+          "rejected": 0
+        }
+      ],
+      "candidates": [
+        {
+          "repo": "pnpm",
+          "commit": "df33506e7704b4e055923bf6df15749c4f8b1795",
+          "changed": {
+            "path": "pnpm/crates/package-manager/src/install/lockfile_freshness/directory_deps/recorded.rs",
+            "symbol": "check_recorded_directory#1",
+            "line": 13,
+            "end_line": 36
+          },
+          "survivor": {
+            "path": "pnpm/crates/package-manager/src/install/lockfile_freshness/directory_deps/package.rs",
+            "symbol": "check_legacy_directory#1",
+            "line": 90,
+            "end_line": 119
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "destructured or non-identifier parameter",
+            "right_fallback_reason": "destructured or non-identifier parameter",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "f876766c67811c61bd6421dcf9f61481718cc72a",
+          "changed": {
+            "path": "pnpm/crates/cli/src/cli_args/deprecate/registry.rs",
+            "symbol": "fetch_package_meta_once#1",
+            "line": 59,
+            "end_line": 90
+          },
+          "survivor": {
+            "path": "pnpm/crates/cli/src/cli_args/dist_tag/registry.rs",
+            "symbol": "fetch_dist_tags_once#1",
+            "line": 194,
+            "end_line": 223
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "destructured Rust let",
+            "right_fallback_reason": "destructured Rust let",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "f876766c67811c61bd6421dcf9f61481718cc72a",
+          "changed": {
+            "path": "pnpm11/registry-access/commands/src/deprecation/common.ts",
+            "symbol": "fetchPackageMeta#1",
+            "line": 81,
+            "end_line": 98
+          },
+          "survivor": {
+            "path": "pnpm11/registry-access/commands/src/star/common.ts",
+            "symbol": "fetchPackumentWithStars#1",
+            "line": 120,
+            "end_line": 137
+          },
+          "prior_judgment": "useful_review",
+          "emitted_before": false,
+          "emitted_after": true,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "destructured or non-identifier parameter",
+            "right_fallback_reason": "destructured or non-identifier parameter",
+            "decision": "accepted",
+            "reason": "same_complete_body_after_input_regrouping",
+            "input_role_comparison": {
+              "decision": "accepted",
+              "reason": "same_complete_body_after_input_regrouping",
+              "input_mapping": [
+                {
+                  "left": {
+                    "kind": "positional",
+                    "position": 0,
+                    "name": "fetchFromRegistry",
+                    "annotation": [
+                      ":::",
+                      "type_identifier:FetchFromRegistry"
+                    ]
+                  },
+                  "right": {
+                    "kind": "property",
+                    "position": 0,
+                    "name": "fetchFromRegistry",
+                    "key": "fetchFromRegistry"
+                  }
+                },
+                {
+                  "left": {
+                    "kind": "property",
+                    "position": 1,
+                    "name": "authHeader",
+                    "key": "authHeader"
+                  },
+                  "right": {
+                    "kind": "property",
+                    "position": 0,
+                    "name": "authHeader",
+                    "key": "authHeader"
+                  }
+                },
+                {
+                  "left": {
+                    "kind": "property",
+                    "position": 1,
+                    "name": "packageName",
+                    "key": "packageName"
+                  },
+                  "right": {
+                    "kind": "property",
+                    "position": 0,
+                    "name": "packageName",
+                    "key": "packageName"
+                  }
+                },
+                {
+                  "left": {
+                    "kind": "property",
+                    "position": 1,
+                    "name": "packageUrl",
+                    "key": "packageUrl"
+                  },
+                  "right": {
+                    "kind": "positional",
+                    "position": 1,
+                    "name": "pkgUrl",
+                    "annotation": [
+                      ":::",
+                      "string:string"
+                    ]
+                  }
+                }
+              ],
+              "regrouped_inputs": 2,
+              "return_aliases": {
+                "left": "PackageMeta",
+                "right": "PackumentWithStars"
+              }
+            },
+            "exact_rejection_reason": "different_function_signature"
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "f2b10fc8fc031b53333b8662ddd43bed3d99d992",
+          "changed": {
+            "path": "pnpr/crates/storage/src/metadata/sql.rs",
+            "symbol": "SqlMetadata::release_record_entry#1",
+            "line": 396,
+            "end_line": 412
+          },
+          "survivor": {
+            "path": "pnpr/crates/storage/src/metadata/sql.rs",
+            "symbol": "SqlMetadata::tag_history#1",
+            "line": 265,
+            "end_line": 281
+          },
+          "prior_judgment": "not_audited",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "destructured or non-identifier parameter",
+            "right_fallback_reason": "destructured or non-identifier parameter",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "f2b10fc8fc031b53333b8662ddd43bed3d99d992",
+          "changed": {
+            "path": "pnpr/crates/storage/src/metadata/sql.rs",
+            "symbol": "SqlMetadata::release_record_entry#1",
+            "line": 396,
+            "end_line": 412
+          },
+          "survivor": {
+            "path": "pnpr/crates/storage/src/metadata/sql.rs",
+            "symbol": "SqlMetadata::initial_publication#1",
+            "line": 358,
+            "end_line": 374
+          },
+          "prior_judgment": "not_audited",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "destructured or non-identifier parameter",
+            "right_fallback_reason": "destructured or non-identifier parameter",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "009dd02062206a594f1278ea36adb68c7a5d83f0",
+          "changed": {
+            "path": "pnpr/crates/storage/src/atomic_write.rs",
+            "symbol": "remove_if_present#1",
+            "line": 134,
+            "end_line": 140
+          },
+          "survivor": {
+            "path": "pnpr/crates/storage/src/local_store/hosted_backend.rs",
+            "symbol": "Store::remove_archive#1",
+            "line": 106,
+            "end_line": 112
+          },
+          "prior_judgment": "not_audited",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: match_expression",
+            "right_fallback_reason": "unsupported binding context: match_expression",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "009dd02062206a594f1278ea36adb68c7a5d83f0",
+          "changed": {
+            "path": "pnpr/crates/storage/src/atomic_write.rs",
+            "symbol": "remove_if_present#1",
+            "line": 134,
+            "end_line": 140
+          },
+          "survivor": {
+            "path": "pnpr/crates/storage/src/local_store.rs",
+            "symbol": "Store::remove_blob#1",
+            "line": 176,
+            "end_line": 186
+          },
+          "prior_judgment": "not_audited",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: match_expression",
+            "right_fallback_reason": "unsupported binding context: match_expression",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "009dd02062206a594f1278ea36adb68c7a5d83f0",
+          "changed": {
+            "path": "pnpr/crates/storage/src/atomic_write.rs",
+            "symbol": "remove_if_present#1",
+            "line": 134,
+            "end_line": 140
+          },
+          "survivor": {
+            "path": "pnpr/crates/storage/src/local_store.rs",
+            "symbol": "Store::remove_package#1",
+            "line": 163,
+            "end_line": 170
+          },
+          "prior_judgment": "not_audited",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: match_expression",
+            "right_fallback_reason": "unsupported binding context: match_expression",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "009dd02062206a594f1278ea36adb68c7a5d83f0",
+          "changed": {
+            "path": "pnpr/crates/storage/src/atomic_write.rs",
+            "symbol": "remove_if_present#1",
+            "line": 134,
+            "end_line": 140
+          },
+          "survivor": {
+            "path": "pnpr/crates/storage/src/local_store.rs",
+            "symbol": "Store::remove_record#1",
+            "line": 279,
+            "end_line": 286
+          },
+          "prior_judgment": "not_audited",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: match_expression",
+            "right_fallback_reason": "unsupported binding context: match_expression",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "dce692e95f1b9a81606cf91cc6e630198e72b09f",
+          "changed": {
+            "path": "pnpm11/installing/deps-restorer/src/linkAllPkgs.ts",
+            "symbol": "findSideEffectsCacheKey#1",
+            "line": 135,
+            "end_line": 164
+          },
+          "survivor": {
+            "path": "pnpm11/installing/deps-restorer/src/linkHoistedModules.ts",
+            "symbol": "pickSideEffectsCacheKey#1",
+            "line": 407,
+            "end_line": 435
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "destructured or non-identifier parameter",
+            "right_fallback_reason": "destructured or non-identifier parameter",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "different_callable_or_return_shape"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "9e44e8773545f80137f426f68a32376cadecbda1",
+          "changed": {
+            "path": "pnpr/crates/auth/src/sqlx_backend/mysql.rs",
+            "symbol": "MysqlDatabase::list_accounts#1",
+            "line": 88,
+            "end_line": 97
+          },
+          "survivor": {
+            "path": "pnpr/crates/auth/src/sqlx_backend/postgres.rs",
+            "symbol": "PostgresDatabase::list_accounts#1",
+            "line": 119,
+            "end_line": 128
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_complete_body",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "9e44e8773545f80137f426f68a32376cadecbda1",
+          "changed": {
+            "path": "pnpr/crates/auth/src/sqlx_backend/mysql.rs",
+            "symbol": "MysqlDatabase::list_accounts#1",
+            "line": 88,
+            "end_line": 97
+          },
+          "survivor": {
+            "path": "pnpr/crates/auth/src/sqlx_backend/postgres/accounts.rs",
+            "symbol": "PostgresDatabase::accounts_by_id_impl#1",
+            "line": 146,
+            "end_line": 159
+          },
+          "prior_judgment": "not_audited",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "9e44e8773545f80137f426f68a32376cadecbda1",
+          "changed": {
+            "path": "pnpr/crates/auth/src/sqlx_backend/mysql/tokens.rs",
+            "symbol": "MysqlDatabase::find_owned_token_impl#1",
+            "line": 57,
+            "end_line": 73
+          },
+          "survivor": {
+            "path": "pnpr/crates/auth/src/sqlx_backend/postgres/tokens.rs",
+            "symbol": "PostgresDatabase::find_owned_token_impl#1",
+            "line": 56,
+            "end_line": 72
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_complete_body",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "24ff92a4f27ec173edfdcfe00c949fe0f16883b5",
+          "changed": {
+            "path": "pnpm/crates/cli/src/cli_args/token/registry.rs",
+            "symbol": "create_token#1",
+            "line": 185,
+            "end_line": 224
+          },
+          "survivor": {
+            "path": "pnpm/crates/cli/src/cli_args/token/registry.rs",
+            "symbol": "fetch_token_list_page#1",
+            "line": 118,
+            "end_line": 150
+          },
+          "prior_judgment": "not_audited",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: macro_invocation",
+            "right_fallback_reason": "destructured Rust let",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "bbae0b99fe9dbd617869b9c948c3cae26614b6aa",
+          "changed": {
+            "path": "pnpr/crates/auth/src/libsql_backend.rs",
+            "symbol": "LibsqlAuth::stored_hash#1",
+            "line": 147,
+            "end_line": 155
+          },
+          "survivor": {
+            "path": "pnpr/crates/auth/src/libsql_backend/accounts.rs",
+            "symbol": "LibsqlAuth::account_name_by_id#1",
+            "line": 94,
+            "end_line": 104
+          },
+          "prior_judgment": "not_audited",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: macro_invocation",
+            "right_fallback_reason": "unsupported binding context: macro_invocation",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "pnpm",
+          "commit": "bbae0b99fe9dbd617869b9c948c3cae26614b6aa",
+          "changed": {
+            "path": "pnpr/crates/auth/src/libsql_backend.rs",
+            "symbol": "LibsqlAuth::stored_hash#1",
+            "line": 147,
+            "end_line": 155
+          },
+          "survivor": {
+            "path": "pnpr/crates/auth/src/libsql_backend/accounts.rs",
+            "symbol": "LibsqlAuth::active_account_name_by_id#1",
+            "line": 106,
+            "end_line": 116
+          },
+          "prior_judgment": "not_audited",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: macro_invocation",
+            "right_fallback_reason": "unsupported binding context: macro_invocation",
+            "decision": "rejected",
+            "reason": "different_function_signature",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_is_typescript_only"
+            }
+          }
+        },
+        {
+          "repo": "playwright",
+          "commit": "bac1f9f67e9cff2a8e7ecbac25d56ec3bb1d15c6",
+          "changed": {
+            "path": "packages/playwright-core/src/server/webkit/wkExecutionContext.ts",
+            "symbol": "WKExecutionContext::evaluateWithArguments#1",
+            "line": 66,
+            "end_line": 88
+          },
+          "survivor": {
+            "path": "packages/playwright-core/src/server/webkit/webview/wvExecutionContext.ts",
+            "symbol": "WVExecutionContext::evaluateWithArguments#1",
+            "line": 66,
+            "end_line": 88
+          },
+          "prior_judgment": "useful_review",
+          "emitted_before": true,
+          "emitted_after": true,
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: catch_clause",
+            "right_fallback_reason": "unsupported binding context: catch_clause",
+            "decision": "accepted",
+            "reason": "same_complete_pre_fix_structure"
+          }
+        },
+        {
+          "repo": "vitest",
+          "commit": "47c87ebb5025010141cf8aa5dc69c5b57c10d2fa",
+          "changed": {
+            "path": "packages/vitest/src/node/pools/workers/forksWorker.ts",
+            "symbol": "ForksPoolWorker::constructor#1",
+            "line": 30,
+            "end_line": 38
+          },
+          "survivor": {
+            "path": "packages/vitest/src/node/pools/workers/threadsWorker.ts",
+            "symbol": "ThreadsPoolWorker::constructor#1",
+            "line": 19,
+            "end_line": 27
+          },
+          "prior_judgment": "false_positive",
+          "emitted_before": false,
+          "emitted_after": false,
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_complete_body",
+            "input_role_comparison": {
+              "decision": "rejected",
+              "reason": "input_regrouping_requires_named_function"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
