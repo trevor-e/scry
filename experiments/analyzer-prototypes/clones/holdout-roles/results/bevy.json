@@ -1,0 +1,122 @@
+{
+  "repo": "bevy",
+  "root": "/private/tmp/scry-clone-roles-holdout/bevy",
+  "revision": "41a1282e376ce0dcd9808e1b3f6c071803363eb4",
+  "matching": "roles",
+  "broad_candidates": 1,
+  "rejected_candidates": [
+    {
+      "check": "missed_clone_fix",
+      "commit": "0de7fb777a27465463cb3f94b558fda8613d8248",
+      "subject": "Fix incorrect debug asserts in contiguous par_iter (#26173)",
+      "changed": {
+        "path": "crates/bevy_ecs/src/query/fetch.rs",
+        "symbol": "Ref<'_, T>::fetch_contiguous#1",
+        "line": 2311,
+        "end_line": 2357
+      },
+      "changed_at_fix": {
+        "path": "crates/bevy_ecs/src/query/fetch.rs",
+        "symbol": "Ref<'_, T>::fetch_contiguous#1",
+        "line": 2313,
+        "end_line": 2359
+      },
+      "survivor": {
+        "path": "crates/bevy_ecs/src/query/fetch.rs",
+        "symbol": "&mut T::fetch_contiguous#1",
+        "line": 3036,
+        "end_line": 3078
+      },
+      "similarity": 0.886,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 2317,
+          "new_line": 2320,
+          "survivor_line": 3042,
+          "removed_tokens": [],
+          "added_tokens": [
+            "debug_assert",
+            "!",
+            "(",
+            "$id",
+            ".",
+            "$id",
+            "<",
+            "$id",
+            ".",
+            "$id",
+            ")",
+            ";",
+            "debug_assert",
+            "!",
+            "(",
+            "$id",
+            ".",
+            "$id",
+            "as",
+            "usize",
+            "<=",
+            "$id",
+            ".",
+            "$id",
+            "(",
+            ")",
+            ")",
+            ";"
+          ],
+          "old_excerpt": "    ) -> Self::Contiguous<'w, 's> {\n        fetch.components.extract(\n            |table| {",
+          "new_excerpt": "        // `entities` covers the whole table; `range` may cover only part of it.\n        debug_assert!(range.start < range.end);\n        debug_assert!(range.end as usize <= entities.len());\n"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "destructured Rust let",
+        "right_fallback_reason": "destructured Rust let",
+        "decision": "rejected",
+        "reason": "different_function_signature",
+        "input_role_comparison": {
+          "decision": "rejected",
+          "reason": "input_regrouping_is_typescript_only"
+        }
+      }
+    }
+  ],
+  "source_files": 1455,
+  "function_bodies": 18906,
+  "history_commits": 200,
+  "fix_labelled_commits": 43,
+  "changed_functions_compared": 42,
+  "missing_history_parents": 0,
+  "parse_error_files": [
+    "crates/bevy_anti_alias/src/lib.rs",
+    "crates/bevy_ecs/src/query/state.rs",
+    "crates/bevy_gizmos_render/src/lib.rs",
+    "crates/bevy_gizmos_render/src/retained.rs",
+    "crates/bevy_input_focus/src/lib.rs",
+    "crates/bevy_light/src/lib.rs",
+    "crates/bevy_pbr/src/render/mesh.rs",
+    "crates/bevy_pbr/src/render/mesh_view_bindings.rs",
+    "crates/bevy_render/src/lib.rs",
+    "crates/bevy_render/src/renderer/render_context.rs",
+    "crates/bevy_scene/src/lib.rs",
+    "crates/bevy_sprite_render/src/lib.rs",
+    "crates/bevy_ui_render/src/lib.rs"
+  ],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Roles mode additionally accepts completely matching TypeScript bodies with conservatively mapped repacked inputs and matched nominal return assertions.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

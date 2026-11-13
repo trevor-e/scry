@@ -1,0 +1,158 @@
+{
+  "repo": "vscode",
+  "root": "/private/tmp/scry-clone-roles-holdout/vscode",
+  "revision": "54ab79431a5858c9546c7161e5afe5fd9e8570d6",
+  "matching": "roles",
+  "broad_candidates": 1,
+  "rejected_candidates": [
+    {
+      "check": "missed_clone_fix",
+      "commit": "20b6105c1dd7e383ddba2af85a30dd483ef28a67",
+      "subject": "fix(terminal): support multiple action view items for create terminal dropdown (#346848) (#346854)",
+      "changed": {
+        "path": "src/vs/workbench/contrib/terminal/browser/terminalEditor.ts",
+        "symbol": "TerminalEditor::_updateTabActionBar#1",
+        "line": 157,
+        "end_line": 161
+      },
+      "changed_at_fix": {
+        "path": "src/vs/workbench/contrib/terminal/browser/terminalEditor.ts",
+        "symbol": "TerminalEditor::_updateTabActionBar#1",
+        "line": 195,
+        "end_line": 201
+      },
+      "survivor": {
+        "path": "src/vs/workbench/contrib/terminal/browser/terminalView.ts",
+        "symbol": "TerminalViewPane::_updateTabActionBar#1",
+        "line": 319,
+        "end_line": 323
+      },
+      "similarity": 0.9841,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 158,
+          "new_line": 196,
+          "survivor_line": 320,
+          "removed_tokens": [],
+          "added_tokens": [
+            "for",
+            "(",
+            "const",
+            "$id",
+            "of"
+          ],
+          "old_excerpt": "\tprivate _updateTabActionBar(profiles: ITerminalProfile[]): void {\n\t\tthis._disposableStore.clear();\n\t\tconst actions = getTerminalActionBarArgs(TerminalLocation.Editor, profiles, this._getDefaultProfileName(), this._terminalProfileService.contributedProfiles, this._terminalService, this._dropdownMenu, this._disposableStore);",
+          "new_excerpt": "\tprivate _updateTabActionBar(profiles: ITerminalProfile[]): void {\n\t\tfor (const dropdown of this._newDropdowns) {\n\t\t\tdropdown.actionDisposables.clear();"
+        },
+        {
+          "operation": "replace",
+          "old_line": 158,
+          "new_line": 196,
+          "survivor_line": 320,
+          "removed_tokens": [
+            "_disposableStore"
+          ],
+          "added_tokens": [
+            "_newDropdowns",
+            ")",
+            "{",
+            "$id",
+            ".",
+            "actionDisposables"
+          ],
+          "old_excerpt": "\tprivate _updateTabActionBar(profiles: ITerminalProfile[]): void {\n\t\tthis._disposableStore.clear();\n\t\tconst actions = getTerminalActionBarArgs(TerminalLocation.Editor, profiles, this._getDefaultProfileName(), this._terminalProfileService.contributedProfiles, this._terminalService, this._dropdownMenu, this._disposableStore);",
+          "new_excerpt": "\tprivate _updateTabActionBar(profiles: ITerminalProfile[]): void {\n\t\tfor (const dropdown of this._newDropdowns) {\n\t\t\tdropdown.actionDisposables.clear();\n\t\t\tconst actions = getTerminalActionBarArgs(TerminalLocation.Editor, profiles, this._getDefaultProfileName(), this._terminalProfileService.contributedProfiles, this._terminalService, this._dropdownMenu, dropdown.actionDisposables);"
+        },
+        {
+          "operation": "replace",
+          "old_line": 159,
+          "new_line": 198,
+          "survivor_line": 321,
+          "removed_tokens": [
+            "this"
+          ],
+          "added_tokens": [
+            "$id"
+          ],
+          "old_excerpt": "\t\tthis._disposableStore.clear();\n\t\tconst actions = getTerminalActionBarArgs(TerminalLocation.Editor, profiles, this._getDefaultProfileName(), this._terminalProfileService.contributedProfiles, this._terminalService, this._dropdownMenu, this._disposableStore);\n\t\tthis._newDropdown.value?.update(actions.dropdownAction, actions.dropdownMenuActions);",
+          "new_excerpt": "\t\t\tdropdown.actionDisposables.clear();\n\t\t\tconst actions = getTerminalActionBarArgs(TerminalLocation.Editor, profiles, this._getDefaultProfileName(), this._terminalProfileService.contributedProfiles, this._terminalService, this._dropdownMenu, dropdown.actionDisposables);\n\t\t\tdropdown.update(actions.dropdownAction, actions.dropdownMenuActions);"
+        },
+        {
+          "operation": "replace",
+          "old_line": 159,
+          "new_line": 198,
+          "survivor_line": 321,
+          "removed_tokens": [
+            "_disposableStore"
+          ],
+          "added_tokens": [
+            "actionDisposables"
+          ],
+          "old_excerpt": "\t\tthis._disposableStore.clear();\n\t\tconst actions = getTerminalActionBarArgs(TerminalLocation.Editor, profiles, this._getDefaultProfileName(), this._terminalProfileService.contributedProfiles, this._terminalService, this._dropdownMenu, this._disposableStore);\n\t\tthis._newDropdown.value?.update(actions.dropdownAction, actions.dropdownMenuActions);",
+          "new_excerpt": "\t\t\tdropdown.actionDisposables.clear();\n\t\t\tconst actions = getTerminalActionBarArgs(TerminalLocation.Editor, profiles, this._getDefaultProfileName(), this._terminalProfileService.contributedProfiles, this._terminalService, this._dropdownMenu, dropdown.actionDisposables);\n\t\t\tdropdown.update(actions.dropdownAction, actions.dropdownMenuActions);"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_complete_body",
+        "input_role_comparison": {
+          "decision": "rejected",
+          "reason": "input_regrouping_requires_named_function"
+        }
+      }
+    }
+  ],
+  "source_files": 9981,
+  "function_bodies": 122037,
+  "history_commits": 200,
+  "fix_labelled_commits": 12,
+  "changed_functions_compared": 27,
+  "missing_history_parents": 0,
+  "parse_error_files": [
+    "build/next/index.ts",
+    "extensions/copilot/src/extension/prompt/node/intentDetector.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/executionSubagentPrompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/openai/gpt51CodexPrompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/openai/gpt51Prompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/openai/gpt52Prompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/openai/gpt53CodexPrompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/openai/gpt54Prompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/openai/gpt55Prompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/openai/gpt56Prompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/openai/gpt5Prompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/openai/gpt6Prompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/agent/vscModelPrompts.tsx",
+    "extensions/copilot/src/extension/prompts/node/base/copilotIdentity.tsx",
+    "extensions/copilot/src/extension/prompts/node/panel/panelChatFixPrompt.tsx",
+    "extensions/copilot/src/extension/prompts/node/panel/search.tsx",
+    "extensions/copilot/src/extension/typescriptContext/serverPlugin/src/common/typescripts.ts",
+    "extensions/copilot/src/platform/telemetry/common/telemetry.ts",
+    "src/vs/code/electron-browser/workbench/workbench.ts",
+    "src/vs/platform/agentHost/node/agentHostDatabase.ts",
+    "src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts",
+    "src/vs/platform/browserView/electron-browser/preload-browserView.ts",
+    "src/vs/sessions/electron-browser/sessions.ts",
+    "src/vs/workbench/contrib/issue/browser/issueFormService.ts",
+    "src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts"
+  ],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Roles mode additionally accepts completely matching TypeScript bodies with conservatively mapped repacked inputs and matched nominal return assertions.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

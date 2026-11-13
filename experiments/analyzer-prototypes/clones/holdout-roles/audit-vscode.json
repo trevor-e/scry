@@ -1,0 +1,97 @@
+{
+  "repo": "vscode",
+  "revision": "54ab79431a5858c9546c7161e5afe5fd9e8570d6",
+  "rejected_index": 0,
+  "fix_commit": "20b6105c1dd7e383ddba2af85a30dd483ef28a67",
+  "changed_symbol": "TerminalEditor::_updateTabActionBar#1",
+  "survivor": {
+    "path": "src/vs/workbench/contrib/terminal/browser/terminalView.ts",
+    "symbol": "TerminalViewPane::_updateTabActionBar#1",
+    "line": 319,
+    "end_line": 323
+  },
+  "classification": "unresolved",
+  "emitted": false,
+  "detector_rejection": {
+    "left_mode": "resolved_locals",
+    "right_mode": "resolved_locals",
+    "left_fallback_reason": null,
+    "right_fallback_reason": null,
+    "decision": "rejected",
+    "reason": "different_complete_body",
+    "input_role_comparison": {
+      "decision": "rejected",
+      "reason": "input_regrouping_requires_named_function"
+    }
+  },
+  "summary": "The editor fix supports multiple toolbar owners without cross-disposing their dropdowns. The panel retains a singleton dropdown. Both its pane-header toolbar and merged container toolbar can request view items from the same pane, so the different Panel versus Editor enum does not dismiss propagation. Whether unmerging exposes a stale disposed dropdown depends on indirect refresh ordering not established in this source audit.",
+  "evidence": [
+    {
+      "path": "src/vs/workbench/contrib/terminal/browser/terminalEditor.ts",
+      "line": 195,
+      "end_line": 201,
+      "fact": "Fixed helper updates every tracked dropdown with independent action disposables. Commit describes pinned editor rows as the trigger."
+    },
+    {
+      "path": "src/vs/workbench/contrib/terminal/browser/terminalView.ts",
+      "line": 289,
+      "end_line": 298,
+      "fact": "New action requests clear shared actions and replace one MutableDisposable dropdown; lines 319-323 update only that singleton."
+    },
+    {
+      "path": "src/vs/base/common/lifecycle.ts",
+      "line": 592,
+      "end_line": 601,
+      "fact": "Assigning a different MutableDisposable value disposes the prior item at line 597."
+    },
+    {
+      "path": "src/vs/workbench/browser/parts/views/viewPane.ts",
+      "line": 491,
+      "end_line": 508,
+      "fact": "Header toolbar requests its own item from createActionViewItem."
+    },
+    {
+      "path": "src/vs/workbench/browser/parts/views/viewPaneContainer.ts",
+      "line": 592,
+      "end_line": 595,
+      "fact": "Merged container toolbar delegates item creation to the same sole pane."
+    },
+    {
+      "path": "src/vs/workbench/contrib/terminal/browser/terminal.contribution.ts",
+      "line": 112,
+      "fact": "Terminal container enables mergeViewWithContainerWhenSingleView."
+    },
+    {
+      "path": "src/vs/workbench/browser/parts/views/viewPaneContainer.ts",
+      "line": 705,
+      "end_line": 715,
+      "fact": "Adding panes updates header visibility and container title area. No direct recreation of the existing pane toolbar here; header toggling is at lines 1134-1158."
+    },
+    {
+      "path": "src/vs/base/browser/ui/splitview/paneview.ts",
+      "line": 209,
+      "end_line": 216,
+      "fact": "Header visibility invokes updateHeader; lines 331-353 change state and CSS, not action-item ownership."
+    },
+    {
+      "path": "src/vs/workbench/browser/parts/views/viewPane.ts",
+      "line": 713,
+      "end_line": 734,
+      "fact": "Menu-driven updateActions can rebuild header items and emit a title update. Its ordering during a merge transition is the unresolved question."
+    },
+    {
+      "path": "src/vs/workbench/contrib/terminal/test/browser/terminalEditor.test.ts",
+      "line": 62,
+      "end_line": 95,
+      "fact": "Read-only regression evidence creates two editor dropdowns and verifies independent lifetime/profile updates, not panel transitions."
+    }
+  ],
+  "counterevidence_and_limits": [
+    "The documented trigger is editor pinned rows, not panel transitions.",
+    "Only one panel title is intended to be visible when merged; replacement can be legitimate if indirect menu/context or layout events reconstruct the header item before it is shown.",
+    "Two independent source reviews found no direct reconstruction on unmerge but did not establish ordering of indirect events or execute the UI.",
+    "No target code, UI, tests, builds, or runtime reproduction executed."
+  ],
+  "follow_up": "Check terminal-pane merged-to-unmerged action-item ownership and subsequent profile updates before classifying this as a missed fix or false positive.",
+  "detector_changes": false
+}

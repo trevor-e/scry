@@ -1,0 +1,33 @@
+{
+  "repo": "angular",
+  "root": "/private/tmp/scry-clone-roles-holdout/angular",
+  "revision": "551c446d98e2512e793f7254d7eb4c932c2450ef",
+  "matching": "roles",
+  "broad_candidates": 0,
+  "rejected_candidates": [],
+  "source_files": 3252,
+  "function_bodies": 17679,
+  "history_commits": 200,
+  "fix_labelled_commits": 74,
+  "changed_functions_compared": 154,
+  "missing_history_parents": 0,
+  "parse_error_files": [
+    "packages/compiler-cli/preprocessor/ng-analyze/src/physical_fs.rs",
+    "packages/core/src/testability/testability.ts",
+    "packages/forms/signals/src/api/types.ts",
+    "packages/platform-browser/animations/async/src/async_animation_renderer.ts"
+  ],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Roles mode additionally accepts completely matching TypeScript bodies with conservatively mapped repacked inputs and matched nominal return assertions.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

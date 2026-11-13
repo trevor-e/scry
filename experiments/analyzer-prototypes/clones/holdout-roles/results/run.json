@@ -1,0 +1,239 @@
+{
+  "detector_sha256_before": {
+    "probe.py": "723d4e7b65580c299f831a1e99041f1336cbb4707b21415636b4bf7898dc2d0d",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8",
+    "input_roles.py": "210aa2ac263865f643de36f59dc99bdc0d5f58ce9c41515b419cf893d61744b3"
+  },
+  "detector_sha256_after": {
+    "probe.py": "723d4e7b65580c299f831a1e99041f1336cbb4707b21415636b4bf7898dc2d0d",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8",
+    "input_roles.py": "210aa2ac263865f643de36f59dc99bdc0d5f58ce9c41515b419cf893d61744b3"
+  },
+  "protocol_sha256": "8092415ffc8f599fccc5780767cab93511e192db2f24eeaff26cccd4d4994f06",
+  "runner_sha256": "0320be4b906115f726a7466fc6b2fe44937c35ae2b8d22c9a1286ad6b6a71a1e",
+  "parameters": {
+    "matching": "roles",
+    "commits": 200,
+    "similarity": 0.85
+  },
+  "dependencies": {
+    "tree-sitter": "0.26.1",
+    "tree-sitter-rust": "0.24.2",
+    "tree-sitter-typescript": "0.23.2"
+  },
+  "python": "3.15.2 (main, Oct 25 2026, 16:57:51) [Clang 21.0.0 (clang-2100.3.34.2)]",
+  "commands": [
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-roles-holdout/angular",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-roles-holdout/axum",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-roles-holdout/bevy",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-roles-holdout/excalidraw",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-roles-holdout/helix",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-roles-holdout/hyper",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-roles-holdout/trpc",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-roles-holdout/typescript",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-roles-holdout/uv",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-roles-holdout/vscode",
+      "--matching",
+      "roles",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ]
+  ],
+  "reports": [
+    {
+      "repo": "angular",
+      "revision": "551c446d98e2512e793f7254d7eb4c932c2450ef",
+      "findings": 0,
+      "exact_acceptances": 0,
+      "role_acceptances": 0,
+      "rejected": 0,
+      "source_files": 3252,
+      "history_commits": 200
+    },
+    {
+      "repo": "axum",
+      "revision": "9ef7944fa534eb7aae8048a2a6a514adc1bf8207",
+      "findings": 0,
+      "exact_acceptances": 0,
+      "role_acceptances": 0,
+      "rejected": 0,
+      "source_files": 114,
+      "history_commits": 200
+    },
+    {
+      "repo": "bevy",
+      "revision": "41a1282e376ce0dcd9808e1b3f6c071803363eb4",
+      "findings": 0,
+      "exact_acceptances": 0,
+      "role_acceptances": 0,
+      "rejected": 1,
+      "source_files": 1455,
+      "history_commits": 200
+    },
+    {
+      "repo": "excalidraw",
+      "revision": "82d5847e57dcb6fb5982833ea9ec2137fe0b2bd5",
+      "findings": 0,
+      "exact_acceptances": 0,
+      "role_acceptances": 0,
+      "rejected": 2,
+      "source_files": 511,
+      "history_commits": 200
+    },
+    {
+      "repo": "helix",
+      "revision": "a714a818a3a4f6dd5aad3b003a78692f90a1703f",
+      "findings": 0,
+      "exact_acceptances": 0,
+      "role_acceptances": 0,
+      "rejected": 0,
+      "source_files": 224,
+      "history_commits": 200
+    },
+    {
+      "repo": "hyper",
+      "revision": "b638fc0de351987f3eaffa2bdabd393c8679a9e8",
+      "findings": 0,
+      "exact_acceptances": 0,
+      "role_acceptances": 0,
+      "rejected": 0,
+      "source_files": 71,
+      "history_commits": 200
+    },
+    {
+      "repo": "trpc",
+      "revision": "e2e07e70947c6bc900d7a21450a113bb8220c4e1",
+      "findings": 0,
+      "exact_acceptances": 0,
+      "role_acceptances": 0,
+      "rejected": 0,
+      "source_files": 440,
+      "history_commits": 200
+    },
+    {
+      "repo": "typescript",
+      "revision": "056d69edb807d4cd4351059f084a7f191c6aea0f",
+      "findings": 0,
+      "exact_acceptances": 0,
+      "role_acceptances": 0,
+      "rejected": 0,
+      "source_files": 85,
+      "history_commits": 200
+    },
+    {
+      "repo": "uv",
+      "revision": "9b4fe9027f1682ed3e3c96d990ce9a9e1bb51b5d",
+      "findings": 0,
+      "exact_acceptances": 0,
+      "role_acceptances": 0,
+      "rejected": 0,
+      "source_files": 660,
+      "history_commits": 200
+    },
+    {
+      "repo": "vscode",
+      "revision": "54ab79431a5858c9546c7161e5afe5fd9e8570d6",
+      "findings": 0,
+      "exact_acceptances": 0,
+      "role_acceptances": 0,
+      "rejected": 1,
+      "source_files": 9981,
+      "history_commits": 200
+    }
+  ]
+}

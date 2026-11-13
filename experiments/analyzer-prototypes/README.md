@@ -10,6 +10,8 @@ These are standalone experiments. They do not change scry's scan output, scoring
 
 **Input-regrouping follow-up:** the current default also recognizes bounded TypeScript parameter repacking. Rerunning both corpora adds only the missed pnpm lead (4 → 5 useful locations total); all fourteen audited false-positive pairs remain filtered. See [the comparison and validation](clones/relaxed/README.md). Both corpora now inform development.
 
+**Frozen regrouping evaluation:** ten additional repositories produce no alerts. Auditing all four rejected pairs finds two appropriate rejections, one Excalidraw maintenance miss, and one unresolved VS Code lifecycle concern. The new fallback still has no positive holdout example. See [the second fresh-batch report](clones/holdout-roles/README.md).
+
 ## Results
 
 | Prototype | Actual analysis coverage | Emitted candidates | Source-review outcome |

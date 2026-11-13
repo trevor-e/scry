@@ -1,0 +1,207 @@
+{
+  "method": "Read-only source manifest, detector, Git, metadata, and sampling review. No target repository code, tests, builds, or registry requests executed.",
+  "protocol_commit": "e26b084b92f1ef1306536301cd9617576542b41c",
+  "detector_revision_verified": "7e198b56453eea8823aaf5a2a7a72a56c9a753b0",
+  "detector_sha256_verified": {
+    "probe.py": "723d4e7b65580c299f831a1e99041f1336cbb4707b21415636b4bf7898dc2d0d",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8",
+    "input_roles.py": "210aa2ac263865f643de36f59dc99bdc0d5f58ce9c41515b419cf893d61744b3"
+  },
+  "all_ten_pinned_revisions_origins_and_clean_tracked_trees_verified": true,
+  "fresh_vs_both_prior_corpora": true,
+  "all_commands_use_frozen_parameters": true,
+  "dependencies_verified": {
+    "tree-sitter": "0.26.1",
+    "tree-sitter-rust": "0.24.2",
+    "tree-sitter-typescript": "0.23.2"
+  },
+  "totals": {
+    "source_files": 16793,
+    "function_bodies": 177700,
+    "history_commits": 2000,
+    "fix_labelled_commits": 504,
+    "changed_functions_compared": 916,
+    "missing_history_parents": 0,
+    "candidates_omitted_by_per_function_cap": 0,
+    "broad_candidates": 4,
+    "emitted_candidates": 0,
+    "rejected_candidates": 4,
+    "head_files_with_parse_errors": 49
+  },
+  "acceptance_paths": {
+    "exact": 0,
+    "input_roles": 0
+  },
+  "eligible_files_by_language": [
+    {
+      "repo": "axum",
+      "rust": 114,
+      "typescript": 0
+    },
+    {
+      "repo": "hyper",
+      "rust": 71,
+      "typescript": 0
+    },
+    {
+      "repo": "uv",
+      "rust": 660,
+      "typescript": 0
+    },
+    {
+      "repo": "helix",
+      "rust": 224,
+      "typescript": 0
+    },
+    {
+      "repo": "bevy",
+      "rust": 1454,
+      "typescript": 1
+    },
+    {
+      "repo": "typescript",
+      "rust": 0,
+      "typescript": 85
+    },
+    {
+      "repo": "vscode",
+      "rust": 113,
+      "typescript": 9868
+    },
+    {
+      "repo": "angular",
+      "rust": 78,
+      "typescript": 3174
+    },
+    {
+      "repo": "trpc",
+      "rust": 0,
+      "typescript": 440
+    },
+    {
+      "repo": "excalidraw",
+      "rust": 0,
+      "typescript": 511
+    }
+  ],
+  "sampling": {
+    "independently_recomputed": true,
+    "population": {
+      "Rust": 1,
+      "TypeScript": 3
+    },
+    "selected_counts": {
+      "Rust": 1,
+      "TypeScript": 3
+    },
+    "selected_identities": [
+      [
+        "bevy",
+        "0de7fb777a27465463cb3f94b558fda8613d8248",
+        "crates/bevy_ecs/src/query/fetch.rs",
+        "Ref<'_, T>::fetch_contiguous#1",
+        "crates/bevy_ecs/src/query/fetch.rs",
+        "&mut T::fetch_contiguous#1"
+      ],
+      [
+        "excalidraw",
+        "4850bf336fe0a8501af49d84deebc7fb56357cc2",
+        "packages/math/src/ellipse.ts",
+        "ellipseDistanceFromPoint#1",
+        "packages/utils/src/shape.ts",
+        "distanceToEllipse#1"
+      ],
+      [
+        "vscode",
+        "20b6105c1dd7e383ddba2af85a30dd483ef28a67",
+        "src/vs/workbench/contrib/terminal/browser/terminalEditor.ts",
+        "TerminalEditor::_updateTabActionBar#1",
+        "src/vs/workbench/contrib/terminal/browser/terminalView.ts",
+        "TerminalViewPane::_updateTabActionBar#1"
+      ],
+      [
+        "excalidraw",
+        "dd8296af1802d4920a645591e0de88b9272745fa",
+        "packages/element/src/groups.ts",
+        "getElementsInGroup#1",
+        "packages/element/src/frame.ts",
+        "getFrameChildren#1"
+      ]
+    ],
+    "interpretation": "The declared maximum-12 sample contains all four rejected pairs because the entire population is smaller than either language quota. This is a census of rejected broad pairs, not of missed clone fixes in the repositories."
+  },
+  "parse_error_files": {
+    "bevy": [
+      "crates/bevy_anti_alias/src/lib.rs",
+      "crates/bevy_ecs/src/query/state.rs",
+      "crates/bevy_gizmos_render/src/lib.rs",
+      "crates/bevy_gizmos_render/src/retained.rs",
+      "crates/bevy_input_focus/src/lib.rs",
+      "crates/bevy_light/src/lib.rs",
+      "crates/bevy_pbr/src/render/mesh.rs",
+      "crates/bevy_pbr/src/render/mesh_view_bindings.rs",
+      "crates/bevy_render/src/lib.rs",
+      "crates/bevy_render/src/renderer/render_context.rs",
+      "crates/bevy_scene/src/lib.rs",
+      "crates/bevy_sprite_render/src/lib.rs",
+      "crates/bevy_ui_render/src/lib.rs"
+    ],
+    "typescript": [
+      "packages/typescript/src/api/async/api.ts",
+      "packages/typescript/src/api/sync/api.ts",
+      "packages/typescript/src/vscode/extensionApi.ts",
+      "tools/scripts/tsc/generate-encoder.ts"
+    ],
+    "vscode": [
+      "build/next/index.ts",
+      "extensions/copilot/src/extension/prompt/node/intentDetector.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/executionSubagentPrompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/openai/gpt51CodexPrompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/openai/gpt51Prompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/openai/gpt52Prompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/openai/gpt53CodexPrompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/openai/gpt54Prompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/openai/gpt55Prompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/openai/gpt56Prompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/openai/gpt5Prompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/openai/gpt6Prompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/agent/vscModelPrompts.tsx",
+      "extensions/copilot/src/extension/prompts/node/base/copilotIdentity.tsx",
+      "extensions/copilot/src/extension/prompts/node/panel/panelChatFixPrompt.tsx",
+      "extensions/copilot/src/extension/prompts/node/panel/search.tsx",
+      "extensions/copilot/src/extension/typescriptContext/serverPlugin/src/common/typescripts.ts",
+      "extensions/copilot/src/platform/telemetry/common/telemetry.ts",
+      "src/vs/code/electron-browser/workbench/workbench.ts",
+      "src/vs/platform/agentHost/node/agentHostDatabase.ts",
+      "src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts",
+      "src/vs/platform/browserView/electron-browser/preload-browserView.ts",
+      "src/vs/sessions/electron-browser/sessions.ts",
+      "src/vs/workbench/contrib/issue/browser/issueFormService.ts",
+      "src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts"
+    ],
+    "angular": [
+      "packages/compiler-cli/preprocessor/ng-analyze/src/physical_fs.rs",
+      "packages/core/src/testability/testability.ts",
+      "packages/forms/signals/src/api/types.ts",
+      "packages/platform-browser/animations/async/src/async_animation_renderer.ts"
+    ],
+    "trpc": [
+      "packages/tanstack-react-query/src/index.ts",
+      "www/src/components/powered-by-vercel.tsx"
+    ],
+    "excalidraw": [
+      "setupTests.ts"
+    ]
+  },
+  "caveats": [
+    "No emitted candidates means precision is not estimable from this run; zero alerts does not establish zero defects.",
+    "Zero input-role acceptances provides no positive holdout evidence that the new regrouping fallback generalizes.",
+    "Only four pairs reached the broad candidate stage. Reviewing all four does not evaluate misses caused by fix-label filtering, token bounds, shingle/similarity thresholds, excluded paths, unsupported parsing, or history scope.",
+    "The 200-commit limit selects non-merge commits before fix-label filtering; 200 commits is not 200 fixes.",
+    "Source-file counts are eligible tracked paths; function_bodies counts extracted named functions before the 45-1200-token candidate index filter.",
+    "HEAD parse-error files may contribute unaffected functions; historical parse errors are not separately counted.",
+    "Repository language labels are not language-isolated samples: VS Code and Angular include eligible Rust source, and Bevy includes one eligible TypeScript file.",
+    "VS Code dominates function-body coverage; the ten repositories are not equal-sized trials.",
+    "All checkouts are shallow, but no selected fix commit lacked a parent and no candidates were omitted by the per-function cap."
+  ]
+}

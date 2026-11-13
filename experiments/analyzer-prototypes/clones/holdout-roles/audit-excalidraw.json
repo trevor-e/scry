@@ -1,0 +1,122 @@
+{
+  "repo": "excalidraw",
+  "revision": "82d5847e57dcb6fb5982833ea9ec2137fe0b2bd5",
+  "method": "Read-only source and Git review of both preselected rejected pairs. No target code, tests, builds, or runtime reproduction executed.",
+  "cases": [
+    {
+      "rejected_index": 0,
+      "commit": "4850bf336fe0a8501af49d84deebc7fb56357cc2",
+      "changed_symbol": "ellipseDistanceFromPoint#1",
+      "survivor_symbol": "distanceToEllipse#1",
+      "classification": "useful_review_suppressed",
+      "confidence": "Source-supported numerical maintenance lead; no current production caller or runtime failure demonstrated.",
+      "summary": "The surviving rotated-ellipse distance helper retains the same iterative numerical core without the circle special case, q === 0 break, and nonzero quadrant-sign handling added to the math helper. Rotation is a legitimate surrounding difference, but it does not remove circle-center or axis cases. This deserves propagation or obsolete-helper cleanup review, with lower practical priority because the only located callers of its pointOnEllipse wrapper are tests.",
+      "detector_rejection": {
+        "exact": "different_function_signature",
+        "binding_fallback": "non-identifier binding",
+        "roles": "input_regrouping_requires_named_function",
+        "additional_structural_difference": "The survivor rotates the translated point before running the shared iteration, so merely supporting arrow functions would still not make the whole bodies identical."
+      },
+      "evidence": [
+        {
+          "path": "packages/math/src/ellipse.ts",
+          "line": 102,
+          "end_line": 105,
+          "fact": "Fixed helper handles circles directly and documents the center 0/0 case."
+        },
+        {
+          "path": "packages/math/src/ellipse.ts",
+          "line": 128,
+          "end_line": 146,
+          "fact": "Fix breaks when q is zero and maps a zero coordinate to a nonzero quadrant sign instead of Math.sign(0)."
+        },
+        {
+          "path": "packages/utils/src/shape.ts",
+          "line": 404,
+          "end_line": 459,
+          "fact": "Survivor rotates into ellipse-local coordinates at lines 415-419, then retains the corresponding iterative core; lines 443-444 divide by q without the guard and lines 451-452 still use Math.sign."
+        },
+        {
+          "path": "packages/utils/src/shape.ts",
+          "line": 461,
+          "end_line": 467,
+          "fact": "Exported pointOnEllipse compares this distance with a threshold; no input restriction excludes centers, circles, or axis-aligned points."
+        },
+        {
+          "path": "packages/math/tests/ellipse.test.ts",
+          "line": 64,
+          "end_line": 90,
+          "fact": "The fix's regression tests specify circle-center distance and noncircular ellipse-axis distances. Tests were read, not run."
+        },
+        {
+          "path": "packages/utils/tests/geometry.test.ts",
+          "line": 57,
+          "end_line": 87,
+          "fact": "Existing tests import and exercise the old pointOnEllipse wrapper on a noncircular ellipse, but do not cover its center or a circle. Tests were read, not run."
+        }
+      ],
+      "counterevidence_and_limits": [
+        "Repository-wide searches found pointOnEllipse calls only in packages/utils/tests/geometry.test.ts; packages/utils/src/index.ts does not re-export it. This is not evidence of a current editor-user defect.",
+        "The survivor supports rotated ellipses while the math helper operates in unrotated coordinates. A propagation must retain that behavior; replacing the body verbatim would be inappropriate.",
+        "The source algebra supports the concern: a noncircular ellipse's center has zero local coordinates, and Math.sign(0) collapses both reconstructed closest-point coordinates to zero. No application code was executed to produce a numeric result.",
+        "The tested but apparently production-unused helper may be better removed or consolidated than patched independently."
+      ]
+    },
+    {
+      "rejected_index": 1,
+      "commit": "dd8296af1802d4920a645591e0de88b9272745fa",
+      "changed_symbol": "getElementsInGroup#1",
+      "survivor_symbol": "getFrameChildren#1",
+      "classification": "false_positive_avoided",
+      "summary": "The group helper change propagates a stricter NonDeleted TypeScript subtype through its signature and accumulator; its runtime selection behavior is unchanged. The frame helper legitimately accepts broad element collections and selects by frameId. Making it generically preserve input subtypes could be an API improvement, but the scanned edit does not establish a missing behavioral fix.",
+      "detector_rejection": {
+        "exact": "different_complete_body",
+        "roles": "input_regrouping_requires_named_function"
+      },
+      "evidence": [
+        {
+          "path": "packages/element/src/types.ts",
+          "line": 247,
+          "end_line": 249,
+          "fact": "NonDeleted now requires isDeleted: false; this is the commit's type-system change."
+        },
+        {
+          "path": "packages/element/src/groups.ts",
+          "line": 140,
+          "end_line": 154,
+          "fact": "The updated generic signature and P[] accumulator retain subtype information; the membership predicate and pushes remain the same runtime operation, with an erased as P assertion."
+        },
+        {
+          "path": "packages/element/src/frame.ts",
+          "line": 271,
+          "end_line": 282,
+          "fact": "Survivor accepts ElementsMapOrArray, returns ExcalidrawElement[], and filters by frameId rather than group membership. It does not promise a NonDeleted result."
+        },
+        {
+          "path": "packages/excalidraw/actions/actionFrame.ts",
+          "line": 176,
+          "end_line": 190,
+          "fact": "Callers that require live frame children explicitly filter isDeleted or pass the result through getNonDeletedElements."
+        },
+        {
+          "path": "packages/excalidraw/actions/actionDeleteSelected.tsx",
+          "line": 38,
+          "end_line": 62,
+          "fact": "Deletion handling supplies a broad readonly ExcalidrawElement collection to getFrameChildren, consistent with the broad helper contract."
+        }
+      ],
+      "counterevidence_and_limits": [
+        "Generic subtype preservation could reduce casts in some callers, but no concrete typing failure or missing runtime behavior was demonstrated.",
+        "This classification concerns propagation of the detected type-only edit. It is not an assertion that all frame-selection and deleted-element handling is correct."
+      ]
+    }
+  ],
+  "summary": {
+    "reviewed_rejections": 2,
+    "false_positive_avoided": 1,
+    "useful_review_suppressed": 1,
+    "unresolved": 0,
+    "runtime_confirmed": 0
+  },
+  "detector_changes": false
+}

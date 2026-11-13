@@ -1,0 +1,146 @@
+{
+  "repo": "excalidraw",
+  "root": "/private/tmp/scry-clone-roles-holdout/excalidraw",
+  "revision": "82d5847e57dcb6fb5982833ea9ec2137fe0b2bd5",
+  "matching": "roles",
+  "broad_candidates": 2,
+  "rejected_candidates": [
+    {
+      "check": "missed_clone_fix",
+      "commit": "4850bf336fe0a8501af49d84deebc7fb56357cc2",
+      "subject": "fix(editor): Binding hit test based on distance (#10753)",
+      "changed": {
+        "path": "packages/math/src/ellipse.ts",
+        "symbol": "ellipseDistanceFromPoint#1",
+        "line": 88,
+        "end_line": 137
+      },
+      "changed_at_fix": {
+        "path": "packages/math/src/ellipse.ts",
+        "symbol": "ellipseDistanceFromPoint#1",
+        "line": 88,
+        "end_line": 150
+      },
+      "survivor": {
+        "path": "packages/utils/src/shape.ts",
+        "symbol": "distanceToEllipse#1",
+        "line": 404,
+        "end_line": 459
+      },
+      "similarity": 0.9272,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 124,
+          "new_line": 130,
+          "survivor_line": 443,
+          "removed_tokens": [],
+          "added_tokens": [
+            "if",
+            "(",
+            "$id",
+            "===",
+            "0",
+            ")",
+            "{",
+            "break",
+            ";",
+            "}"
+          ],
+          "old_excerpt": "\n    tx = Math.min(1, Math.max(0, ((qx * r) / q + ex) / a));\n    ty = Math.min(1, Math.max(0, ((qy * r) / q + ey) / b));",
+          "new_excerpt": "\n    if (q === 0) {\n      break;\n    }\n"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "non-identifier binding",
+        "right_fallback_reason": "non-identifier binding",
+        "decision": "rejected",
+        "reason": "different_function_signature",
+        "input_role_comparison": {
+          "decision": "rejected",
+          "reason": "input_regrouping_requires_named_function"
+        }
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "dd8296af1802d4920a645591e0de88b9272745fa",
+      "subject": "fix(editor): narrow `NonDeleted` type to `isDeleted: false` (#11470)",
+      "changed": {
+        "path": "packages/element/src/groups.ts",
+        "symbol": "getElementsInGroup#1",
+        "line": 288,
+        "end_line": 299
+      },
+      "changed_at_fix": {
+        "path": "packages/element/src/groups.ts",
+        "symbol": "getElementsInGroup#1",
+        "line": 289,
+        "end_line": 304
+      },
+      "survivor": {
+        "path": "packages/element/src/frame.ts",
+        "symbol": "getFrameChildren#1",
+        "line": 271,
+        "end_line": 282
+      },
+      "similarity": 0.9231,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "replace",
+          "old_line": 292,
+          "new_line": 297,
+          "survivor_line": 275,
+          "removed_tokens": [
+            "ExcalidrawElement"
+          ],
+          "added_tokens": [
+            "P"
+          ],
+          "old_excerpt": ") => {\n  const elementsInGroup: ExcalidrawElement[] = [];\n  for (const element of elements.values()) {",
+          "new_excerpt": "): P[] => {\n  const elementsInGroup: P[] = [];\n  for (const element of elements.values()) {"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_complete_body",
+        "input_role_comparison": {
+          "decision": "rejected",
+          "reason": "input_regrouping_requires_named_function"
+        }
+      }
+    }
+  ],
+  "source_files": 511,
+  "function_bodies": 2718,
+  "history_commits": 200,
+  "fix_labelled_commits": 98,
+  "changed_functions_compared": 435,
+  "missing_history_parents": 0,
+  "parse_error_files": [
+    "setupTests.ts"
+  ],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Roles mode additionally accepts completely matching TypeScript bodies with conservatively mapped repacked inputs and matched nominal return assertions.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "repo": "bevy",
+  "revision": "41a1282e376ce0dcd9808e1b3f6c071803363eb4",
+  "rejected_index": 0,
+  "fix_commit": "0de7fb777a27465463cb3f94b558fda8613d8248",
+  "changed_symbol": "Ref<'_, T>::fetch_contiguous#1",
+  "survivor": {
+    "path": "crates/bevy_ecs/src/query/fetch.rs",
+    "symbol": "&mut T::fetch_contiguous#1",
+    "line": 3036,
+    "end_line": 3078
+  },
+  "classification": "false_positive_avoided",
+  "emitted": false,
+  "detector_rejection": {
+    "exact": "different_function_signature",
+    "roles": "input_regrouping_is_typescript_only"
+  },
+  "summary": "The read-only implementation's actual bug was an assertion equating a requested subrange's length with the whole table's entity count. The mutable survivor never had that incorrect assertion. The commit also fixes the shared generic batching code, so that operational correction applies to both query data types. Missing the replacement debug guards in the mutable implementation is a consistency difference, not evidence that it retains the corrected failure.",
+  "evidence": [
+    {
+      "revision": "0de7fb777a27465463cb3f94b558fda8613d8248",
+      "path": "crates/bevy_ecs/src/query/fetch.rs",
+      "location": "commit diff for Ref<'_, T>::fetch_contiguous",
+      "fact": "The fix removes debug_assert_eq!(entities.len(), contiguous_ref.value.len()) and adds checks that the requested range is nonempty and within the whole table. Its commit message identifies incorrect debug assertions and empty batch ranges as the problems.",
+      "url": "https://github.com/bevyengine/bevy/commit/0de7fb777a27465463cb3f94b558fda8613d8248"
+    },
+    {
+      "path": "crates/bevy_ecs/src/query/fetch.rs",
+      "line": 2742,
+      "end_line": 2788,
+      "fact": "The current Ref implementation contains the replacement range checks and returns ContiguousRef without comparing its subrange length to the full entity slice.",
+      "url": "https://github.com/bevyengine/bevy/blob/41a1282e376ce0dcd9808e1b3f6c071803363eb4/crates/bevy_ecs/src/query/fetch.rs#L2742-L2788"
+    },
+    {
+      "path": "crates/bevy_ecs/src/query/fetch.rs",
+      "line": 3036,
+      "end_line": 3078,
+      "fact": "The mutable survivor builds ContiguousMut with mutable component/tick access and ignores the entity slice (_entities). It has no full-table/subrange length assertion. Inspection of the pre-fix commit parent also confirms that no such assertion existed there.",
+      "url": "https://github.com/bevyengine/bevy/blob/41a1282e376ce0dcd9808e1b3f6c071803363eb4/crates/bevy_ecs/src/query/fetch.rs#L3036-L3078"
+    },
+    {
+      "path": "crates/bevy_ecs/src/query/fetch.rs",
+      "line": 415,
+      "end_line": 432,
+      "fact": "The trait requires callers to supply a valid, nonempty range and an entity slice matching the table. The added debug assertions check an existing caller contract rather than adding a new valid-input requirement.",
+      "url": "https://github.com/bevyengine/bevy/blob/41a1282e376ce0dcd9808e1b3f6c071803363eb4/crates/bevy_ecs/src/query/fetch.rs#L415-L432"
+    },
+    {
+      "path": "crates/bevy_ecs/src/query/state.rs",
+      "line": 1828,
+      "end_line": 1884,
+      "fact": "The contiguous parallel batching implementation is generic over D: ContiguousQueryData and dispatches through D::fetch_contiguous, so the same batching fix covers mutable and read-only implementations.",
+      "url": "https://github.com/bevyengine/bevy/blob/41a1282e376ce0dcd9808e1b3f6c071803363eb4/crates/bevy_ecs/src/query/state.rs#L1828-L1884"
+    },
+    {
+      "path": "crates/bevy_ecs/src/query/state.rs",
+      "line": 1905,
+      "end_line": 1916,
+      "fact": "The shared batching condition uses >= and immediately submits exact fits, addressing the empty-range cause identified in the same fix commit.",
+      "url": "https://github.com/bevyengine/bevy/blob/41a1282e376ce0dcd9808e1b3f6c071803363eb4/crates/bevy_ecs/src/query/state.rs#L1905-L1916"
+    }
+  ],
+  "counterevidence_and_limits": [
+    "The replacement range assertions are absent from the mutable implementation, and adding them could improve debug-time consistency. That alone does not establish a missed correction to valid-input behavior.",
+    "This judgment concerns this candidate and fix, not a proof that every contiguous-query caller is correct.",
+    "No target application code, tests, builds, or runtime reproduction were executed."
+  ],
+  "detector_changes": false
+}

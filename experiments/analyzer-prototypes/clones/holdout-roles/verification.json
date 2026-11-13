@@ -1,0 +1,105 @@
+{
+  "status": "passed",
+  "detector_revision": "7e198b56453eea8823aaf5a2a7a72a56c9a753b0",
+  "detector_sha256": {
+    "probe.py": "723d4e7b65580c299f831a1e99041f1336cbb4707b21415636b4bf7898dc2d0d",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8",
+    "input_roles.py": "210aa2ac263865f643de36f59dc99bdc0d5f58ce9c41515b419cf893d61744b3"
+  },
+  "protocol_commit": "e26b084b92f1ef1306536301cd9617576542b41c",
+  "protocol_unchanged_since_preselection": true,
+  "parser_versions": {
+    "tree-sitter": "0.26.1",
+    "tree-sitter-rust": "0.24.2",
+    "tree-sitter-typescript": "0.23.2"
+  },
+  "parameters": {
+    "matching": "roles",
+    "commits": 200,
+    "similarity": 0.85
+  },
+  "completed_cli_runs": 10,
+  "all_pinned_checkouts_still_clean": true,
+  "sample_reproduced": true,
+  "all_selected_pairs_audited": true,
+  "totals": {
+    "source_files": 16793,
+    "function_bodies": 177700,
+    "history_commits": 2000,
+    "fix_labelled_commits": 504,
+    "changed_functions_compared": 916,
+    "missing_history_parents": 0,
+    "candidates_omitted_by_per_function_cap": 0,
+    "broad_candidates": 4,
+    "emitted_candidates": 0,
+    "rejected_candidates": 4,
+    "head_files_with_parse_errors": 49
+  },
+  "acceptance_paths": {
+    "exact": 0,
+    "input_roles": 0
+  },
+  "rejected_audit": {
+    "false_positive_avoided": 2,
+    "useful_review_suppressed": 1,
+    "unresolved": 1
+  },
+  "audit_results": [
+    {
+      "identity": [
+        "bevy",
+        "0de7fb777a27465463cb3f94b558fda8613d8248",
+        "crates/bevy_ecs/src/query/fetch.rs",
+        "Ref<'_, T>::fetch_contiguous#1",
+        "crates/bevy_ecs/src/query/fetch.rs",
+        "&mut T::fetch_contiguous#1"
+      ],
+      "classification": "false_positive_avoided",
+      "evidence_file": "audit-bevy.json"
+    },
+    {
+      "identity": [
+        "vscode",
+        "20b6105c1dd7e383ddba2af85a30dd483ef28a67",
+        "src/vs/workbench/contrib/terminal/browser/terminalEditor.ts",
+        "TerminalEditor::_updateTabActionBar#1",
+        "src/vs/workbench/contrib/terminal/browser/terminalView.ts",
+        "TerminalViewPane::_updateTabActionBar#1"
+      ],
+      "classification": "unresolved",
+      "evidence_file": "audit-vscode.json"
+    },
+    {
+      "identity": [
+        "excalidraw",
+        "4850bf336fe0a8501af49d84deebc7fb56357cc2",
+        "packages/math/src/ellipse.ts",
+        "ellipseDistanceFromPoint#1",
+        "packages/utils/src/shape.ts",
+        "distanceToEllipse#1"
+      ],
+      "classification": "useful_review_suppressed",
+      "evidence_file": "audit-excalidraw.json"
+    },
+    {
+      "identity": [
+        "excalidraw",
+        "dd8296af1802d4920a645591e0de88b9272745fa",
+        "packages/element/src/groups.ts",
+        "getElementsInGroup#1",
+        "packages/element/src/frame.ts",
+        "getFrameChildren#1"
+      ],
+      "classification": "false_positive_avoided",
+      "evidence_file": "audit-excalidraw.json"
+    }
+  ],
+  "runtime_confirmed": 0,
+  "limits": [
+    "No emitted candidates; precision cannot be estimated.",
+    "No role-fallback acceptances; its positive generalization remains untested by this batch.",
+    "All broad rejections audited, but candidate-generation misses are unmeasured.",
+    "Source-review judgments only; corpus applications, tests, builds, UI, and registry operations were not executed."
+  ],
+  "detector_and_prior_raw_results_and_audits_unchanged": true
+}

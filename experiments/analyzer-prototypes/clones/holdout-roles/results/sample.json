@@ -1,0 +1,156 @@
+{
+  "policy": {
+    "maximum": 12,
+    "per_language_initial": 6,
+    "seed": "scry-roles-holdout-2026-11-13",
+    "identity_fields": [
+      "repo",
+      "commit",
+      "changed.path",
+      "changed.symbol",
+      "survivor.path",
+      "survivor.symbol"
+    ],
+    "identity_encoding": "Compact JSON array of the six strings, ensure_ascii=True, separators comma and colon.",
+    "candidate_rank": "SHA256 of UTF-8 seed + newline + encoded identity; identity breaks ties.",
+    "repo_rank": "SHA256 of UTF-8 seed + newline + repo: + repository name; name breaks ties.",
+    "selection": "Group by changed-source language (Rust .rs; TypeScript .ts/.tsx). Within each language, hash-rank pairs inside each repository and hash-rank repositories; take one pair per repository per round. Select first six from each language. Fill unused quota from the remaining language order to reach min(12,total rejected). Record complete ranks and selected identities before source auditing.",
+    "interpretation": "The stratified sample diagnoses missed leads and false positives; it does not measure overall recall. Unreviewed pairs remain unclassified."
+  },
+  "population": {
+    "Rust": 1,
+    "TypeScript": 3
+  },
+  "selected_counts": {
+    "Rust": 1,
+    "TypeScript": 3
+  },
+  "selected": [
+    {
+      "identity": [
+        "bevy",
+        "0de7fb777a27465463cb3f94b558fda8613d8248",
+        "crates/bevy_ecs/src/query/fetch.rs",
+        "Ref<'_, T>::fetch_contiguous#1",
+        "crates/bevy_ecs/src/query/fetch.rs",
+        "&mut T::fetch_contiguous#1"
+      ],
+      "repo": "bevy",
+      "rejected_index": 0,
+      "language": "Rust",
+      "rank_hash": "458c2f3d5c67ab3ee42e8b0f0952cff071704f021af83f267bb640c06e9fad04",
+      "language_order": 0
+    },
+    {
+      "identity": [
+        "excalidraw",
+        "4850bf336fe0a8501af49d84deebc7fb56357cc2",
+        "packages/math/src/ellipse.ts",
+        "ellipseDistanceFromPoint#1",
+        "packages/utils/src/shape.ts",
+        "distanceToEllipse#1"
+      ],
+      "repo": "excalidraw",
+      "rejected_index": 0,
+      "language": "TypeScript",
+      "rank_hash": "0ca02788bdcf2f6fcdcb6d165185ff8eb587680c0b1ffdbfe553481112709c8a",
+      "language_order": 0
+    },
+    {
+      "identity": [
+        "vscode",
+        "20b6105c1dd7e383ddba2af85a30dd483ef28a67",
+        "src/vs/workbench/contrib/terminal/browser/terminalEditor.ts",
+        "TerminalEditor::_updateTabActionBar#1",
+        "src/vs/workbench/contrib/terminal/browser/terminalView.ts",
+        "TerminalViewPane::_updateTabActionBar#1"
+      ],
+      "repo": "vscode",
+      "rejected_index": 0,
+      "language": "TypeScript",
+      "rank_hash": "e98d7c7476447768f261129839c267269d049d4be71426fef935819f999ba4c5",
+      "language_order": 1
+    },
+    {
+      "identity": [
+        "excalidraw",
+        "dd8296af1802d4920a645591e0de88b9272745fa",
+        "packages/element/src/groups.ts",
+        "getElementsInGroup#1",
+        "packages/element/src/frame.ts",
+        "getFrameChildren#1"
+      ],
+      "repo": "excalidraw",
+      "rejected_index": 1,
+      "language": "TypeScript",
+      "rank_hash": "70446b511a07446d28bca535552be9ba9a41fc9a506094c3faed72ca4a0bcb4a",
+      "language_order": 2
+    }
+  ],
+  "complete_language_orders": {
+    "Rust": [
+      {
+        "identity": [
+          "bevy",
+          "0de7fb777a27465463cb3f94b558fda8613d8248",
+          "crates/bevy_ecs/src/query/fetch.rs",
+          "Ref<'_, T>::fetch_contiguous#1",
+          "crates/bevy_ecs/src/query/fetch.rs",
+          "&mut T::fetch_contiguous#1"
+        ],
+        "repo": "bevy",
+        "rejected_index": 0,
+        "language": "Rust",
+        "rank_hash": "458c2f3d5c67ab3ee42e8b0f0952cff071704f021af83f267bb640c06e9fad04",
+        "language_order": 0
+      }
+    ],
+    "TypeScript": [
+      {
+        "identity": [
+          "excalidraw",
+          "4850bf336fe0a8501af49d84deebc7fb56357cc2",
+          "packages/math/src/ellipse.ts",
+          "ellipseDistanceFromPoint#1",
+          "packages/utils/src/shape.ts",
+          "distanceToEllipse#1"
+        ],
+        "repo": "excalidraw",
+        "rejected_index": 0,
+        "language": "TypeScript",
+        "rank_hash": "0ca02788bdcf2f6fcdcb6d165185ff8eb587680c0b1ffdbfe553481112709c8a",
+        "language_order": 0
+      },
+      {
+        "identity": [
+          "vscode",
+          "20b6105c1dd7e383ddba2af85a30dd483ef28a67",
+          "src/vs/workbench/contrib/terminal/browser/terminalEditor.ts",
+          "TerminalEditor::_updateTabActionBar#1",
+          "src/vs/workbench/contrib/terminal/browser/terminalView.ts",
+          "TerminalViewPane::_updateTabActionBar#1"
+        ],
+        "repo": "vscode",
+        "rejected_index": 0,
+        "language": "TypeScript",
+        "rank_hash": "e98d7c7476447768f261129839c267269d049d4be71426fef935819f999ba4c5",
+        "language_order": 1
+      },
+      {
+        "identity": [
+          "excalidraw",
+          "dd8296af1802d4920a645591e0de88b9272745fa",
+          "packages/element/src/groups.ts",
+          "getElementsInGroup#1",
+          "packages/element/src/frame.ts",
+          "getFrameChildren#1"
+        ],
+        "repo": "excalidraw",
+        "rejected_index": 1,
+        "language": "TypeScript",
+        "rank_hash": "70446b511a07446d28bca535552be9ba9a41fc9a506094c3faed72ca4a0bcb4a",
+        "language_order": 2
+      }
+    ]
+  }
+}
