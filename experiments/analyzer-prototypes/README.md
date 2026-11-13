@@ -87,6 +87,8 @@ The public clones used depth 120 for Tauri and 160 for the other public reposito
 
 The four checkers deliberately have different discovery rules. Config records test/example/benchmark scopes separately; clones exclude those paths; Serde classifies them; build uses Cargo manifest-selected scripts. Parse recovery and unsupported forms are recorded in raw results. Config's 315 parse-error files are partial-coverage files, not clean analyses.
 
+Python 3.11 or newer is required. The recorded runs used Python 3.15.2.
+
 From the repository root:
 
 ```sh
