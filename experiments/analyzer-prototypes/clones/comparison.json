@@ -1,0 +1,374 @@
+{
+  "methodology": "Same pinned revisions, scope counters and broad candidates; prior source judgments reused. In-sample refinement, not a held-out precision estimate.",
+  "corpus_unchanged": true,
+  "broad_candidates_unchanged": true,
+  "summary": {
+    "before": 11,
+    "after": 3,
+    "useful_before": 3,
+    "useful_retained": 3,
+    "false_positive_before": 8,
+    "false_positive_remaining": 0,
+    "confirmed_runtime_defects": 0
+  },
+  "repositories": [
+    {
+      "repo": "adulting",
+      "revision": "c8baee7ca4cecbfdfc687dff7f4823c278720596",
+      "before": 0,
+      "after": 0,
+      "rejected": 0
+    },
+    {
+      "repo": "hono",
+      "revision": "f6fbaf0299c48eea9e656e03e2ffe7ac755e8823",
+      "before": 0,
+      "after": 0,
+      "rejected": 0
+    },
+    {
+      "repo": "kanspec",
+      "revision": "a99893d88d98b43616c07f5cfcf02d03c7048bf6",
+      "before": 0,
+      "after": 0,
+      "rejected": 0
+    },
+    {
+      "repo": "nushell",
+      "revision": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+      "before": 3,
+      "after": 1,
+      "rejected": 2
+    },
+    {
+      "repo": "oh-my-pi",
+      "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+      "before": 6,
+      "after": 2,
+      "rejected": 4
+    },
+    {
+      "repo": "ripgrep",
+      "revision": "178cc027e283fd965cb72d0a7395b219eada170c",
+      "before": 0,
+      "after": 0,
+      "rejected": 0
+    },
+    {
+      "repo": "scry",
+      "revision": "7927f36440ffc34469da551c782a6487826f05d1",
+      "before": 0,
+      "after": 0,
+      "rejected": 0
+    },
+    {
+      "repo": "tauri",
+      "revision": "5edd31c8a8914674c217b21a660a914823da2dae",
+      "before": 2,
+      "after": 0,
+      "rejected": 2
+    },
+    {
+      "repo": "typescript-eslint",
+      "revision": "2838b498d03ef3a3808fa714f43ea653f4e589b0",
+      "before": 0,
+      "after": 0,
+      "rejected": 0
+    },
+    {
+      "repo": "vite",
+      "revision": "61622b8df68b7a8e657caa6f98d9b70069643abf",
+      "before": 0,
+      "after": 0,
+      "rejected": 0
+    }
+  ],
+  "findings": [
+    {
+      "repo": "nushell",
+      "commit": "ab6c901127083f940c39e68670850dbd69f1ee10",
+      "changed": {
+        "path": "crates/nu-cmd-lang/src/core_commands/use_.rs",
+        "symbol": "Use::run#1",
+        "line": 60,
+        "end_line": 169
+      },
+      "survivor": {
+        "path": "crates/nu-cmd-lang/src/core_commands/export_use.rs",
+        "symbol": "ExportUse::run#1",
+        "line": 49,
+        "end_line": 158
+      },
+      "prior_judgment": "useful_review",
+      "outcome": "retained",
+      "evidence": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "destructured Rust let",
+        "right_fallback_reason": "destructured Rust let",
+        "decision": "accepted",
+        "reason": "same_complete_pre_fix_structure"
+      }
+    },
+    {
+      "repo": "nushell",
+      "commit": "06e65cd925c0bc96b671612b8671010c5502ac48",
+      "changed": {
+        "path": "crates/nu-command/src/strings/split/column.rs",
+        "symbol": "split_column#1",
+        "line": 205,
+        "end_line": 233
+      },
+      "survivor": {
+        "path": "crates/nu-command/src/strings/split/row.rs",
+        "symbol": "split_row#1",
+        "line": 180,
+        "end_line": 197
+      },
+      "prior_judgment": "false_positive",
+      "outcome": "suppressed",
+      "evidence": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_complete_body"
+      }
+    },
+    {
+      "repo": "nushell",
+      "commit": "cf0c9a7734f11c376ec78e8547f01810e3b00490",
+      "changed": {
+        "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+        "symbol": "StateWorkingSet<'a>::find_type_alias#1",
+        "line": 629,
+        "end_line": 642
+      },
+      "survivor": {
+        "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+        "symbol": "StateWorkingSet<'a>::find_variable_in_current_frame#1",
+        "line": 860,
+        "end_line": 872
+      },
+      "prior_judgment": "false_positive",
+      "outcome": "suppressed",
+      "evidence": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: macro_invocation",
+        "right_fallback_reason": "unsupported binding context: macro_invocation",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "repo": "oh-my-pi",
+      "commit": "f948c61256e3c833166801c495ca7bd9eb7731b2",
+      "changed": {
+        "path": "packages/coding-agent/src/config/model-discovery.ts",
+        "symbol": "withTimeoutSignal#1",
+        "line": 52,
+        "end_line": 63
+      },
+      "survivor": {
+        "path": "packages/catalog/src/discovery/openai-compatible.ts",
+        "symbol": "withOpenAICompatibleDiscoveryTimeout#1",
+        "line": 12,
+        "end_line": 26
+      },
+      "prior_judgment": "useful_review",
+      "outcome": "retained",
+      "evidence": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "accepted",
+        "reason": "same_complete_pre_fix_structure"
+      }
+    },
+    {
+      "repo": "oh-my-pi",
+      "commit": "f948c61256e3c833166801c495ca7bd9eb7731b2",
+      "changed": {
+        "path": "packages/coding-agent/src/config/model-discovery.ts",
+        "symbol": "withTimeoutSignal#1",
+        "line": 52,
+        "end_line": 63
+      },
+      "survivor": {
+        "path": "packages/catalog/src/provider-models/openai-compat.ts",
+        "symbol": "withCatalogDiscoveryTimeout#1",
+        "line": 46,
+        "end_line": 57
+      },
+      "prior_judgment": "useful_review",
+      "outcome": "retained",
+      "evidence": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "accepted",
+        "reason": "same_complete_pre_fix_structure"
+      }
+    },
+    {
+      "repo": "oh-my-pi",
+      "commit": "91467c2f27f21c9cceb72ac434f569aa425632fa",
+      "changed": {
+        "path": "packages/coding-agent/src/modes/components/agent-hub.ts",
+        "symbol": "AgentHubOverlayComponent::#orderAsTree#1",
+        "line": 653,
+        "end_line": 740
+      },
+      "survivor": {
+        "path": "packages/coding-agent/src/modes/components/agent-hub-projection.ts",
+        "symbol": "projectAgentTree#1",
+        "line": 162,
+        "end_line": 248
+      },
+      "prior_judgment": "false_positive",
+      "outcome": "suppressed",
+      "evidence": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "TypeScript loop binding scope",
+        "right_fallback_reason": "TypeScript loop binding scope",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "repo": "oh-my-pi",
+      "commit": "7a1183da91225eec2dd4e46dfa037e66567d8980",
+      "changed": {
+        "path": "packages/coding-agent/src/modes/controllers/btw-controller.ts",
+        "symbol": "BtwController::start#1",
+        "line": 106,
+        "end_line": 132
+      },
+      "survivor": {
+        "path": "packages/coding-agent/src/modes/controllers/omfg-controller.ts",
+        "symbol": "OmfgController::start#1",
+        "line": 58,
+        "end_line": 83
+      },
+      "prior_judgment": "false_positive",
+      "outcome": "suppressed",
+      "evidence": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_complete_body"
+      }
+    },
+    {
+      "repo": "oh-my-pi",
+      "commit": "7a1183da91225eec2dd4e46dfa037e66567d8980",
+      "changed": {
+        "path": "packages/coding-agent/src/modes/components/btw-panel.ts",
+        "symbol": "BtwPanelComponent::#rebuild#1",
+        "line": 81,
+        "end_line": 97
+      },
+      "survivor": {
+        "path": "packages/coding-agent/src/modes/components/omfg-panel.ts",
+        "symbol": "OmfgPanelComponent::#rebuild#1",
+        "line": 95,
+        "end_line": 108
+      },
+      "prior_judgment": "false_positive",
+      "outcome": "suppressed",
+      "evidence": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_complete_body"
+      }
+    },
+    {
+      "repo": "oh-my-pi",
+      "commit": "fe84294538441c4aa135ffdd1e9cbaa9c3210eb5",
+      "changed": {
+        "path": "packages/ai/src/usage/openai-codex.ts",
+        "symbol": "buildUsageStatus#1",
+        "line": 266,
+        "end_line": 272
+      },
+      "survivor": {
+        "path": "packages/coding-agent/src/cli/usage-cli.ts",
+        "symbol": "historyStatus#1",
+        "line": 747,
+        "end_line": 753
+      },
+      "prior_judgment": "false_positive",
+      "outcome": "suppressed",
+      "evidence": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "repo": "tauri",
+      "commit": "a1ea1b5e5ad4b75759fa773b7b78db288128b4af",
+      "changed": {
+        "path": "crates/tauri-utils/src/resources.rs",
+        "symbol": "normalize#1",
+        "line": 31,
+        "end_line": 43
+      },
+      "survivor": {
+        "path": "crates/tauri-utils/src/resources.rs",
+        "symbol": "resource_relpath#1",
+        "line": 17,
+        "end_line": 29
+      },
+      "prior_judgment": "false_positive",
+      "outcome": "suppressed",
+      "evidence": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: match_expression",
+        "right_fallback_reason": "unsupported binding context: match_expression",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "repo": "tauri",
+      "commit": "141d1c0d6f3a746f7f34618d00c2676c902dca67",
+      "changed": {
+        "path": "crates/tauri-utils/src/acl/build.rs",
+        "symbol": "read_permissions#1",
+        "line": 114,
+        "end_line": 146
+      },
+      "survivor": {
+        "path": "crates/tauri-utils/src/acl/build.rs",
+        "symbol": "read_global_scope_schemas#1",
+        "line": 189,
+        "end_line": 219
+      },
+      "prior_judgment": "false_positive",
+      "outcome": "suppressed",
+      "evidence": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "non-identifier binding",
+        "right_fallback_reason": "non-identifier binding",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    }
+  ]
+}

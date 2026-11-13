@@ -14,17 +14,21 @@ import tree_sitter as ts
 import tree_sitter_rust
 import tree_sitter_typescript
 
+from bindings import fingerprint
+
 
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument('repos', type=Path, nargs='+')
     cli.add_argument('--commits', type=int, default=200)
     cli.add_argument('--similarity', type=float, default=0.85)
+    cli.add_argument('--matching', choices=['exact', 'loose'], default='exact',
+                     help='exact requires whole pre-fix signature/body equality with conservative local renaming')
     args = cli.parse_args()
-    print(json.dumps([scan(p.resolve(), args.commits, args.similarity) for p in args.repos], indent=2))
+    print(json.dumps([scan(p.resolve(), args.commits, args.similarity, args.matching) for p in args.repos], indent=2))
 
 
-def scan(repo, commit_limit, similarity):
+def scan(repo, commit_limit, similarity, matching='exact'):
     parsers = {
         '.rs': ts.Parser(ts.Language(tree_sitter_rust.language())),
         '.ts': ts.Parser(ts.Language(tree_sitter_typescript.language_typescript())),
@@ -51,6 +55,7 @@ def scan(repo, commit_limit, similarity):
     findings, seen, skipped_parents = [], set(), 0
     compared_functions = 0
     truncated_candidates = 0
+    rejected = []
     for commit, subject in fixes:
         parent = git(repo, 'rev-parse', '--verify', commit + '^', optional=True).strip().decode()
         if not parent:
@@ -105,9 +110,19 @@ def scan(repo, commit_limit, similarity):
                         edits=evidence[:4], status='candidate'))
                 matched.sort(key=lambda x: (-x['similarity'], x['survivor']['path'], x['survivor']['line']))
                 truncated_candidates += max(0, len(matched) - 10)
-                findings.extend(matched[:10])
+                for finding in matched[:10]:
+                    if matching == 'exact':
+                        other = next(head_units[index] for index in candidates
+                            if head_units[index].location() == finding['survivor'])
+                        verdict = compare_bindings(old, other)
+                        finding['structural_comparison'] = verdict
+                        if verdict['decision'] != 'accepted':
+                            rejected.append(finding)
+                            continue
+                    findings.append(finding)
     findings.sort(key=lambda f: (-f['similarity'], f['commit'], f['survivor']['path'], f['survivor']['line']))
     return dict(repo=repo.name, root=str(repo), revision=git(repo, 'rev-parse', 'HEAD').decode().strip(),
+        matching=matching, broad_candidates=len(findings)+len(rejected), rejected_candidates=rejected,
         source_files=len(files), function_bodies=len(head_units), history_commits=len(history),
         fix_labelled_commits=len(fixes), changed_functions_compared=compared_functions,
         missing_history_parents=skipped_parents, parse_error_files=parse_errors,
@@ -116,7 +131,21 @@ def scan(repo, commit_limit, similarity):
             'Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.',
             'Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.',
             'No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.',
+            'Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.',
+            'Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.',
+            'Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.',
             'Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed.'])
+
+
+def compare_bindings(old, other):
+    left, right = old.identity(), other.identity()
+    result = dict(left_mode=left.mode, right_mode=right.mode,
+                  left_fallback_reason=left.fallback_reason, right_fallback_reason=right.fallback_reason)
+    if left.signature != right.signature:
+        return dict(result, decision='rejected', reason='different_function_signature')
+    if left.body != right.body:
+        return dict(result, decision='rejected', reason='different_complete_body')
+    return dict(result, decision='accepted', reason='same_complete_pre_fix_structure')
 
 
 def retained_edits(old, new, other, edits):
@@ -150,6 +179,11 @@ class Unit:
     tokens: tuple
     lines: tuple
     source: bytes
+    node: ts.Node
+    body: ts.Node
+
+    def identity(self):
+        return fingerprint(self.node, self.body, self.source)
 
     def location(self):
         return dict(path=self.path, symbol=self.key, line=self.line, end_line=self.end_line)
@@ -188,7 +222,7 @@ def units(path, source, parsers):
                 key += '#' + str(keys[key])
                 tokens, lines = tokenize(body, source)
                 if tokens:
-                    found.append(Unit(path, key, node.start_point.row+1, node.end_point.row+1, tuple(tokens), tuple(lines), source))
+                    found.append(Unit(path, key, node.start_point.row+1, node.end_point.row+1, tuple(tokens), tuple(lines), source, node, body))
             return
         for child in node.named_children:
             visit(child, parents, excluded)

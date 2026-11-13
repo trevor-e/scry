@@ -1,0 +1,1140 @@
+{
+  "check": "missed_clone_fix",
+  "matching": "exact",
+  "parameters": {
+    "commits": 200,
+    "similarity": 0.85
+  },
+  "source_sha256": {
+    "probe.py": "2ba87ddaf9f90e456aee0fd8ce44ef15855018c486ea5394561631f9d796fdac",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8"
+  },
+  "repositories": [
+    {
+      "repo": "adulting",
+      "root": "/private/tmp/scry-analyzer-corpus/adulting",
+      "revision": "c8baee7ca4cecbfdfc687dff7f4823c278720596",
+      "matching": "exact",
+      "broad_candidates": 0,
+      "rejected_candidates": [],
+      "source_files": 812,
+      "function_bodies": 4336,
+      "history_commits": 200,
+      "fix_labelled_commits": 3,
+      "changed_functions_compared": 8,
+      "missing_history_parents": 0,
+      "parse_error_files": [
+        "frontend/src/features/households/PropertyDetailPage.tsx",
+        "frontend/src/features/ops/LinksPage.tsx"
+      ],
+      "candidates_omitted_by_per_function_cap": 0,
+      "findings": [],
+      "limitations": [
+        "Fix labels select history; do not prove defect fixes.",
+        "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+        "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+        "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+        "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+        "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+        "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+        "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+      ]
+    },
+    {
+      "repo": "hono",
+      "root": "/private/tmp/scry-analyzer-corpus/hono",
+      "revision": "f6fbaf0299c48eea9e656e03e2ffe7ac755e8823",
+      "matching": "exact",
+      "broad_candidates": 0,
+      "rejected_candidates": [],
+      "source_files": 262,
+      "function_bodies": 747,
+      "history_commits": 160,
+      "fix_labelled_commits": 81,
+      "changed_functions_compared": 68,
+      "missing_history_parents": 0,
+      "parse_error_files": [
+        "src/context.ts",
+        "src/helper/factory/index.ts",
+        "src/helper/ssg/middleware.ts",
+        "src/jsx/dom/index.ts",
+        "src/jsx/hooks/index.ts",
+        "src/jsx/index.ts",
+        "src/types.ts",
+        "src/utils/body.ts"
+      ],
+      "candidates_omitted_by_per_function_cap": 0,
+      "findings": [],
+      "limitations": [
+        "Fix labels select history; do not prove defect fixes.",
+        "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+        "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+        "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+        "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+        "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+        "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+        "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+      ]
+    },
+    {
+      "repo": "kanspec",
+      "root": "/private/tmp/scry-analyzer-corpus/kanspec",
+      "revision": "a99893d88d98b43616c07f5cfcf02d03c7048bf6",
+      "matching": "exact",
+      "broad_candidates": 0,
+      "rejected_candidates": [],
+      "source_files": 58,
+      "function_bodies": 920,
+      "history_commits": 99,
+      "fix_labelled_commits": 15,
+      "changed_functions_compared": 190,
+      "missing_history_parents": 0,
+      "parse_error_files": [],
+      "candidates_omitted_by_per_function_cap": 0,
+      "findings": [],
+      "limitations": [
+        "Fix labels select history; do not prove defect fixes.",
+        "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+        "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+        "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+        "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+        "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+        "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+        "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+      ]
+    },
+    {
+      "repo": "nushell",
+      "root": "/private/tmp/scry-analyzer-corpus/nushell",
+      "revision": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+      "matching": "exact",
+      "broad_candidates": 3,
+      "rejected_candidates": [
+        {
+          "check": "missed_clone_fix",
+          "commit": "06e65cd925c0bc96b671612b8671010c5502ac48",
+          "subject": "fix(commands): reject duplicate column names in split column (#19362)",
+          "changed": {
+            "path": "crates/nu-command/src/strings/split/column.rs",
+            "symbol": "split_column#1",
+            "line": 205,
+            "end_line": 233
+          },
+          "changed_at_fix": {
+            "path": "crates/nu-command/src/strings/split/column.rs",
+            "symbol": "split_column#1",
+            "line": 206,
+            "end_line": 235
+          },
+          "survivor": {
+            "path": "crates/nu-command/src/strings/split/row.rs",
+            "symbol": "split_row#1",
+            "line": 180,
+            "end_line": 197
+          },
+          "similarity": 0.9346,
+          "normalized_exact": false,
+          "edits": [
+            {
+              "operation": "insert",
+              "old_line": 211,
+              "new_line": 212,
+              "survivor_line": 186,
+              "removed_tokens": [],
+              "added_tokens": [
+                "check_duplicate_columns",
+                "(",
+                "&",
+                "$id",
+                ".",
+                "rest",
+                ")",
+                "?",
+                ";"
+              ],
+              "old_excerpt": ") -> Result<PipelineData, ShellError> {\n    let name_span = call.head;\n    let pattern = if args.has_regex {",
+              "new_excerpt": ") -> Result<PipelineData, ShellError> {\n    check_duplicate_columns(&args.rest)?;\n    let name_span = call.head;"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_complete_body"
+          }
+        },
+        {
+          "check": "missed_clone_fix",
+          "commit": "cf0c9a7734f11c376ec78e8547f01810e3b00490",
+          "subject": "fix(cli): correct the `--mcp-host` help text and example (#19268)",
+          "changed": {
+            "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+            "symbol": "StateWorkingSet<'a>::find_type_alias#1",
+            "line": 629,
+            "end_line": 642
+          },
+          "changed_at_fix": {
+            "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+            "symbol": "StateWorkingSet<'a>::find_type_alias#1",
+            "line": 688,
+            "end_line": 707
+          },
+          "survivor": {
+            "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+            "symbol": "StateWorkingSet<'a>::find_variable_in_current_frame#1",
+            "line": 860,
+            "end_line": 872
+          },
+          "similarity": 0.8917,
+          "normalized_exact": false,
+          "edits": [
+            {
+              "operation": "insert",
+              "old_line": 630,
+              "new_line": 689,
+              "survivor_line": 861,
+              "removed_tokens": [],
+              "added_tokens": [
+                ";",
+                "let",
+                "mut",
+                "$id",
+                "=",
+                "VisibilityStack",
+                "::",
+                "default",
+                "(",
+                ")"
+              ],
+              "old_excerpt": "    pub fn find_type_alias(&self, name: &[u8]) -> Option<TypeAliasId> {\n        let mut removed_overlays = vec![];\n",
+              "new_excerpt": "    pub fn find_type_alias(&self, name: &[u8]) -> Option<TypeAliasId> {\n        let mut removed_overlays = vec![];\n\n        let mut visibility = VisibilityStack::default();\n"
+            },
+            {
+              "operation": "insert",
+              "old_line": 634,
+              "new_line": 695,
+              "survivor_line": 865,
+              "removed_tokens": [],
+              "added_tokens": [
+                "$id",
+                ".",
+                "push",
+                "(",
+                "&",
+                "$id",
+                ".",
+                "visibility",
+                ")",
+                ";"
+              ],
+              "old_excerpt": "            for overlay_frame in scope_frame.active_overlays(&mut removed_overlays).rev() {\n                if let Some(type_alias_id) = overlay_frame.type_aliases.get(name) {\n                    return Some(*type_alias_id);",
+              "new_excerpt": "            for overlay_frame in scope_frame.active_overlays(&mut removed_overlays).rev() {\n                visibility.push(&overlay_frame.visibility);\n"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: macro_invocation",
+            "right_fallback_reason": "unsupported binding context: macro_invocation",
+            "decision": "rejected",
+            "reason": "different_function_signature"
+          }
+        }
+      ],
+      "source_files": 1576,
+      "function_bodies": 14100,
+      "history_commits": 162,
+      "fix_labelled_commits": 69,
+      "changed_functions_compared": 370,
+      "missing_history_parents": 0,
+      "parse_error_files": [
+        "crates/nu-plugin-core/src/communication_mode/mod.rs"
+      ],
+      "candidates_omitted_by_per_function_cap": 0,
+      "findings": [
+        {
+          "check": "missed_clone_fix",
+          "commit": "ab6c901127083f940c39e68670850dbd69f1ee10",
+          "subject": "fix(modules): reloading a module picks up edits and drops what the file no longer exports (#19468)",
+          "changed": {
+            "path": "crates/nu-cmd-lang/src/core_commands/use_.rs",
+            "symbol": "Use::run#1",
+            "line": 60,
+            "end_line": 169
+          },
+          "changed_at_fix": {
+            "path": "crates/nu-cmd-lang/src/core_commands/use_.rs",
+            "symbol": "Use::run#1",
+            "line": 63,
+            "end_line": 174
+          },
+          "survivor": {
+            "path": "crates/nu-cmd-lang/src/core_commands/export_use.rs",
+            "symbol": "ExportUse::run#1",
+            "line": 49,
+            "end_line": 158
+          },
+          "similarity": 1.0,
+          "normalized_exact": true,
+          "edits": [
+            {
+              "operation": "insert",
+              "old_line": 117,
+              "new_line": 122,
+              "survivor_line": 106,
+              "removed_tokens": [],
+              "added_tokens": [
+                ".",
+                "or_else",
+                "(",
+                "|",
+                "|",
+                "$id",
+                ".",
+                "real_file",
+                "(",
+                ")",
+                ".",
+                "map",
+                "(",
+                "Path",
+                "::",
+                "to_path_buf",
+                ")",
+                ")"
+              ],
+              "old_excerpt": "                    get_dirs_var_from_call(caller_stack, call),\n                )?;\n                // module_arg_str maybe a directory, in this case",
+              "new_excerpt": "                // A bare module name isn't a path, but the module remembers its file.\n                .or_else(|| module.real_file().map(Path::to_path_buf));\n                // module_arg_str maybe a directory, in this case"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "destructured Rust let",
+            "right_fallback_reason": "destructured Rust let",
+            "decision": "accepted",
+            "reason": "same_complete_pre_fix_structure"
+          }
+        }
+      ],
+      "limitations": [
+        "Fix labels select history; do not prove defect fixes.",
+        "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+        "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+        "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+        "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+        "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+        "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+        "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+      ]
+    },
+    {
+      "repo": "oh-my-pi",
+      "root": "/private/tmp/scry-analyzer-corpus/oh-my-pi",
+      "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+      "matching": "exact",
+      "broad_candidates": 6,
+      "rejected_candidates": [
+        {
+          "check": "missed_clone_fix",
+          "commit": "fe84294538441c4aa135ffdd1e9cbaa9c3210eb5",
+          "subject": "fix(ai): respected explicit Codex usage allowance",
+          "changed": {
+            "path": "packages/ai/src/usage/openai-codex.ts",
+            "symbol": "buildUsageStatus#1",
+            "line": 266,
+            "end_line": 272
+          },
+          "changed_at_fix": {
+            "path": "packages/ai/src/usage/openai-codex.ts",
+            "symbol": "buildUsageStatus#1",
+            "line": 266,
+            "end_line": 271
+          },
+          "survivor": {
+            "path": "packages/coding-agent/src/cli/usage-cli.ts",
+            "symbol": "historyStatus#1",
+            "line": 747,
+            "end_line": 753
+          },
+          "similarity": 0.8824,
+          "normalized_exact": false,
+          "edits": [
+            {
+              "operation": "insert",
+              "old_line": 269,
+              "new_line": 268,
+              "survivor_line": 750,
+              "removed_tokens": [],
+              "added_tokens": [
+                ".",
+                "usedFraction"
+              ],
+              "old_excerpt": "\tif (usedFraction === undefined) return \"unknown\";\n\tif (usedFraction >= 1) return \"exhausted\";\n\tif (usedFraction >= 0.9) return \"warning\";",
+              "new_excerpt": "\tif (args.usedFraction === undefined) return \"unknown\";\n\tif (args.usedFraction >= 1) return args.explicitlyAllowed ? \"warning\" : \"exhausted\";\n\tif (args.usedFraction >= 0.9) return \"warning\";"
+            },
+            {
+              "operation": "insert",
+              "old_line": 269,
+              "new_line": 268,
+              "survivor_line": 750,
+              "removed_tokens": [],
+              "added_tokens": [
+                "$id",
+                ".",
+                "explicitlyAllowed",
+                "?",
+                "\"",
+                "warning",
+                "\"",
+                ":"
+              ],
+              "old_excerpt": "\tif (usedFraction === undefined) return \"unknown\";\n\tif (usedFraction >= 1) return \"exhausted\";\n\tif (usedFraction >= 0.9) return \"warning\";",
+              "new_excerpt": "\tif (args.usedFraction === undefined) return \"unknown\";\n\tif (args.usedFraction >= 1) return args.explicitlyAllowed ? \"warning\" : \"exhausted\";\n\tif (args.usedFraction >= 0.9) return \"warning\";"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_function_signature"
+          }
+        },
+        {
+          "check": "missed_clone_fix",
+          "commit": "91467c2f27f21c9cceb72ac434f569aa425632fa",
+          "subject": "fix(coding-agent): restore Agent Hub lineage metrics",
+          "changed": {
+            "path": "packages/coding-agent/src/modes/components/agent-hub.ts",
+            "symbol": "AgentHubOverlayComponent::#orderAsTree#1",
+            "line": 653,
+            "end_line": 740
+          },
+          "changed_at_fix": {
+            "path": "packages/coding-agent/src/modes/components/agent-hub.ts",
+            "symbol": "AgentHubOverlayComponent::#orderAsTree#1",
+            "line": 659,
+            "end_line": 754
+          },
+          "survivor": {
+            "path": "packages/coding-agent/src/modes/components/agent-hub-projection.ts",
+            "symbol": "projectAgentTree#1",
+            "line": 162,
+            "end_line": 248
+          },
+          "similarity": 0.9347,
+          "normalized_exact": false,
+          "edits": [
+            {
+              "operation": "insert",
+              "old_line": 654,
+              "new_line": 660,
+              "survivor_line": 163,
+              "removed_tokens": [],
+              "added_tokens": [
+                "this",
+                ".",
+                "#treeParentById",
+                ".",
+                "clear",
+                "(",
+                ")",
+                ";",
+                "this",
+                ".",
+                "#treeLastSiblingById",
+                ".",
+                "clear",
+                "(",
+                ")",
+                ";"
+              ],
+              "old_excerpt": "\t#orderAsTree(refs: AgentRef[]): AgentRef[] {\n\t\tconst ids = new Set<string>();\n\t\tconst operationalIndex = new Map<string, number>();",
+              "new_excerpt": "\t#orderAsTree(refs: AgentRef[]): AgentRef[] {\n\t\tthis.#treeParentById.clear();\n\t\tthis.#treeLastSiblingById.clear();\n\t\tconst ids = new Set<string>();"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "TypeScript loop binding scope",
+            "right_fallback_reason": "TypeScript loop binding scope",
+            "decision": "rejected",
+            "reason": "different_function_signature"
+          }
+        },
+        {
+          "check": "missed_clone_fix",
+          "commit": "7a1183da91225eec2dd4e46dfa037e66567d8980",
+          "subject": "fix(session): prevented stale /btw branch promotion",
+          "changed": {
+            "path": "packages/coding-agent/src/modes/components/btw-panel.ts",
+            "symbol": "BtwPanelComponent::#rebuild#1",
+            "line": 81,
+            "end_line": 97
+          },
+          "changed_at_fix": {
+            "path": "packages/coding-agent/src/modes/components/btw-panel.ts",
+            "symbol": "BtwPanelComponent::#rebuild#1",
+            "line": 111,
+            "end_line": 127
+          },
+          "survivor": {
+            "path": "packages/coding-agent/src/modes/components/omfg-panel.ts",
+            "symbol": "OmfgPanelComponent::#rebuild#1",
+            "line": 95,
+            "end_line": 108
+          },
+          "similarity": 0.892,
+          "normalized_exact": false,
+          "edits": [
+            {
+              "operation": "insert",
+              "old_line": 89,
+              "new_line": 119,
+              "survivor_line": 104,
+              "removed_tokens": [],
+              "added_tokens": [
+                "(",
+                ")",
+                "=>"
+              ],
+              "old_excerpt": "\t\tthis.addChild(new Spacer(1));\n\t\tthis.addChild(new Text(this.#footerLine(), 1, 0));\n\t\tthis.addChild(new Spacer(1));",
+              "new_excerpt": "\t\tthis.addChild(new Spacer(1));\n\t\tthis.addChild(new BtwFooter(() => this.#footerLine()));\n\t\tthis.addChild(new Spacer(1));"
+            },
+            {
+              "operation": "delete",
+              "old_line": 89,
+              "new_line": 119,
+              "survivor_line": 104,
+              "removed_tokens": [
+                ",",
+                "1",
+                ",",
+                "0"
+              ],
+              "added_tokens": [],
+              "old_excerpt": "\t\tthis.addChild(new Spacer(1));\n\t\tthis.addChild(new Text(this.#footerLine(), 1, 0));\n\t\tthis.addChild(new Spacer(1));",
+              "new_excerpt": "\t\tthis.addChild(new Spacer(1));\n\t\tthis.addChild(new BtwFooter(() => this.#footerLine()));\n\t\tthis.addChild(new Spacer(1));"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_complete_body"
+          }
+        },
+        {
+          "check": "missed_clone_fix",
+          "commit": "7a1183da91225eec2dd4e46dfa037e66567d8980",
+          "subject": "fix(session): prevented stale /btw branch promotion",
+          "changed": {
+            "path": "packages/coding-agent/src/modes/controllers/btw-controller.ts",
+            "symbol": "BtwController::start#1",
+            "line": 106,
+            "end_line": 132
+          },
+          "changed_at_fix": {
+            "path": "packages/coding-agent/src/modes/controllers/btw-controller.ts",
+            "symbol": "BtwController::start#1",
+            "line": 128,
+            "end_line": 158
+          },
+          "survivor": {
+            "path": "packages/coding-agent/src/modes/controllers/omfg-controller.ts",
+            "symbol": "OmfgController::start#1",
+            "line": 58,
+            "end_line": 83
+          },
+          "similarity": 0.9212,
+          "normalized_exact": false,
+          "edits": [
+            {
+              "operation": "insert",
+              "old_line": 122,
+              "new_line": 146,
+              "survivor_line": 74,
+              "removed_tokens": [],
+              "added_tokens": [
+                ",",
+                "canBranch",
+                ":",
+                "(",
+                ")",
+                "=>",
+                "this",
+                ".",
+                "canBranch",
+                "(",
+                ")",
+                ","
+              ],
+              "old_excerpt": "\t\tconst request: BtwRequest = {\n\t\t\tcomponent: new BtwPanelComponent({ question: trimmedQuestion, tui: this.ctx.ui }),\n\t\t\tabortController: new AbortController(),",
+              "new_excerpt": "\t\t\t\tquestion: trimmedQuestion,\n\t\t\t\ttui: this.ctx.ui,\n\t\t\t\tcanBranch: () => this.canBranch(),\n\t\t\t}),"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "rejected",
+            "reason": "different_complete_body"
+          }
+        }
+      ],
+      "source_files": 2123,
+      "function_bodies": 26390,
+      "history_commits": 200,
+      "fix_labelled_commits": 125,
+      "changed_functions_compared": 260,
+      "missing_history_parents": 0,
+      "parse_error_files": [
+        "packages/ai/src/index.ts",
+        "packages/ai/src/registry/oauth/index.ts",
+        "packages/coding-agent/src/capability/index.ts",
+        "packages/coding-agent/src/config/settings.ts",
+        "packages/coding-agent/src/discovery/index.ts",
+        "packages/coding-agent/src/discovery/omp-extension-roots.ts",
+        "packages/coding-agent/src/extensibility/custom-commands/index.ts",
+        "packages/coding-agent/src/extensibility/custom-tools/index.ts",
+        "packages/coding-agent/src/extensibility/hooks/runner.ts",
+        "packages/coding-agent/src/extensibility/plugins/index.ts",
+        "packages/coding-agent/src/index.ts",
+        "packages/coding-agent/src/internal-urls/index.ts",
+        "packages/coding-agent/src/lsp/edits.ts",
+        "packages/coding-agent/src/modes/rpc/rpc-mode.ts",
+        "packages/coding-agent/src/sdk.ts",
+        "packages/coding-agent/src/web/scrapers/biorxiv.ts",
+        "packages/coding-agent/src/web/scrapers/crossref.ts",
+        "packages/coding-agent/src/web/scrapers/metacpan.ts",
+        "packages/coding-agent/src/web/scrapers/rfc.ts",
+        "packages/coding-agent/src/web/scrapers/semantic-scholar.ts",
+        "packages/mnemopi/src/core/beam/index.ts",
+        "packages/omptype/src/infer.ts",
+        "packages/omptype/src/type.ts",
+        "packages/omptype/src/zod.ts",
+        "packages/tui/src/index.ts"
+      ],
+      "candidates_omitted_by_per_function_cap": 0,
+      "findings": [
+        {
+          "check": "missed_clone_fix",
+          "commit": "f948c61256e3c833166801c495ca7bd9eb7731b2",
+          "subject": "fix(discovery): enforced hard model probe timeouts",
+          "changed": {
+            "path": "packages/coding-agent/src/config/model-discovery.ts",
+            "symbol": "withTimeoutSignal#1",
+            "line": 52,
+            "end_line": 63
+          },
+          "changed_at_fix": {
+            "path": "packages/coding-agent/src/config/model-discovery.ts",
+            "symbol": "withTimeoutSignal#1",
+            "line": 50,
+            "end_line": 63
+          },
+          "survivor": {
+            "path": "packages/catalog/src/discovery/openai-compatible.ts",
+            "symbol": "withOpenAICompatibleDiscoveryTimeout#1",
+            "line": 12,
+            "end_line": 26
+          },
+          "similarity": 0.9831,
+          "normalized_exact": false,
+          "edits": [
+            {
+              "operation": "insert",
+              "old_line": 54,
+              "new_line": 52,
+              "survivor_line": 17,
+              "removed_tokens": [],
+              "added_tokens": [
+                "$id",
+                ".",
+                "withResolvers",
+                "<",
+                "never",
+                ">",
+                "(",
+                ")",
+                ";",
+                "const",
+                "$id",
+                "="
+              ],
+              "old_excerpt": "\tconst controller = new AbortController();\n\tconst timer = setTimeout(\n\t\t() => controller.abort(new DOMException(\"The operation timed out.\", \"TimeoutError\")),",
+              "new_excerpt": "\tconst controller = new AbortController();\n\tconst timeout = Promise.withResolvers<never>();\n\tconst timer = setTimeout(() => {\n\t\tconst error = new DOMException(\"The operation timed out.\", \"TimeoutError\");"
+            },
+            {
+              "operation": "insert",
+              "old_line": 55,
+              "new_line": 53,
+              "survivor_line": 18,
+              "removed_tokens": [],
+              "added_tokens": [
+                "{",
+                "const"
+              ],
+              "old_excerpt": "\tconst timer = setTimeout(\n\t\t() => controller.abort(new DOMException(\"The operation timed out.\", \"TimeoutError\")),\n\t\ttimeoutMs,",
+              "new_excerpt": "\tconst timeout = Promise.withResolvers<never>();\n\tconst timer = setTimeout(() => {\n\t\tconst error = new DOMException(\"The operation timed out.\", \"TimeoutError\");\n\t\tcontroller.abort(error);"
+            },
+            {
+              "operation": "replace",
+              "old_line": 55,
+              "new_line": 54,
+              "survivor_line": 18,
+              "removed_tokens": [
+                ".",
+                "abort",
+                "("
+              ],
+              "added_tokens": [
+                "="
+              ],
+              "old_excerpt": "\tconst timer = setTimeout(\n\t\t() => controller.abort(new DOMException(\"The operation timed out.\", \"TimeoutError\")),\n\t\ttimeoutMs,",
+              "new_excerpt": "\tconst timer = setTimeout(() => {\n\t\tconst error = new DOMException(\"The operation timed out.\", \"TimeoutError\");\n\t\tcontroller.abort(error);"
+            },
+            {
+              "operation": "insert",
+              "old_line": 55,
+              "new_line": 54,
+              "survivor_line": 18,
+              "removed_tokens": [],
+              "added_tokens": [
+                ";",
+                "$id",
+                ".",
+                "abort",
+                "(",
+                "$id"
+              ],
+              "old_excerpt": "\tconst timer = setTimeout(\n\t\t() => controller.abort(new DOMException(\"The operation timed out.\", \"TimeoutError\")),\n\t\ttimeoutMs,",
+              "new_excerpt": "\tconst timer = setTimeout(() => {\n\t\tconst error = new DOMException(\"The operation timed out.\", \"TimeoutError\");\n\t\tcontroller.abort(error);\n\t\ttimeout.reject(error);"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "accepted",
+            "reason": "same_complete_pre_fix_structure"
+          }
+        },
+        {
+          "check": "missed_clone_fix",
+          "commit": "f948c61256e3c833166801c495ca7bd9eb7731b2",
+          "subject": "fix(discovery): enforced hard model probe timeouts",
+          "changed": {
+            "path": "packages/coding-agent/src/config/model-discovery.ts",
+            "symbol": "withTimeoutSignal#1",
+            "line": 52,
+            "end_line": 63
+          },
+          "changed_at_fix": {
+            "path": "packages/coding-agent/src/config/model-discovery.ts",
+            "symbol": "withTimeoutSignal#1",
+            "line": 50,
+            "end_line": 63
+          },
+          "survivor": {
+            "path": "packages/catalog/src/provider-models/openai-compat.ts",
+            "symbol": "withCatalogDiscoveryTimeout#1",
+            "line": 46,
+            "end_line": 57
+          },
+          "similarity": 0.9831,
+          "normalized_exact": false,
+          "edits": [
+            {
+              "operation": "insert",
+              "old_line": 54,
+              "new_line": 52,
+              "survivor_line": 48,
+              "removed_tokens": [],
+              "added_tokens": [
+                "$id",
+                ".",
+                "withResolvers",
+                "<",
+                "never",
+                ">",
+                "(",
+                ")",
+                ";",
+                "const",
+                "$id",
+                "="
+              ],
+              "old_excerpt": "\tconst controller = new AbortController();\n\tconst timer = setTimeout(\n\t\t() => controller.abort(new DOMException(\"The operation timed out.\", \"TimeoutError\")),",
+              "new_excerpt": "\tconst controller = new AbortController();\n\tconst timeout = Promise.withResolvers<never>();\n\tconst timer = setTimeout(() => {\n\t\tconst error = new DOMException(\"The operation timed out.\", \"TimeoutError\");"
+            },
+            {
+              "operation": "insert",
+              "old_line": 55,
+              "new_line": 53,
+              "survivor_line": 49,
+              "removed_tokens": [],
+              "added_tokens": [
+                "{",
+                "const"
+              ],
+              "old_excerpt": "\tconst timer = setTimeout(\n\t\t() => controller.abort(new DOMException(\"The operation timed out.\", \"TimeoutError\")),\n\t\ttimeoutMs,",
+              "new_excerpt": "\tconst timeout = Promise.withResolvers<never>();\n\tconst timer = setTimeout(() => {\n\t\tconst error = new DOMException(\"The operation timed out.\", \"TimeoutError\");\n\t\tcontroller.abort(error);"
+            },
+            {
+              "operation": "replace",
+              "old_line": 55,
+              "new_line": 54,
+              "survivor_line": 49,
+              "removed_tokens": [
+                ".",
+                "abort",
+                "("
+              ],
+              "added_tokens": [
+                "="
+              ],
+              "old_excerpt": "\tconst timer = setTimeout(\n\t\t() => controller.abort(new DOMException(\"The operation timed out.\", \"TimeoutError\")),\n\t\ttimeoutMs,",
+              "new_excerpt": "\tconst timer = setTimeout(() => {\n\t\tconst error = new DOMException(\"The operation timed out.\", \"TimeoutError\");\n\t\tcontroller.abort(error);"
+            },
+            {
+              "operation": "insert",
+              "old_line": 55,
+              "new_line": 54,
+              "survivor_line": 49,
+              "removed_tokens": [],
+              "added_tokens": [
+                ";",
+                "$id",
+                ".",
+                "abort",
+                "(",
+                "$id"
+              ],
+              "old_excerpt": "\tconst timer = setTimeout(\n\t\t() => controller.abort(new DOMException(\"The operation timed out.\", \"TimeoutError\")),\n\t\ttimeoutMs,",
+              "new_excerpt": "\tconst timer = setTimeout(() => {\n\t\tconst error = new DOMException(\"The operation timed out.\", \"TimeoutError\");\n\t\tcontroller.abort(error);\n\t\ttimeout.reject(error);"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "resolved_locals",
+            "right_mode": "resolved_locals",
+            "left_fallback_reason": null,
+            "right_fallback_reason": null,
+            "decision": "accepted",
+            "reason": "same_complete_pre_fix_structure"
+          }
+        }
+      ],
+      "limitations": [
+        "Fix labels select history; do not prove defect fixes.",
+        "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+        "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+        "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+        "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+        "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+        "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+        "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+      ]
+    },
+    {
+      "repo": "ripgrep",
+      "root": "/private/tmp/scry-analyzer-corpus/ripgrep",
+      "revision": "178cc027e283fd965cb72d0a7395b219eada170c",
+      "matching": "exact",
+      "broad_candidates": 0,
+      "rejected_candidates": [],
+      "source_files": 84,
+      "function_bodies": 2233,
+      "history_commits": 160,
+      "fix_labelled_commits": 23,
+      "changed_functions_compared": 21,
+      "missing_history_parents": 1,
+      "parse_error_files": [],
+      "candidates_omitted_by_per_function_cap": 0,
+      "findings": [],
+      "limitations": [
+        "Fix labels select history; do not prove defect fixes.",
+        "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+        "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+        "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+        "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+        "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+        "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+        "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+      ]
+    },
+    {
+      "repo": "scry",
+      "root": "/private/tmp/scry-analyzer-corpus/scry",
+      "revision": "7927f36440ffc34469da551c782a6487826f05d1",
+      "matching": "exact",
+      "broad_candidates": 0,
+      "rejected_candidates": [],
+      "source_files": 23,
+      "function_bodies": 506,
+      "history_commits": 87,
+      "fix_labelled_commits": 9,
+      "changed_functions_compared": 19,
+      "missing_history_parents": 0,
+      "parse_error_files": [],
+      "candidates_omitted_by_per_function_cap": 0,
+      "findings": [],
+      "limitations": [
+        "Fix labels select history; do not prove defect fixes.",
+        "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+        "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+        "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+        "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+        "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+        "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+        "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+      ]
+    },
+    {
+      "repo": "tauri",
+      "root": "/private/tmp/scry-analyzer-corpus/tauri",
+      "revision": "5edd31c8a8914674c217b21a660a914823da2dae",
+      "matching": "exact",
+      "broad_candidates": 2,
+      "rejected_candidates": [
+        {
+          "check": "missed_clone_fix",
+          "commit": "a1ea1b5e5ad4b75759fa773b7b78db288128b4af",
+          "subject": "fix(utils): keep the drive prefix of absolute resource paths on Windows (#16453)",
+          "changed": {
+            "path": "crates/tauri-utils/src/resources.rs",
+            "symbol": "normalize#1",
+            "line": 31,
+            "end_line": 43
+          },
+          "changed_at_fix": {
+            "path": "crates/tauri-utils/src/resources.rs",
+            "symbol": "normalize#1",
+            "line": 31,
+            "end_line": 42
+          },
+          "survivor": {
+            "path": "crates/tauri-utils/src/resources.rs",
+            "symbol": "resource_relpath#1",
+            "line": 17,
+            "end_line": 29
+          },
+          "similarity": 0.9756,
+          "normalized_exact": false,
+          "edits": [
+            {
+              "operation": "replace",
+              "old_line": 35,
+              "new_line": 35,
+              "survivor_line": 21,
+              "removed_tokens": [
+                "=>",
+                "{",
+                "}"
+              ],
+              "added_tokens": [
+                "|"
+              ],
+              "old_excerpt": "    match component {\n      Component::Prefix(_) => {}\n      Component::RootDir => dest.push(\"/\"),",
+              "new_excerpt": "    match component {\n      Component::Prefix(_) | Component::RootDir => dest.push(component),\n      Component::CurDir => {}"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "unsupported binding context: match_expression",
+            "right_fallback_reason": "unsupported binding context: match_expression",
+            "decision": "rejected",
+            "reason": "different_function_signature"
+          }
+        },
+        {
+          "check": "missed_clone_fix",
+          "commit": "141d1c0d6f3a746f7f34618d00c2676c902dca67",
+          "subject": "fix(acl): resolve permission files after the target dir is moved (#16199)",
+          "changed": {
+            "path": "crates/tauri-utils/src/acl/build.rs",
+            "symbol": "read_permissions#1",
+            "line": 114,
+            "end_line": 146
+          },
+          "changed_at_fix": {
+            "path": "crates/tauri-utils/src/acl/build.rs",
+            "symbol": "read_permissions#1",
+            "line": 136,
+            "end_line": 164
+          },
+          "survivor": {
+            "path": "crates/tauri-utils/src/acl/build.rs",
+            "symbol": "read_global_scope_schemas#1",
+            "line": 189,
+            "end_line": 219
+          },
+          "similarity": 0.9591,
+          "normalized_exact": false,
+          "edits": [
+            {
+              "operation": "replace",
+              "old_line": 129,
+              "new_line": 151,
+              "survivor_line": 204,
+              "removed_tokens": [
+                "PathBuf"
+              ],
+              "added_tokens": [
+                "read_permission_files",
+                "(",
+                "Path"
+              ],
+              "old_excerpt": "    {\n      let permissions_path = PathBuf::from(value);\n      let permissions_str =",
+              "new_excerpt": "    {\n      let permissions = read_permission_files(Path::new(&value))?;\n"
+            },
+            {
+              "operation": "replace",
+              "old_line": 129,
+              "new_line": 151,
+              "survivor_line": 204,
+              "removed_tokens": [
+                "from",
+                "(",
+                "$id",
+                ")",
+                ";",
+                "let",
+                "$id",
+                "=",
+                "fs",
+                "::",
+                "read_to_string"
+              ],
+              "added_tokens": [
+                "new"
+              ],
+              "old_excerpt": "    {\n      let permissions_path = PathBuf::from(value);\n      let permissions_str =\n        fs::read_to_string(&permissions_path).map_err(|e| Error::ReadFile(e, permissions_path))?;\n      let permissions: Vec<PathBuf> = serde_json::from_str(&permissions_str)?;",
+              "new_excerpt": "    {\n      let permissions = read_permission_files(Path::new(&value))?;\n"
+            }
+          ],
+          "status": "candidate",
+          "structural_comparison": {
+            "left_mode": "literal_identifiers",
+            "right_mode": "literal_identifiers",
+            "left_fallback_reason": "non-identifier binding",
+            "right_fallback_reason": "non-identifier binding",
+            "decision": "rejected",
+            "reason": "different_function_signature"
+          }
+        }
+      ],
+      "source_files": 314,
+      "function_bodies": 3679,
+      "history_commits": 120,
+      "fix_labelled_commits": 53,
+      "changed_functions_compared": 46,
+      "missing_history_parents": 0,
+      "parse_error_files": [
+        "crates/tauri-cli/templates/plugin/__example-api/tauri-app/src-tauri/src/lib.rs",
+        "crates/tauri-cli/templates/plugin/__example-basic/vanilla/src-tauri/src/lib.rs",
+        "crates/tauri-cli/templates/plugin/guest-js/index.ts",
+        "crates/tauri-cli/templates/plugin/src/commands.rs",
+        "crates/tauri-cli/templates/plugin/src/desktop.rs",
+        "crates/tauri-cli/templates/plugin/src/error.rs",
+        "crates/tauri-cli/templates/plugin/src/lib.rs",
+        "crates/tauri-cli/templates/plugin/src/mobile.rs",
+        "crates/tauri-cli/templates/plugin/src/models.rs",
+        "crates/tauri-runtime-wry/src/lib.rs",
+        "crates/tauri-utils/src/acl/resolved.rs",
+        "crates/tauri/src/protocol/tauri.rs"
+      ],
+      "candidates_omitted_by_per_function_cap": 0,
+      "findings": [],
+      "limitations": [
+        "Fix labels select history; do not prove defect fixes.",
+        "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+        "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+        "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+        "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+        "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+        "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+        "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+      ]
+    },
+    {
+      "repo": "typescript-eslint",
+      "root": "/private/tmp/scry-analyzer-corpus/typescript-eslint",
+      "revision": "2838b498d03ef3a3808fa714f43ea653f4e589b0",
+      "matching": "exact",
+      "broad_candidates": 0,
+      "rejected_candidates": [],
+      "source_files": 981,
+      "function_bodies": 1658,
+      "history_commits": 160,
+      "fix_labelled_commits": 56,
+      "changed_functions_compared": 40,
+      "missing_history_parents": 1,
+      "parse_error_files": [
+        "packages/ast-spec/src/base/ClassBase.ts",
+        "packages/ast-spec/src/expression/ClassExpression/spec.ts",
+        "packages/ast-spec/src/type/TSConstructorType/spec.ts"
+      ],
+      "candidates_omitted_by_per_function_cap": 0,
+      "findings": [],
+      "limitations": [
+        "Fix labels select history; do not prove defect fixes.",
+        "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+        "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+        "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+        "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+        "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+        "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+        "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+      ]
+    },
+    {
+      "repo": "vite",
+      "root": "/private/tmp/scry-analyzer-corpus/vite",
+      "revision": "61622b8df68b7a8e657caa6f98d9b70069643abf",
+      "matching": "exact",
+      "broad_candidates": 0,
+      "rejected_candidates": [],
+      "source_files": 185,
+      "function_bodies": 1271,
+      "history_commits": 160,
+      "fix_labelled_commits": 70,
+      "changed_functions_compared": 56,
+      "missing_history_parents": 0,
+      "parse_error_files": [
+        "packages/vite/src/node/index.ts"
+      ],
+      "candidates_omitted_by_per_function_cap": 0,
+      "findings": [],
+      "limitations": [
+        "Fix labels select history; do not prove defect fixes.",
+        "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+        "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+        "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+        "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+        "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+        "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+        "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+      ]
+    }
+  ]
+}

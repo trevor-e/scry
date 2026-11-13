@@ -4,6 +4,8 @@ The missed-clone-fix experiment produced the strongest review leads: three locat
 
 These are standalone experiments. They do not change scry's scan output, scoring, or configuration.
 
+**Clone follow-up:** the current default matcher reduces the original 11 candidates to 3 while retaining all three useful locations. See [the refinement report](clones/REFINEMENT.md). The tables and judgments below record the initial experiment; `clones/raw.json` preserves that baseline. The rerun command uses the refined default.
+
 ## Results
 
 | Prototype | Actual analysis coverage | Emitted candidates | Source-review outcome |
