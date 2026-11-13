@@ -1,0 +1,199 @@
+{
+  "prototype": "literal-env-default-drift-v1",
+  "method": "Read source around every within-scope group and cross-scope group; inspect linked configuration and test harnesses. No corpus code, build scripts, or tests were executed. CLI fixtures only execute the prototype.",
+  "heads": {
+    "tauri": "5edd31c8a8914674c217b21a660a914823da2dae",
+    "nushell": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+    "ripgrep": "178cc027e283fd965cb72d0a7395b219eada170c",
+    "vite": "61622b8df68b7a8e657caa6f98d9b70069643abf",
+    "hono": "f6fbaf0299c48eea9e656e03e2ffe7ac755e8823",
+    "typescript-eslint": "2838b498d03ef3a3808fa714f43ea653f4e589b0",
+    "scry": "7927f36440ffc34469da551c782a6487826f05d1",
+    "kanspec": "a99893d88d98b43616c07f5cfcf02d03c7048bf6",
+    "adulting": "c8baee7ca4cecbfdfc687dff7f4823c278720596",
+    "oh-my-pi": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f"
+  },
+  "counts": {
+    "excluded_files": 427,
+    "files_with_parse_errors": 315,
+    "literal_default_sites": 59,
+    "recognized_literal_env_reads": 1661,
+    "rust_files": 3156,
+    "scanned_files": 11422,
+    "tracked_language_files": 12024,
+    "typescript_files": 7727,
+    "unsupported_cases": 1843,
+    "excluded_generated_files": 175,
+    "tsx_files": 539,
+    "within_scope_candidates": 3,
+    "cross_scope_differences": 1
+  },
+  "judgment_counts": {
+    "within_scope_groups": 3,
+    "useful_review_leads": 1,
+    "intentional_differences": 2,
+    "confirmed_runtime_defects": 0,
+    "production_candidates": 0,
+    "cross_scope_groups": 1,
+    "cross_scope_groups_already_represented_within_scope": 1
+  },
+  "verdict": "A narrow opt-in review signal, not justified as a general defect check or hotspot weight. One useful TypeScript benchmark-report discrepancy; no useful Rust findings. Literal-only coverage is sparse, so zero candidates does not imply consistent configuration.",
+  "audits": [
+    {
+      "repository": "adulting",
+      "key": "PERF_DPR",
+      "scope": "frontend/package.json|benchmark|benchmark|os-env",
+      "judgment": "useful-review-lead",
+      "source_locations": [
+        {
+          "file": "frontend/playwright-ct.perf.config.ts",
+          "lines": [
+            12,
+            29,
+            34
+          ]
+        },
+        {
+          "file": "frontend/src/perf/PaintProbe.perf.tsx",
+          "lines": [
+            28,
+            39,
+            96,
+            104
+          ]
+        },
+        {
+          "file": "frontend/src/perf/Dashboard.perf.tsx",
+          "lines": [
+            83,
+            145
+          ]
+        }
+      ],
+      "evidence": "The perf config explicitly matches *.perf.tsx and configures deviceScaleFactor from PERF_DPR with default 1. PaintProbe reads the same key with default 2 and uses that value only in its printed measurement label (line 104). Dashboard defaults its label to 1. Source search across the repository found no writes to PERF_DPR and no PaintProbe read of window.devicePixelRatio; the separate console-probe.js reads actual devicePixelRatio but does not feed this test. The perf project also spreads a Desktop Chrome device descriptor; effective runtime option precedence was not executed or validated.",
+      "interpretation": "With PERF_DPR unset, declared harness default and printed benchmark default disagree. A valuable review lead for misleading benchmark metadata, not a claim that benchmark history was measured at the wrong DPR. Derive the label from effective page state or centralize configuration.",
+      "caveat": "External invocation can set PERF_DPR. Source-only audit does not establish historical runs or actual Playwright device option precedence."
+    },
+    {
+      "repository": "adulting",
+      "key": "PERF_CPU",
+      "scope": "frontend/package.json|benchmark|benchmark|os-env",
+      "judgment": "intentional-difference",
+      "source_locations": [
+        {
+          "file": "frontend/src/perf/PaintProbe.perf.tsx",
+          "lines": [
+            13,
+            29,
+            44
+          ]
+        },
+        {
+          "file": "frontend/src/perf/Dashboard.perf.tsx",
+          "lines": [
+            31,
+            84
+          ]
+        },
+        {
+          "file": "frontend/src/perf/RowWeight.perf.tsx",
+          "lines": [
+            61,
+            65
+          ]
+        }
+      ],
+      "evidence": "PaintProbe documents its 4x CPU workload and applies that rate through Emulation.setCPUThrottlingRate. Dashboard and RowWeight default to 1x and apply their own CPU values. These are separate benchmark scenarios, not consumers of one shared production default.",
+      "interpretation": "Do not recommend making these defaults equal merely because the env key matches. Difference is useful context for benchmark comparison, but is a false positive for a required consistency rule."
+    },
+    {
+      "repository": "oh-my-pi",
+      "key": "PATH",
+      "scope": "packages/coding-agent/package.json|test|test|os-env",
+      "judgment": "intentional-difference",
+      "source_locations": [
+        {
+          "file": "packages/coding-agent/test/non-interactive-env.test.ts",
+          "lines": [
+            97,
+            104,
+            158
+          ]
+        },
+        {
+          "file": "packages/coding-agent/test/shell-snapshot.test.ts",
+          "lines": [
+            126,
+            128,
+            169,
+            215
+          ]
+        },
+        {
+          "file": "packages/coding-agent/test/system-prompt.test.ts",
+          "lines": [
+            28,
+            69
+          ]
+        }
+      ],
+      "evidence": "non-interactive-env starts the current runtime through process.execPath and passes PATH or an empty string. shell-snapshot spawns bash and supplies /usr/bin:/bin if PATH is missing. system-prompt creates a fixture bin directory and prepends it to PATH. Those scopes intentionally control distinct subprocesses.",
+      "interpretation": "False positive for configuration drift: package and test classification alone do not establish one process contract. Exclude or independently scope subprocess fixture environments."
+    },
+    {
+      "repository": "oh-my-pi",
+      "key": "PATH",
+      "scope": "cross-scope",
+      "judgment": "intentional-difference-duplicate",
+      "evidence": "The broader cross-scope group includes the same coding-agent tests plus other package tests and a build script. It is not another independent useful finding."
+    }
+  ],
+  "coverage_notes": [
+    "11,422 tracked Rust/TypeScript/TSX source files scanned from 12,024 eligible-extension files; 427 path/declaration exclusions and 175 generated-file exclusions.",
+    "1,661 recognized literal-key environment reads yielded 59 supported literal-default sites. 1,843 unsupported records also include dynamic-key reads, so unsupported count is not the complement of literal reads.",
+    "315 files contain parse errors, mostly parser-test/fixture syntax; sites inside errored enclosing expressions abstain, valid subexpressions elsewhere remain eligible.",
+    "Eight repositories produced no candidate groups: tauri, nushell, ripgrep, vite, hono, typescript-eslint, scry, kanspec.",
+    "No production candidates and no Rust conflict candidates. There are only four supported Rust literal-default sites across all ten repositories (two tauri, one nushell, one adulting test); this detector does not inspect arbitrary config fields or resolve constants/wrappers.",
+    "Benchmark suffix classification was refined after inspecting initial false production classifications; final raw results classify *.perf.* and *.bench.* separately.",
+    "No precision estimate: three groups are too few, useful review leads are not confirmed bugs, and no comprehensive false-negative oracle was established."
+  ],
+  "unsupported_examples": [
+    {
+      "repository": "kanspec",
+      "file": "src/out.rs",
+      "line": 429,
+      "reason": "COLUMNS flows through parse and filter(width >= 40) before default 100; unrecognized transform intentionally abstains."
+    },
+    {
+      "repository": "kanspec",
+      "file": "src/lock.rs",
+      "line": 70,
+      "reason": "HOSTNAME falls back to executing hostname before localhost; additional fallback source prevents claiming one env-key default."
+    },
+    {
+      "repository": "vite",
+      "file": "packages/vite/src/node/plugins/clientInjections.ts",
+      "line": 66,
+      "reason": "NODE_ENV falls back to config.mode, a nonliteral value needing dataflow."
+    },
+    {
+      "repository": "adulting",
+      "file": "frontend/src/lib/config.ts",
+      "line": 19,
+      "reason": "VITE_TURNSTILE_SITE_KEY default depends on import.meta.env.PROD; conditional and multiple-key precedence abstain."
+    }
+  ],
+  "known_limits": [
+    "No semantic binding/type analysis or platform/feature evaluation.",
+    "No validation of wrapper APIs, default constants, destructured environment bindings, framework config libraries, or inter-statement flow.",
+    "No process graph; separate subprocess environments can be mistaken for one scope.",
+    "String escape support is deliberately limited; TS template literals are not literal defaults.",
+    "Parsing signatures are syntax observations; differing placement of a parser around a fallback is not fully modeled.",
+    "No comparison against deployment configuration or actual runtime values."
+  ],
+  "validation": "19 positive/negative fixture cases exercise actual CLI in temporary git repositories; see validation.json.",
+  "commands": {
+    "validate": "/private/tmp/scry-analyzer-venv/bin/python experiments/analyzer-prototypes/config/validate.py",
+    "scan": "/private/tmp/scry-analyzer-venv/bin/python experiments/analyzer-prototypes/config/prototype.py /path/to/repo [more repos] --output results.json"
+  }
+}

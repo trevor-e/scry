@@ -1,0 +1,28 @@
+{
+  "scope": "synthetic fixture only, not a corpus finding",
+  "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+  "command": "cargo run --offline --quiet",
+  "phases": [
+    {
+      "phase": "initial",
+      "observed": "first",
+      "expected": "first"
+    },
+    {
+      "phase": "input changed without watch",
+      "observed": "first",
+      "expected": "first"
+    },
+    {
+      "phase": "watch added",
+      "observed": "second",
+      "expected": "second"
+    },
+    {
+      "phase": "input changed with watch",
+      "observed": "third",
+      "expected": "third"
+    }
+  ],
+  "passed": true
+}

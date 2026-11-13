@@ -1,0 +1,222 @@
+{
+  "summary": {
+    "raw_candidates": 11,
+    "useful_review_candidates": 3,
+    "false_positives": 8,
+    "confirmed_runtime_defects": 0,
+    "all_candidates_inspected": true
+  },
+  "findings": [
+    {
+      "repo": "nushell",
+      "revision": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+      "commit": "ab6c901127083f940c39e68670850dbd69f1ee10",
+      "changed": {
+        "path": "crates/nu-cmd-lang/src/core_commands/use_.rs",
+        "symbol": "Use::run#1",
+        "line": 60,
+        "end_line": 169
+      },
+      "survivor": {
+        "path": "crates/nu-cmd-lang/src/core_commands/export_use.rs",
+        "symbol": "ExportUse::run#1",
+        "line": 49,
+        "end_line": 158
+      },
+      "classification": "useful_review",
+      "reason": "The fix adds module.real_file() as a fallback when find_in_dirs_env cannot resolve a bare module name. ExportUse::run still has the entire old normalized body and computes FILE_PWD/CURRENT_FILE from the same optional path. This merits a regression test for export use of a loaded file-backed module; behavior not executed here."
+    },
+    {
+      "repo": "nushell",
+      "revision": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+      "commit": "06e65cd925c0bc96b671612b8671010c5502ac48",
+      "changed": {
+        "path": "crates/nu-command/src/strings/split/column.rs",
+        "symbol": "split_column#1",
+        "line": 205,
+        "end_line": 233
+      },
+      "survivor": {
+        "path": "crates/nu-command/src/strings/split/row.rs",
+        "symbol": "split_row#1",
+        "line": 180,
+        "end_line": 197
+      },
+      "classification": "false_positive",
+      "reason": "Duplicate-column-name validation applies to split column. split row emits a list of values and its Arguments has no column-name list."
+    },
+    {
+      "repo": "nushell",
+      "revision": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+      "commit": "cf0c9a7734f11c376ec78e8547f01810e3b00490",
+      "changed": {
+        "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+        "symbol": "StateWorkingSet<'a>::find_type_alias#1",
+        "line": 629,
+        "end_line": 642
+      },
+      "survivor": {
+        "path": "crates/nu-protocol/src/engine/state_working_set.rs",
+        "symbol": "StateWorkingSet<'a>::find_variable_in_current_frame#1",
+        "line": 860,
+        "end_line": 872
+      },
+      "classification": "false_positive",
+      "reason": "Type-alias visibility and current-frame variable binding lookup have different semantics. find_variable_in_current_frame is used by parse_patterns to reuse an existing pattern variable and deliberately examines only the current frame; syntactic lookup similarity does not imply the visibility fix applies."
+    },
+    {
+      "repo": "oh-my-pi",
+      "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+      "commit": "f948c61256e3c833166801c495ca7bd9eb7731b2",
+      "changed": {
+        "path": "packages/coding-agent/src/config/model-discovery.ts",
+        "symbol": "withTimeoutSignal#1",
+        "line": 52,
+        "end_line": 63
+      },
+      "survivor": {
+        "path": "packages/catalog/src/discovery/openai-compatible.ts",
+        "symbol": "withOpenAICompatibleDiscoveryTimeout#1",
+        "line": 12,
+        "end_line": 26
+      },
+      "classification": "useful_review",
+      "reason": "The hard timeout fix uses an independent rejecting promise because abort alone can leave a fetch pending. Both catalog siblings still only abort and then await the operation; catalog APIs allow fetch overrides and cover local providers. This is a concrete missed-hardening lead, conditional on noncooperative transport behavior, not a reproduced hang."
+    },
+    {
+      "repo": "oh-my-pi",
+      "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+      "commit": "f948c61256e3c833166801c495ca7bd9eb7731b2",
+      "changed": {
+        "path": "packages/coding-agent/src/config/model-discovery.ts",
+        "symbol": "withTimeoutSignal#1",
+        "line": 52,
+        "end_line": 63
+      },
+      "survivor": {
+        "path": "packages/catalog/src/provider-models/openai-compat.ts",
+        "symbol": "withCatalogDiscoveryTimeout#1",
+        "line": 46,
+        "end_line": 57
+      },
+      "classification": "useful_review",
+      "reason": "The hard timeout fix uses an independent rejecting promise because abort alone can leave a fetch pending. Both catalog siblings still only abort and then await the operation; catalog APIs allow fetch overrides and cover local providers. This is a concrete missed-hardening lead, conditional on noncooperative transport behavior, not a reproduced hang."
+    },
+    {
+      "repo": "oh-my-pi",
+      "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+      "commit": "91467c2f27f21c9cceb72ac434f569aa425632fa",
+      "changed": {
+        "path": "packages/coding-agent/src/modes/components/agent-hub.ts",
+        "symbol": "AgentHubOverlayComponent::#orderAsTree#1",
+        "line": 653,
+        "end_line": 740
+      },
+      "survivor": {
+        "path": "packages/coding-agent/src/modes/components/agent-hub-projection.ts",
+        "symbol": "projectAgentTree#1",
+        "line": 162,
+        "end_line": 248
+      },
+      "classification": "false_positive",
+      "reason": "The changed method clears persistent instance maps. The surviving projectAgentTree creates fresh local maps on every call, so there is no stale instance state to clear."
+    },
+    {
+      "repo": "oh-my-pi",
+      "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+      "commit": "7a1183da91225eec2dd4e46dfa037e66567d8980",
+      "changed": {
+        "path": "packages/coding-agent/src/modes/controllers/btw-controller.ts",
+        "symbol": "BtwController::start#1",
+        "line": 106,
+        "end_line": 132
+      },
+      "survivor": {
+        "path": "packages/coding-agent/src/modes/controllers/omfg-controller.ts",
+        "symbol": "OmfgController::start#1",
+        "line": 58,
+        "end_line": 83
+      },
+      "classification": "false_positive",
+      "reason": "The new canBranch callback belongs to /btw session promotion. /omfg creates and saves rules and has no branch-promotion operation."
+    },
+    {
+      "repo": "oh-my-pi",
+      "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+      "commit": "7a1183da91225eec2dd4e46dfa037e66567d8980",
+      "changed": {
+        "path": "packages/coding-agent/src/modes/components/btw-panel.ts",
+        "symbol": "BtwPanelComponent::#rebuild#1",
+        "line": 81,
+        "end_line": 97
+      },
+      "survivor": {
+        "path": "packages/coding-agent/src/modes/components/omfg-panel.ts",
+        "symbol": "OmfgPanelComponent::#rebuild#1",
+        "line": 95,
+        "end_line": 108
+      },
+      "classification": "false_positive",
+      "reason": "The /btw footer became dynamic to reflect external branch availability. /omfg footer derives from its own state and rebuilds on state transitions; it has no corresponding external branch predicate."
+    },
+    {
+      "repo": "oh-my-pi",
+      "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+      "commit": "fe84294538441c4aa135ffdd1e9cbaa9c3210eb5",
+      "changed": {
+        "path": "packages/ai/src/usage/openai-codex.ts",
+        "symbol": "buildUsageStatus#1",
+        "line": 266,
+        "end_line": 272
+      },
+      "survivor": {
+        "path": "packages/coding-agent/src/cli/usage-cli.ts",
+        "symbol": "historyStatus#1",
+        "line": 747,
+        "end_line": 753
+      },
+      "classification": "false_positive",
+      "reason": "historyStatus honors a known recorded status before falling back to fractions. Provider allowance is already represented by that status; the generic history/sparkline fallback has no provider allowance input."
+    },
+    {
+      "repo": "tauri",
+      "revision": "5edd31c8a8914674c217b21a660a914823da2dae",
+      "commit": "a1ea1b5e5ad4b75759fa773b7b78db288128b4af",
+      "changed": {
+        "path": "crates/tauri-utils/src/resources.rs",
+        "symbol": "normalize#1",
+        "line": 31,
+        "end_line": 43
+      },
+      "survivor": {
+        "path": "crates/tauri-utils/src/resources.rs",
+        "symbol": "resource_relpath#1",
+        "line": 17,
+        "end_line": 29
+      },
+      "classification": "false_positive",
+      "reason": "resource_relpath deliberately removes drive prefixes to produce a path relative to the bundle; normalize preserves filesystem path roots. Their documented contracts differ."
+    },
+    {
+      "repo": "tauri",
+      "revision": "5edd31c8a8914674c217b21a660a914823da2dae",
+      "commit": "141d1c0d6f3a746f7f34618d00c2676c902dca67",
+      "changed": {
+        "path": "crates/tauri-utils/src/acl/build.rs",
+        "symbol": "read_permissions#1",
+        "line": 114,
+        "end_line": 146
+      },
+      "survivor": {
+        "path": "crates/tauri-utils/src/acl/build.rs",
+        "symbol": "read_global_scope_schemas#1",
+        "line": 189,
+        "end_line": 219
+      },
+      "classification": "false_positive",
+      "reason": "The fix rebases paths stored inside a permission-list file. read_global_scope_schemas consumes a schema directly from the Cargo-provided path and has no nested path list to rebase."
+    }
+  ],
+  "coordinate_note": "changed locations are pre-fix; survivor locations are pinned HEAD. See raw changed_at_fix for the fix commit.",
+  "independent_review": "Other agents source-checked the Nushell useful lead, both timeout useful leads, and both Tauri false positives."
+}

@@ -1,0 +1,999 @@
+{
+  "analyzer": "serde-shadowed-untagged-json-variants",
+  "repositories": [
+    {
+      "abstentions": [
+        {
+          "context": "production",
+          "enum": "SerializeOnly",
+          "file": "cases.rs",
+          "line": 89,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "FlattenAbstention",
+          "file": "cases.rs",
+          "line": 97,
+          "reason": "unsupported_serde_attributes:flatten",
+          "variant": "Earlier"
+        },
+        {
+          "context": "production",
+          "enum": "AliasAbstention",
+          "file": "cases.rs",
+          "line": 104,
+          "reason": "unsupported_serde_attributes:alias",
+          "variant": "Earlier"
+        },
+        {
+          "context": "production",
+          "enum": "CustomFieldAbstention",
+          "file": "cases.rs",
+          "line": 111,
+          "reason": "unsupported_serde_attributes:deserialize_with",
+          "variant": "Earlier"
+        },
+        {
+          "context": "production",
+          "enum": "ConditionalAbstention",
+          "file": "cases.rs",
+          "line": 119,
+          "reason": "conditional_variant",
+          "variant": "Earlier"
+        }
+      ],
+      "counts": {
+        "candidates": 6,
+        "derived_untagged_enums": 15,
+        "modeled_variants": 26,
+        "rust_files_scanned": 1,
+        "untagged_enum_declarations": 16,
+        "variant_pairs_compared": 11
+      },
+      "enum_inventory": [
+        {
+          "context": "production",
+          "enum": "RequiredSubset",
+          "file": "cases.rs",
+          "line": 6,
+          "variants": [
+            {
+              "line": 7,
+              "modeled": true,
+              "name": "Broad",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            },
+            {
+              "line": 8,
+              "modeled": true,
+              "name": "Narrow",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  },
+                  {
+                    "name": "detail",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "IntegerRange",
+          "file": "cases.rs",
+          "line": 13,
+          "variants": [
+            {
+              "line": 14,
+              "modeled": true,
+              "name": "Wide",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "count",
+                    "optional": false,
+                    "shape": {
+                      "maximum": 18446744073709551615,
+                      "minimum": 0
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            },
+            {
+              "line": 15,
+              "modeled": true,
+              "name": "Narrow",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "count",
+                    "optional": false,
+                    "shape": {
+                      "maximum": 255,
+                      "minimum": 0
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "OptionalSuperset",
+          "file": "cases.rs",
+          "line": 20,
+          "variants": [
+            {
+              "line": 21,
+              "modeled": true,
+              "name": "Broad",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": true,
+                    "shape": {
+                      "item": {
+                        "kind": "string"
+                      }
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            },
+            {
+              "line": 22,
+              "modeled": true,
+              "name": "Narrow",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "DefaultSuperset",
+          "file": "cases.rs",
+          "line": 27,
+          "variants": [
+            {
+              "line": 28,
+              "modeled": true,
+              "name": "Broad",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": true,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            },
+            {
+              "line": 29,
+              "modeled": true,
+              "name": "Narrow",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "AnyFirst",
+          "file": "cases.rs",
+          "line": 34,
+          "variants": [
+            {
+              "line": 35,
+              "modeled": true,
+              "name": "Broad",
+              "shape": {
+                "kind": "any"
+              }
+            },
+            {
+              "line": 36,
+              "modeled": true,
+              "name": "Narrow",
+              "shape": {
+                "kind": "string"
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "RenamedFields",
+          "file": "cases.rs",
+          "line": 41,
+          "variants": [
+            {
+              "line": 42,
+              "modeled": true,
+              "name": "Broad",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            },
+            {
+              "line": 43,
+              "modeled": true,
+              "name": "Narrow",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  },
+                  {
+                    "name": "detail",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "SpecificFirst",
+          "file": "cases.rs",
+          "line": 48,
+          "variants": [
+            {
+              "line": 49,
+              "modeled": true,
+              "name": "Specific",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  },
+                  {
+                    "name": "detail",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            },
+            {
+              "line": 50,
+              "modeled": true,
+              "name": "General",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "OptionalUnknownFieldTrap",
+          "file": "cases.rs",
+          "line": 55,
+          "variants": [
+            {
+              "line": 56,
+              "modeled": true,
+              "name": "Earlier",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "optional",
+                    "optional": true,
+                    "shape": {
+                      "item": {
+                        "kind": "string"
+                      }
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            },
+            {
+              "line": 57,
+              "modeled": true,
+              "name": "Later",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "DeniedUnknown",
+          "file": "cases.rs",
+          "line": 62,
+          "variants": [
+            {
+              "line": 63,
+              "modeled": true,
+              "name": "Earlier",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": null
+              }
+            },
+            {
+              "line": 64,
+              "modeled": true,
+              "name": "Later",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  },
+                  {
+                    "name": "detail",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": null
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "NamedStructSequenceTrap",
+          "file": "cases.rs",
+          "line": 75,
+          "variants": [
+            {
+              "line": 76,
+              "modeled": true,
+              "name": "Earlier",
+              "shape": {
+                "items": [
+                  {
+                    "fields": [
+                      {
+                        "name": "id",
+                        "optional": false,
+                        "shape": {
+                          "kind": "string"
+                        }
+                      }
+                    ],
+                    "unknown": {
+                      "kind": "any"
+                    }
+                  },
+                  {
+                    "items": [
+                      {
+                        "kind": "string"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "line": 77,
+              "modeled": true,
+              "name": "Later",
+              "shape": {
+                "items": [
+                  {
+                    "fields": [
+                      {
+                        "name": "id",
+                        "optional": false,
+                        "shape": {
+                          "kind": "string"
+                        }
+                      },
+                      {
+                        "name": "detail",
+                        "optional": false,
+                        "shape": {
+                          "kind": "string"
+                        }
+                      }
+                    ],
+                    "unknown": {
+                      "kind": "any"
+                    }
+                  },
+                  {
+                    "items": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "string"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "EnumRenameDoesNotRenameFields",
+          "file": "cases.rs",
+          "line": 82,
+          "variants": [
+            {
+              "line": 83,
+              "modeled": true,
+              "name": "Earlier",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "snake_case",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            },
+            {
+              "line": 84,
+              "modeled": true,
+              "name": "Later",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "snakeCase",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "SerializeOnly",
+          "file": "cases.rs",
+          "line": 89,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "FlattenAbstention",
+          "file": "cases.rs",
+          "line": 96,
+          "variants": [
+            {
+              "line": 97,
+              "modeled": false,
+              "name": "Earlier",
+              "reason": "unsupported_serde_attributes:flatten"
+            },
+            {
+              "line": 98,
+              "modeled": true,
+              "name": "Later",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "AliasAbstention",
+          "file": "cases.rs",
+          "line": 103,
+          "variants": [
+            {
+              "line": 104,
+              "modeled": false,
+              "name": "Earlier",
+              "reason": "unsupported_serde_attributes:alias"
+            },
+            {
+              "line": 105,
+              "modeled": true,
+              "name": "Later",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "CustomFieldAbstention",
+          "file": "cases.rs",
+          "line": 110,
+          "variants": [
+            {
+              "line": 111,
+              "modeled": false,
+              "name": "Earlier",
+              "reason": "unsupported_serde_attributes:deserialize_with"
+            },
+            {
+              "line": 112,
+              "modeled": true,
+              "name": "Later",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "ConditionalAbstention",
+          "file": "cases.rs",
+          "line": 117,
+          "variants": [
+            {
+              "line": 119,
+              "modeled": false,
+              "name": "Earlier",
+              "reason": "conditional_variant"
+            },
+            {
+              "line": 120,
+              "modeled": true,
+              "name": "Later",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "id",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "excluded": {},
+      "findings": [
+        {
+          "classification": "review_candidate_not_a_confirmed_defect",
+          "context": "production",
+          "earlier_line": 7,
+          "earlier_shape": {
+            "fields": [
+              {
+                "name": "id",
+                "optional": false,
+                "shape": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "unknown": {
+              "kind": "any"
+            }
+          },
+          "earlier_variant": "Broad",
+          "enum": "RequiredSubset",
+          "file": "cases.rs",
+          "later_shape": {
+            "fields": [
+              {
+                "name": "id",
+                "optional": false,
+                "shape": {
+                  "kind": "string"
+                }
+              },
+              {
+                "name": "detail",
+                "optional": false,
+                "shape": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "unknown": {
+              "kind": "any"
+            }
+          },
+          "line": 8,
+          "reason": "Every value in the supported JSON shape of this variant is accepted by the earlier variant",
+          "variant": "Narrow",
+          "witness_json": {
+            "detail": "example",
+            "id": "example"
+          }
+        },
+        {
+          "classification": "review_candidate_not_a_confirmed_defect",
+          "context": "production",
+          "earlier_line": 14,
+          "earlier_shape": {
+            "fields": [
+              {
+                "name": "count",
+                "optional": false,
+                "shape": {
+                  "maximum": 18446744073709551615,
+                  "minimum": 0
+                }
+              }
+            ],
+            "unknown": {
+              "kind": "any"
+            }
+          },
+          "earlier_variant": "Wide",
+          "enum": "IntegerRange",
+          "file": "cases.rs",
+          "later_shape": {
+            "fields": [
+              {
+                "name": "count",
+                "optional": false,
+                "shape": {
+                  "maximum": 255,
+                  "minimum": 0
+                }
+              }
+            ],
+            "unknown": {
+              "kind": "any"
+            }
+          },
+          "line": 15,
+          "reason": "Every value in the supported JSON shape of this variant is accepted by the earlier variant",
+          "variant": "Narrow",
+          "witness_json": {
+            "count": 0
+          }
+        },
+        {
+          "classification": "review_candidate_not_a_confirmed_defect",
+          "context": "production",
+          "earlier_line": 21,
+          "earlier_shape": {
+            "fields": [
+              {
+                "name": "id",
+                "optional": true,
+                "shape": {
+                  "item": {
+                    "kind": "string"
+                  }
+                }
+              }
+            ],
+            "unknown": {
+              "kind": "any"
+            }
+          },
+          "earlier_variant": "Broad",
+          "enum": "OptionalSuperset",
+          "file": "cases.rs",
+          "later_shape": {
+            "fields": [
+              {
+                "name": "id",
+                "optional": false,
+                "shape": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "unknown": {
+              "kind": "any"
+            }
+          },
+          "line": 22,
+          "reason": "Every value in the supported JSON shape of this variant is accepted by the earlier variant",
+          "variant": "Narrow",
+          "witness_json": {
+            "id": "example"
+          }
+        },
+        {
+          "classification": "review_candidate_not_a_confirmed_defect",
+          "context": "production",
+          "earlier_line": 28,
+          "earlier_shape": {
+            "fields": [
+              {
+                "name": "id",
+                "optional": true,
+                "shape": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "unknown": {
+              "kind": "any"
+            }
+          },
+          "earlier_variant": "Broad",
+          "enum": "DefaultSuperset",
+          "file": "cases.rs",
+          "later_shape": {
+            "fields": [
+              {
+                "name": "id",
+                "optional": false,
+                "shape": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "unknown": {
+              "kind": "any"
+            }
+          },
+          "line": 29,
+          "reason": "Every value in the supported JSON shape of this variant is accepted by the earlier variant",
+          "variant": "Narrow",
+          "witness_json": {
+            "id": "example"
+          }
+        },
+        {
+          "classification": "review_candidate_not_a_confirmed_defect",
+          "context": "production",
+          "earlier_line": 35,
+          "earlier_shape": {
+            "kind": "any"
+          },
+          "earlier_variant": "Broad",
+          "enum": "AnyFirst",
+          "file": "cases.rs",
+          "later_shape": {
+            "kind": "string"
+          },
+          "line": 36,
+          "reason": "Every value in the supported JSON shape of this variant is accepted by the earlier variant",
+          "variant": "Narrow",
+          "witness_json": "example"
+        },
+        {
+          "classification": "review_candidate_not_a_confirmed_defect",
+          "context": "production",
+          "earlier_line": 42,
+          "earlier_shape": {
+            "fields": [
+              {
+                "name": "id",
+                "optional": false,
+                "shape": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "unknown": {
+              "kind": "any"
+            }
+          },
+          "earlier_variant": "Broad",
+          "enum": "RenamedFields",
+          "file": "cases.rs",
+          "later_shape": {
+            "fields": [
+              {
+                "name": "id",
+                "optional": false,
+                "shape": {
+                  "kind": "string"
+                }
+              },
+              {
+                "name": "detail",
+                "optional": false,
+                "shape": {
+                  "kind": "string"
+                }
+              }
+            ],
+            "unknown": {
+              "kind": "any"
+            }
+          },
+          "line": 43,
+          "reason": "Every value in the supported JSON shape of this variant is accepted by the earlier variant",
+          "variant": "Narrow",
+          "witness_json": {
+            "detail": "example",
+            "id": "example"
+          }
+        }
+      ],
+      "head": null,
+      "name": "fixtures",
+      "root": "/Users/telkins/dev/scry/experiments/analyzer-prototypes/serde/fixtures"
+    }
+  ],
+  "schema_version": 1,
+  "scope": "Tracked Rust source; JSON data model only; syntax-restricted acceptance inclusion"
+}

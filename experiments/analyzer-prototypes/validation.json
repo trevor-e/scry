@@ -1,0 +1,22 @@
+{
+  "python": "3.15.2",
+  "config_cli_cases": 19,
+  "clone_history_test": {
+    "passed": true,
+    "languages": [
+      "Rust",
+      "TypeScript"
+    ],
+    "checks": [
+      "retained old body reported",
+      "fully propagated change no longer reported"
+    ]
+  },
+  "build_cli_tests": 2,
+  "build_fixture_repos": 15,
+  "build_incremental_fixture": "passed: stale without declaration; refreshed with declaration",
+  "serde_cli_tests": 2,
+  "serde_runtime_tests": 2,
+  "combined_runner_scry": "all four match saved raw output exactly",
+  "corpus_runtime_defects_reproduced": 0
+}

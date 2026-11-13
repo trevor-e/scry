@@ -1,0 +1,266 @@
+{
+  "check": "missing-build-rerun",
+  "summary": {
+    "repositories": 10,
+    "manifests": 133,
+    "build_scripts": 24,
+    "inputs": 35,
+    "candidates": 0,
+    "unknown": 8,
+    "covered": 6,
+    "excluded": 21,
+    "confirmed_real_defects": 0,
+    "useful_unconfirmed_env_leads": 3,
+    "audit_scope": "All 8 abstentions reviewed; representative covered/excluded cases inspected. No precision estimate because no confident candidates were emitted."
+  },
+  "validation": {
+    "cli_fixture_repositories": 15,
+    "unittest_methods": 2,
+    "result": "passed",
+    "command": "/private/tmp/scry-analyzer-venv/bin/python experiments/analyzer-prototypes/build/test_probe.py -v",
+    "incremental_fixture": "incremental-validation.json",
+    "incremental_result": "Our own dependency-free Cargo fixture reproduced stale output without a file watch and rebuilding after adding it. This is not a corpus finding."
+  },
+  "findings": [
+    {
+      "id": "build-tauri-output-dir",
+      "classification": "useful_unconfirmed_lead",
+      "source": {
+        "repo": "tauri",
+        "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+        "path": "crates/tauri/build.rs",
+        "line": 286
+      },
+      "key": "WRY_ANDROID_KOTLIN_FILES_OUT_DIR",
+      "evidence": "Controls Kotlin output destination. This build.rs declares file watches but no env watches. The CLI sets this key from the Android project and package identifier.",
+      "related": [
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "crates/tauri-cli/src/mobile/android/mod.rs",
+          "line": 190
+        },
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "crates/tauri/build.rs",
+          "line": 300
+        },
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "crates/tauri/build.rs",
+          "line": 316
+        }
+      ],
+      "limits": "Detector abstains because external helpers can emit watches. Source inspection is suggestive, but Android incremental build not executed and upstream rebuild triggers may cover common changes."
+    },
+    {
+      "id": "build-tauri-project-path",
+      "classification": "useful_unconfirmed_lead",
+      "source": {
+        "repo": "tauri",
+        "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+        "path": "crates/tauri/build.rs",
+        "line": 320
+      },
+      "key": "TAURI_ANDROID_PROJECT_PATH",
+      "evidence": "Controls the destination of generated proguard-tauri.pro; no matching env watch appears in the build.rs. The CLI supplies this input.",
+      "related": [
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "crates/tauri-cli/src/mobile/android/mod.rs",
+          "line": 171
+        },
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "crates/tauri/build.rs",
+          "line": 325
+        }
+      ],
+      "limits": "Same helper/configuration uncertainty as the Kotlin path lead; no proven stale output on real Tauri."
+    },
+    {
+      "id": "build-tauri-package",
+      "classification": "useful_unconfirmed_lead",
+      "source": {
+        "repo": "tauri",
+        "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+        "path": "crates/tauri/build.rs",
+        "line": 321
+      },
+      "key": "TAURI_ANDROID_PACKAGE_UNESCAPED",
+      "evidence": "Substituted into the generated proguard configuration. Explicit file watchers in this source do not track this environment input.",
+      "related": [
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "crates/tauri-cli/src/mobile/android/mod.rs",
+          "line": 169
+        },
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "crates/tauri/build.rs",
+          "line": 324
+        }
+      ],
+      "limits": "CLI config changes may already cause other rebuilds; external helper effects and complete target build not checked. Group with the other two Android leads as one possible lifecycle issue, not three confirmed bugs."
+    },
+    {
+      "id": "build-tauri-feature",
+      "classification": "false_positive_avoided",
+      "source": {
+        "repo": "tauri",
+        "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+        "path": "crates/tauri/build.rs",
+        "line": 236
+      },
+      "evidence": "Dynamic env key is constructed as CARGO_FEATURE_<feature>. It is Cargo-managed; manually promoting this abstention would be wrong.",
+      "detector_status": "unknown dynamic input; not emitted as a candidate"
+    },
+    {
+      "id": "build-tauri-files",
+      "classification": "false_positive_avoided",
+      "source": {
+        "repo": "tauri",
+        "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+        "path": "crates/tauri/build.rs",
+        "line": 307
+      },
+      "evidence": "Reads file.path() while iterating the directory declared at line 300. The directory watch covers contents. Prototype cannot resolve the local env_var helper/path iteration, so it abstains.",
+      "related": [
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "crates/tauri/build.rs",
+          "line": 299
+        },
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "crates/tauri/build.rs",
+          "line": 300
+        },
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "crates/tauri/build.rs",
+          "line": 302
+        }
+      ],
+      "detector_status": "unknown dynamic input; not emitted as a candidate"
+    },
+    {
+      "id": "build-tauri-workspace",
+      "classification": "low_value_unconfirmed",
+      "source": {
+        "repo": "tauri",
+        "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+        "path": "crates/tauri/build.rs",
+        "line": 274
+      },
+      "evidence": "__TAURI_WORKSPACE__ is a repository-private workaround flag supplied by .cargo/config.toml. Its missing direct watcher alone is weak evidence of a real user problem.",
+      "related": [
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": ".cargo/config.toml",
+          "line": 5
+        },
+        {
+          "repo": "tauri",
+          "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+          "path": "examples/api/src-tauri/build.rs",
+          "line": 31
+        }
+      ],
+      "detector_status": "two helper-effects abstentions, no candidate"
+    },
+    {
+      "id": "build-tauri-env-helper",
+      "classification": "unknown",
+      "source": {
+        "repo": "tauri",
+        "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+        "path": "crates/tauri/build.rs",
+        "line": 281
+      },
+      "evidence": "Local env_var(var) is called with multiple keys (Cargo manifest directory and WRY package/library). A generic variable-name read cannot be classified without propagating arguments.",
+      "detector_status": "unknown dynamic input; not emitted as a candidate"
+    },
+    {
+      "id": "build-ohmypi-directory",
+      "classification": "correctly_suppressed",
+      "source": {
+        "repo": "oh-my-pi",
+        "head": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+        "path": "crates/pi-shell/build.rs",
+        "line": 27
+      },
+      "evidence": "The defs directory read is covered by the formatted directory watcher at line 21; file reads at line 39 are also paired with the same path binding watcher at line 38.",
+      "related": [
+        {
+          "repo": "oh-my-pi",
+          "head": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+          "path": "crates/pi-shell/build.rs",
+          "line": 21
+        },
+        {
+          "repo": "oh-my-pi",
+          "head": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+          "path": "crates/pi-shell/build.rs",
+          "line": 38
+        },
+        {
+          "repo": "oh-my-pi",
+          "head": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+          "path": "crates/pi-shell/build.rs",
+          "line": 39
+        }
+      ],
+      "detector_status": "covered, including formatted .display() and lexical binding matching"
+    },
+    {
+      "id": "build-nushell-linker",
+      "classification": "correctly_suppressed",
+      "source": {
+        "repo": "nushell",
+        "head": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+        "path": "scripts/build.rs",
+        "line": 19
+      },
+      "key": "RUSTC_LINKER",
+      "evidence": "Cargo provides RUSTC_LINKER according to configured target linker. Treating every env::var without an env watcher as an omission would report this incorrectly.",
+      "detector_status": "excluded Cargo-managed input"
+    },
+    {
+      "id": "build-nushell-assets",
+      "classification": "correctly_suppressed",
+      "source": {
+        "repo": "nushell",
+        "head": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+        "path": "crates/nu-cmd-extra/build.rs",
+        "line": 34
+      },
+      "evidence": "File::open(\"assets/228_themes.json\") is covered by the watch at line 32.",
+      "related": [
+        {
+          "repo": "nushell",
+          "head": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+          "path": "crates/nu-cmd-extra/build.rs",
+          "line": 32
+        }
+      ],
+      "detector_status": "covered"
+    }
+  ],
+  "recommendation": "Keep experimental. The sample yielded useful Tauri Android review leads but zero confirmed defects. A default warning needs helper-effect summaries and path/input tracking beyond direct literal reads; report abstentions separately instead of warning on all unknowns.",
+  "references": [
+    "https://doc.rust-lang.org/cargo/reference/build-scripts.html#change-detection",
+    "https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-sets-for-build-scripts"
+  ],
+  "rerun": "/private/tmp/scry-analyzer-venv/bin/python experiments/analyzer-prototypes/build/probe.py /private/tmp/scry-analyzer-corpus/* --output experiments/analyzer-prototypes/build/raw.json"
+}

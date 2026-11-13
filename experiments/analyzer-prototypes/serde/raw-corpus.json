@@ -1,0 +1,2054 @@
+{
+  "analyzer": "serde-shadowed-untagged-json-variants",
+  "repositories": [
+    {
+      "abstentions": [
+        {
+          "context": "production",
+          "enum": "CargoManifestDependency",
+          "file": "crates/tauri-cli/src/helpers/cargo_manifest.rs",
+          "line": 40,
+          "reason": "unresolved_type:PathBuf",
+          "variant": "Package"
+        },
+        {
+          "context": "production",
+          "enum": "DesktopDeepLinks",
+          "file": "crates/tauri-cli/src/interface/rust.rs",
+          "line": 781,
+          "reason": "unresolved_type:DeepLinkProtocol",
+          "variant": "One"
+        },
+        {
+          "context": "production",
+          "enum": "DesktopDeepLinks",
+          "file": "crates/tauri-cli/src/interface/rust.rs",
+          "line": 782,
+          "reason": "unresolved_type:DeepLinkProtocol",
+          "variant": "List"
+        },
+        {
+          "context": "production",
+          "enum": "PermissionEntry",
+          "file": "crates/tauri-utils/src/acl/capability.rs",
+          "line": 23,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "CapabilityFile",
+          "file": "crates/tauri-utils/src/acl/capability.rs",
+          "line": 255,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "Value",
+          "file": "crates/tauri-utils/src/acl/value.rs",
+          "line": 51,
+          "reason": "non_struct_local_type:Number",
+          "variant": "Number"
+        },
+        {
+          "context": "production",
+          "enum": "Value",
+          "file": "crates/tauri-utils/src/acl/value.rs",
+          "line": 57,
+          "reason": "non_struct_local_type:Value",
+          "variant": "List"
+        },
+        {
+          "context": "production",
+          "enum": "Value",
+          "file": "crates/tauri-utils/src/acl/value.rs",
+          "line": 60,
+          "reason": "non_struct_local_type:Value",
+          "variant": "Map"
+        },
+        {
+          "context": "production",
+          "enum": "WebviewUrl",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 77,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "WebviewUrlDeserializer",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 96,
+          "reason": "unresolved_type:Url",
+          "variant": "Url"
+        },
+        {
+          "context": "production",
+          "enum": "WebviewUrlDeserializer",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 97,
+          "reason": "unresolved_type:PathBuf",
+          "variant": "Path"
+        },
+        {
+          "context": "production",
+          "enum": "BundleTargetInner",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 285,
+          "reason": "type_outside_lexical_scope:BundleType",
+          "variant": "List"
+        },
+        {
+          "context": "production",
+          "enum": "BundleTargetInner",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 286,
+          "reason": "type_outside_lexical_scope:BundleType",
+          "variant": "One"
+        },
+        {
+          "context": "production",
+          "enum": "WixLanguage",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 724,
+          "reason": "unsupported_serde_attributes:alias",
+          "variant": "Localized"
+        },
+        {
+          "context": "production",
+          "enum": "Updater",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 1555,
+          "reason": "non_struct_local_type:V1Compatible",
+          "variant": "String"
+        },
+        {
+          "context": "production",
+          "enum": "InnerColor",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 1804,
+          "reason": "unresolved_type:(u8,u8,u8)",
+          "variant": "Rgb"
+        },
+        {
+          "context": "production",
+          "enum": "InnerColor",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 1806,
+          "reason": "unresolved_type:(u8,u8,u8,u8)",
+          "variant": "Rgba"
+        },
+        {
+          "context": "production",
+          "enum": "InnerColor",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 1808,
+          "reason": "custom_default_function",
+          "variant": "RgbaObject"
+        },
+        {
+          "context": "production",
+          "enum": "Csp",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 2559,
+          "reason": "non_struct_local_type:CspDirectiveSources",
+          "variant": "DirectiveMap"
+        },
+        {
+          "context": "production",
+          "enum": "FsScope",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 2667,
+          "reason": "unresolved_type:PathBuf",
+          "variant": "AllowedPaths"
+        },
+        {
+          "context": "production",
+          "enum": "FsScope",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 2670,
+          "reason": "unresolved_type:PathBuf",
+          "variant": "Scope"
+        },
+        {
+          "context": "production",
+          "enum": "CapabilityEntry",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3142,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "AppDirectoriesOverride",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3238,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "FrontendDist",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3712,
+          "reason": "unresolved_type:Url",
+          "variant": "Url"
+        },
+        {
+          "context": "production",
+          "enum": "FrontendDist",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3714,
+          "reason": "unresolved_type:PathBuf",
+          "variant": "Directory"
+        },
+        {
+          "context": "production",
+          "enum": "FrontendDist",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3716,
+          "reason": "unresolved_type:PathBuf",
+          "variant": "Files"
+        },
+        {
+          "context": "production",
+          "enum": "WindowUrl",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 44,
+          "reason": "unresolved_type:Url",
+          "variant": "External"
+        },
+        {
+          "context": "production",
+          "enum": "WindowUrl",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 48,
+          "reason": "unresolved_type:PathBuf",
+          "variant": "App"
+        },
+        {
+          "context": "production",
+          "enum": "BundleTargetInner",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 276,
+          "reason": "type_outside_lexical_scope:BundleType",
+          "variant": "List"
+        },
+        {
+          "context": "production",
+          "enum": "BundleTargetInner",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 277,
+          "reason": "type_outside_lexical_scope:BundleType",
+          "variant": "One"
+        },
+        {
+          "context": "production",
+          "enum": "WixLanguage",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 421,
+          "reason": "unsupported_serde_attributes:alias",
+          "variant": "Localized"
+        },
+        {
+          "context": "production",
+          "enum": "Csp",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1165,
+          "reason": "non_struct_local_type:CspDirectiveSources",
+          "variant": "DirectiveMap"
+        },
+        {
+          "context": "production",
+          "enum": "FsAllowlistScope",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1339,
+          "reason": "unresolved_type:PathBuf",
+          "variant": "AllowedPaths"
+        },
+        {
+          "context": "production",
+          "enum": "FsAllowlistScope",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1342,
+          "reason": "unresolved_type:PathBuf",
+          "variant": "Scope"
+        },
+        {
+          "context": "production",
+          "enum": "ShellAllowedArgs",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1752,
+          "reason": "non_struct_local_type:ShellAllowedArg",
+          "variant": "List"
+        },
+        {
+          "context": "production",
+          "enum": "AppUrl",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 2642,
+          "reason": "non_struct_local_type:WindowUrl",
+          "variant": "Url"
+        },
+        {
+          "context": "production",
+          "enum": "AppUrl",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 2644,
+          "reason": "unresolved_type:PathBuf",
+          "variant": "Files"
+        },
+        {
+          "context": "production",
+          "enum": "JsImage",
+          "file": "crates/tauri/src/image/mod.rs",
+          "line": 458,
+          "reason": "unresolved_type:std::path::PathBuf",
+          "variant": "Path"
+        },
+        {
+          "context": "production",
+          "enum": "JsImage",
+          "file": "crates/tauri/src/image/mod.rs",
+          "line": 464,
+          "reason": "unresolved_type:ResourceId",
+          "variant": "Resource"
+        },
+        {
+          "context": "production",
+          "enum": "Icon",
+          "file": "crates/tauri/src/menu/plugin.rs",
+          "line": 178,
+          "reason": "unresolved_type:NativeIcon",
+          "variant": "Native"
+        },
+        {
+          "context": "production",
+          "enum": "Icon",
+          "file": "crates/tauri/src/menu/plugin.rs",
+          "line": 179,
+          "reason": "unresolved_type:JsImage",
+          "variant": "Icon"
+        },
+        {
+          "context": "production",
+          "enum": "MenuItemPayloadKind",
+          "file": "crates/tauri/src/menu/plugin.rs",
+          "line": 317,
+          "reason": "unresolved_type:(ResourceId,ItemKind)",
+          "variant": "ExistingItem"
+        },
+        {
+          "context": "production",
+          "enum": "MenuItemPayloadKind",
+          "file": "crates/tauri/src/menu/plugin.rs",
+          "line": 318,
+          "reason": "non_struct_local_type:Predefined",
+          "variant": "Predefined"
+        },
+        {
+          "context": "production",
+          "enum": "MenuItemPayloadKind",
+          "file": "crates/tauri/src/menu/plugin.rs",
+          "line": 319,
+          "reason": "unresolved_import_for_builtin:Option",
+          "variant": "Check"
+        },
+        {
+          "context": "production",
+          "enum": "MenuItemPayloadKind",
+          "file": "crates/tauri/src/menu/plugin.rs",
+          "line": 320,
+          "reason": "unresolved_import_for_builtin:Option",
+          "variant": "Icon"
+        },
+        {
+          "context": "production",
+          "enum": "MenuItemPayloadKind",
+          "file": "crates/tauri/src/menu/plugin.rs",
+          "line": 321,
+          "reason": "unresolved_import_for_builtin:Option",
+          "variant": "Submenu"
+        },
+        {
+          "context": "production",
+          "enum": "MenuItemPayloadKind",
+          "file": "crates/tauri/src/menu/plugin.rs",
+          "line": 322,
+          "reason": "unresolved_import_for_builtin:Option",
+          "variant": "MenuItem"
+        }
+      ],
+      "counts": {
+        "candidates": 0,
+        "derived_untagged_enums": 39,
+        "modeled_variants": 54,
+        "rust_files_scanned": 328,
+        "untagged_enum_declarations": 44,
+        "variant_pairs_compared": 26
+      },
+      "enum_inventory": [
+        {
+          "context": "production",
+          "enum": "CargoManifestDependency",
+          "file": "crates/tauri-cli/src/helpers/cargo_manifest.rs",
+          "line": 38,
+          "variants": [
+            {
+              "line": 39,
+              "modeled": true,
+              "name": "Version",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 40,
+              "modeled": false,
+              "name": "Package",
+              "reason": "unresolved_type:PathBuf"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "DesktopDeepLinks",
+          "file": "crates/tauri-cli/src/interface/rust.rs",
+          "line": 780,
+          "variants": [
+            {
+              "line": 781,
+              "modeled": false,
+              "name": "One",
+              "reason": "unresolved_type:DeepLinkProtocol"
+            },
+            {
+              "line": 782,
+              "modeled": false,
+              "name": "List",
+              "reason": "unresolved_type:DeepLinkProtocol"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "BuildTarget",
+          "file": "crates/tauri-cli/src/interface/rust/cargo_config.rs",
+          "line": 47,
+          "variants": [
+            {
+              "line": 48,
+              "modeled": true,
+              "name": "Single",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 49,
+              "modeled": true,
+              "name": "Multiple",
+              "shape": {
+                "item": {
+                  "kind": "string"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "PermissionEntry",
+          "file": "crates/tauri-utils/src/acl/capability.rs",
+          "line": 23,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "CapabilityFile",
+          "file": "crates/tauri-utils/src/acl/capability.rs",
+          "line": 255,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "Number",
+          "file": "crates/tauri-utils/src/acl/value.rs",
+          "line": 17,
+          "variants": [
+            {
+              "line": 19,
+              "modeled": true,
+              "name": "Int",
+              "shape": {
+                "maximum": 9223372036854775807,
+                "minimum": -9223372036854775808
+              }
+            },
+            {
+              "line": 22,
+              "modeled": true,
+              "name": "Float",
+              "shape": {
+                "kind": "number"
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "Value",
+          "file": "crates/tauri-utils/src/acl/value.rs",
+          "line": 43,
+          "variants": [
+            {
+              "line": 45,
+              "modeled": true,
+              "name": "Null",
+              "shape": {
+                "kind": "null"
+              }
+            },
+            {
+              "line": 48,
+              "modeled": true,
+              "name": "Bool",
+              "shape": {
+                "kind": "bool"
+              }
+            },
+            {
+              "line": 51,
+              "modeled": false,
+              "name": "Number",
+              "reason": "non_struct_local_type:Number"
+            },
+            {
+              "line": 54,
+              "modeled": true,
+              "name": "String",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 57,
+              "modeled": false,
+              "name": "List",
+              "reason": "non_struct_local_type:Value"
+            },
+            {
+              "line": 60,
+              "modeled": false,
+              "name": "Map",
+              "reason": "non_struct_local_type:Value"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "WebviewUrl",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 77,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "WebviewUrlDeserializer",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 95,
+          "variants": [
+            {
+              "line": 96,
+              "modeled": false,
+              "name": "Url",
+              "reason": "unresolved_type:Url"
+            },
+            {
+              "line": 97,
+              "modeled": false,
+              "name": "Path",
+              "reason": "unresolved_type:PathBuf"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "BundleTargetInner",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 284,
+          "variants": [
+            {
+              "line": 285,
+              "modeled": false,
+              "name": "List",
+              "reason": "type_outside_lexical_scope:BundleType"
+            },
+            {
+              "line": 286,
+              "modeled": false,
+              "name": "One",
+              "reason": "type_outside_lexical_scope:BundleType"
+            },
+            {
+              "line": 287,
+              "modeled": true,
+              "name": "All",
+              "shape": {
+                "kind": "string"
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "WixLanguage",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 718,
+          "variants": [
+            {
+              "line": 720,
+              "modeled": true,
+              "name": "One",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 722,
+              "modeled": true,
+              "name": "List",
+              "shape": {
+                "item": {
+                  "kind": "string"
+                }
+              }
+            },
+            {
+              "line": 724,
+              "modeled": false,
+              "name": "Localized",
+              "reason": "unsupported_serde_attributes:alias"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "CustomSignCommandConfig",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 1011,
+          "variants": [
+            {
+              "line": 1020,
+              "modeled": true,
+              "name": "Command",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 1025,
+              "modeled": true,
+              "name": "CommandWithOptions",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "cmd",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  },
+                  {
+                    "name": "args",
+                    "optional": false,
+                    "shape": {
+                      "item": {
+                        "kind": "string"
+                      }
+                    }
+                  }
+                ],
+                "unknown": null
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "BundleResources",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 1529,
+          "variants": [
+            {
+              "line": 1531,
+              "modeled": true,
+              "name": "List",
+              "shape": {
+                "item": {
+                  "kind": "string"
+                }
+              }
+            },
+            {
+              "line": 1533,
+              "modeled": true,
+              "name": "Map",
+              "shape": {
+                "fields": [],
+                "unknown": {
+                  "kind": "string"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "Updater",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 1553,
+          "variants": [
+            {
+              "line": 1555,
+              "modeled": false,
+              "name": "String",
+              "reason": "non_struct_local_type:V1Compatible"
+            },
+            {
+              "line": 1558,
+              "modeled": true,
+              "name": "Bool",
+              "shape": {
+                "kind": "bool"
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "InnerColor",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 1800,
+          "variants": [
+            {
+              "line": 1802,
+              "modeled": true,
+              "name": "String",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 1804,
+              "modeled": false,
+              "name": "Rgb",
+              "reason": "unresolved_type:(u8,u8,u8)"
+            },
+            {
+              "line": 1806,
+              "modeled": false,
+              "name": "Rgba",
+              "reason": "unresolved_type:(u8,u8,u8,u8)"
+            },
+            {
+              "line": 1808,
+              "modeled": false,
+              "name": "RgbaObject",
+              "reason": "custom_default_function"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "PreventOverflowConfig",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 1920,
+          "variants": [
+            {
+              "line": 1922,
+              "modeled": true,
+              "name": "Enable",
+              "shape": {
+                "kind": "bool"
+              }
+            },
+            {
+              "line": 1925,
+              "modeled": true,
+              "name": "Margin",
+              "shape": {
+                "items": [
+                  {
+                    "fields": [
+                      {
+                        "name": "width",
+                        "optional": false,
+                        "shape": {
+                          "maximum": 4294967295,
+                          "minimum": 0
+                        }
+                      },
+                      {
+                        "name": "height",
+                        "optional": false,
+                        "shape": {
+                          "maximum": 4294967295,
+                          "minimum": 0
+                        }
+                      }
+                    ],
+                    "unknown": null
+                  },
+                  {
+                    "items": [
+                      {
+                        "maximum": 4294967295,
+                        "minimum": 0
+                      },
+                      {
+                        "maximum": 4294967295,
+                        "minimum": 0
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "CspDirectiveSources",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 2498,
+          "variants": [
+            {
+              "line": 2500,
+              "modeled": true,
+              "name": "Inline",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 2502,
+              "modeled": true,
+              "name": "List",
+              "shape": {
+                "item": {
+                  "kind": "string"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "Csp",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 2555,
+          "variants": [
+            {
+              "line": 2557,
+              "modeled": true,
+              "name": "Policy",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 2559,
+              "modeled": false,
+              "name": "DirectiveMap",
+              "reason": "non_struct_local_type:CspDirectiveSources"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "DisabledCspModificationKind",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 2630,
+          "variants": [
+            {
+              "line": 2633,
+              "modeled": true,
+              "name": "Flag",
+              "shape": {
+                "kind": "bool"
+              }
+            },
+            {
+              "line": 2635,
+              "modeled": true,
+              "name": "List",
+              "shape": {
+                "item": {
+                  "kind": "string"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "FsScope",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 2665,
+          "variants": [
+            {
+              "line": 2667,
+              "modeled": false,
+              "name": "AllowedPaths",
+              "reason": "unresolved_type:PathBuf"
+            },
+            {
+              "line": 2670,
+              "modeled": false,
+              "name": "Scope",
+              "reason": "unresolved_type:PathBuf"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "HeaderSource",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 2736,
+          "variants": [
+            {
+              "line": 2738,
+              "modeled": true,
+              "name": "Inline",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 2740,
+              "modeled": true,
+              "name": "List",
+              "shape": {
+                "item": {
+                  "kind": "string"
+                }
+              }
+            },
+            {
+              "line": 2742,
+              "modeled": true,
+              "name": "Map",
+              "shape": {
+                "fields": [],
+                "unknown": {
+                  "kind": "string"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "CapabilityEntry",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3142,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "AppDirectoriesOverride",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3238,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "FrontendDist",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3710,
+          "variants": [
+            {
+              "line": 3712,
+              "modeled": false,
+              "name": "Url",
+              "reason": "unresolved_type:Url"
+            },
+            {
+              "line": 3714,
+              "modeled": false,
+              "name": "Directory",
+              "reason": "unresolved_type:PathBuf"
+            },
+            {
+              "line": 3716,
+              "modeled": false,
+              "name": "Files",
+              "reason": "unresolved_type:PathBuf"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "BeforeDevCommand",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3733,
+          "variants": [
+            {
+              "line": 3735,
+              "modeled": true,
+              "name": "Script",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 3737,
+              "modeled": true,
+              "name": "ScriptWithOptions",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "script",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  },
+                  {
+                    "name": "cwd",
+                    "optional": true,
+                    "shape": {
+                      "item": {
+                        "kind": "string"
+                      }
+                    }
+                  },
+                  {
+                    "name": "wait",
+                    "optional": true,
+                    "shape": {
+                      "kind": "bool"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "HookCommand",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3752,
+          "variants": [
+            {
+              "line": 3754,
+              "modeled": true,
+              "name": "Script",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 3756,
+              "modeled": true,
+              "name": "ScriptWithOptions",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "script",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  },
+                  {
+                    "name": "cwd",
+                    "optional": true,
+                    "shape": {
+                      "item": {
+                        "kind": "string"
+                      }
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "RunnerConfig",
+          "file": "crates/tauri-utils/src/config.rs",
+          "line": 3769,
+          "variants": [
+            {
+              "line": 3771,
+              "modeled": true,
+              "name": "String",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 3773,
+              "modeled": true,
+              "name": "Object",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "cmd",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  },
+                  {
+                    "name": "cwd",
+                    "optional": true,
+                    "shape": {
+                      "item": {
+                        "kind": "string"
+                      }
+                    }
+                  },
+                  {
+                    "name": "args",
+                    "optional": true,
+                    "shape": {
+                      "item": {
+                        "item": {
+                          "kind": "string"
+                        }
+                      }
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "WindowUrl",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 42,
+          "variants": [
+            {
+              "line": 44,
+              "modeled": false,
+              "name": "External",
+              "reason": "unresolved_type:Url"
+            },
+            {
+              "line": 48,
+              "modeled": false,
+              "name": "App",
+              "reason": "unresolved_type:PathBuf"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "BundleTargetInner",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 275,
+          "variants": [
+            {
+              "line": 276,
+              "modeled": false,
+              "name": "List",
+              "reason": "type_outside_lexical_scope:BundleType"
+            },
+            {
+              "line": 277,
+              "modeled": false,
+              "name": "One",
+              "reason": "type_outside_lexical_scope:BundleType"
+            },
+            {
+              "line": 278,
+              "modeled": true,
+              "name": "All",
+              "shape": {
+                "kind": "string"
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "WixLanguage",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 415,
+          "variants": [
+            {
+              "line": 417,
+              "modeled": true,
+              "name": "One",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 419,
+              "modeled": true,
+              "name": "List",
+              "shape": {
+                "item": {
+                  "kind": "string"
+                }
+              }
+            },
+            {
+              "line": 421,
+              "modeled": false,
+              "name": "Localized",
+              "reason": "unsupported_serde_attributes:alias"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "BundleResources",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 691,
+          "variants": [
+            {
+              "line": 693,
+              "modeled": true,
+              "name": "List",
+              "shape": {
+                "item": {
+                  "kind": "string"
+                }
+              }
+            },
+            {
+              "line": 695,
+              "modeled": true,
+              "name": "Map",
+              "shape": {
+                "fields": [],
+                "unknown": {
+                  "kind": "string"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "CspDirectiveSources",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1111,
+          "variants": [
+            {
+              "line": 1113,
+              "modeled": true,
+              "name": "Inline",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 1115,
+              "modeled": true,
+              "name": "List",
+              "shape": {
+                "item": {
+                  "kind": "string"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "Csp",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1161,
+          "variants": [
+            {
+              "line": 1163,
+              "modeled": true,
+              "name": "Policy",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 1165,
+              "modeled": false,
+              "name": "DirectiveMap",
+              "reason": "non_struct_local_type:CspDirectiveSources"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "DisabledCspModificationKind",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1218,
+          "variants": [
+            {
+              "line": 1221,
+              "modeled": true,
+              "name": "Flag",
+              "shape": {
+                "kind": "bool"
+              }
+            },
+            {
+              "line": 1223,
+              "modeled": true,
+              "name": "List",
+              "shape": {
+                "item": {
+                  "kind": "string"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "FsAllowlistScope",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1337,
+          "variants": [
+            {
+              "line": 1339,
+              "modeled": false,
+              "name": "AllowedPaths",
+              "reason": "unresolved_type:PathBuf"
+            },
+            {
+              "line": 1342,
+              "modeled": false,
+              "name": "Scope",
+              "reason": "unresolved_type:PathBuf"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "ShellAllowedArgs",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1747,
+          "variants": [
+            {
+              "line": 1749,
+              "modeled": true,
+              "name": "Flag",
+              "shape": {
+                "kind": "bool"
+              }
+            },
+            {
+              "line": 1752,
+              "modeled": false,
+              "name": "List",
+              "reason": "non_struct_local_type:ShellAllowedArg"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "ShellAllowedArg",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1766,
+          "variants": [
+            {
+              "line": 1768,
+              "modeled": true,
+              "name": "Fixed",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 1772,
+              "modeled": true,
+              "name": "Var",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "validator",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": null
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "ShellAllowlistOpen",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 1794,
+          "variants": [
+            {
+              "line": 1798,
+              "modeled": true,
+              "name": "Flag",
+              "shape": {
+                "kind": "bool"
+              }
+            },
+            {
+              "line": 1804,
+              "modeled": true,
+              "name": "Validate",
+              "shape": {
+                "kind": "string"
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "AppUrl",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 2640,
+          "variants": [
+            {
+              "line": 2642,
+              "modeled": false,
+              "name": "Url",
+              "reason": "non_struct_local_type:WindowUrl"
+            },
+            {
+              "line": 2644,
+              "modeled": false,
+              "name": "Files",
+              "reason": "unresolved_type:PathBuf"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "BeforeDevCommand",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 2660,
+          "variants": [
+            {
+              "line": 2662,
+              "modeled": true,
+              "name": "Script",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 2664,
+              "modeled": true,
+              "name": "ScriptWithOptions",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "script",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  },
+                  {
+                    "name": "cwd",
+                    "optional": true,
+                    "shape": {
+                      "item": {
+                        "kind": "string"
+                      }
+                    }
+                  },
+                  {
+                    "name": "wait",
+                    "optional": true,
+                    "shape": {
+                      "kind": "bool"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "HookCommand",
+          "file": "crates/tauri-utils/src/config_v1/mod.rs",
+          "line": 2679,
+          "variants": [
+            {
+              "line": 2681,
+              "modeled": true,
+              "name": "Script",
+              "shape": {
+                "kind": "string"
+              }
+            },
+            {
+              "line": 2683,
+              "modeled": true,
+              "name": "ScriptWithOptions",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "script",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  },
+                  {
+                    "name": "cwd",
+                    "optional": true,
+                    "shape": {
+                      "item": {
+                        "kind": "string"
+                      }
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "JsImage",
+          "file": "crates/tauri/src/image/mod.rs",
+          "line": 455,
+          "variants": [
+            {
+              "line": 458,
+              "modeled": false,
+              "name": "Path",
+              "reason": "unresolved_type:std::path::PathBuf"
+            },
+            {
+              "line": 461,
+              "modeled": true,
+              "name": "Bytes",
+              "shape": {
+                "item": {
+                  "maximum": 255,
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "line": 464,
+              "modeled": false,
+              "name": "Resource",
+              "reason": "unresolved_type:ResourceId"
+            },
+            {
+              "line": 467,
+              "modeled": true,
+              "name": "Rgba",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "rgba",
+                    "optional": false,
+                    "shape": {
+                      "item": {
+                        "maximum": 255,
+                        "minimum": 0
+                      }
+                    }
+                  },
+                  {
+                    "name": "width",
+                    "optional": false,
+                    "shape": {
+                      "maximum": 4294967295,
+                      "minimum": 0
+                    }
+                  },
+                  {
+                    "name": "height",
+                    "optional": false,
+                    "shape": {
+                      "maximum": 4294967295,
+                      "minimum": 0
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "Icon",
+          "file": "crates/tauri/src/menu/plugin.rs",
+          "line": 177,
+          "variants": [
+            {
+              "line": 178,
+              "modeled": false,
+              "name": "Native",
+              "reason": "unresolved_type:NativeIcon"
+            },
+            {
+              "line": 179,
+              "modeled": false,
+              "name": "Icon",
+              "reason": "unresolved_type:JsImage"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "MenuItemPayloadKind",
+          "file": "crates/tauri/src/menu/plugin.rs",
+          "line": 316,
+          "variants": [
+            {
+              "line": 317,
+              "modeled": false,
+              "name": "ExistingItem",
+              "reason": "unresolved_type:(ResourceId,ItemKind)"
+            },
+            {
+              "line": 318,
+              "modeled": false,
+              "name": "Predefined",
+              "reason": "non_struct_local_type:Predefined"
+            },
+            {
+              "line": 319,
+              "modeled": false,
+              "name": "Check",
+              "reason": "unresolved_import_for_builtin:Option"
+            },
+            {
+              "line": 320,
+              "modeled": false,
+              "name": "Icon",
+              "reason": "unresolved_import_for_builtin:Option"
+            },
+            {
+              "line": 321,
+              "modeled": false,
+              "name": "Submenu",
+              "reason": "unresolved_import_for_builtin:Option"
+            },
+            {
+              "line": 322,
+              "modeled": false,
+              "name": "MenuItem",
+              "reason": "unresolved_import_for_builtin:Option"
+            }
+          ]
+        }
+      ],
+      "excluded": {
+        "dependency_generated_or_fixture_path": 2,
+        "generated_header": 1
+      },
+      "findings": [],
+      "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+      "name": "tauri",
+      "root": "/private/tmp/scry-analyzer-corpus/tauri"
+    },
+    {
+      "abstentions": [
+        {
+          "context": "production",
+          "enum": "PluginRegistryItemData",
+          "file": "crates/nu-protocol/src/plugin/registry_file/mod.rs",
+          "line": 212,
+          "reason": "unresolved_type:PluginMetadata",
+          "variant": "Valid"
+        },
+        {
+          "context": "production",
+          "enum": "PluginRegistryItemData",
+          "file": "crates/nu-protocol/src/plugin/registry_file/mod.rs",
+          "line": 223,
+          "reason": "unsupported_serde_attributes:deserialize_with,serialize_with",
+          "variant": "Invalid"
+        },
+        {
+          "context": "production",
+          "enum": "NuCow",
+          "file": "crates/nu-utils/src/nu_cow.rs",
+          "line": 8,
+          "reason": "no_unconditional_derive_deserialize"
+        }
+      ],
+      "counts": {
+        "candidates": 0,
+        "derived_untagged_enums": 1,
+        "rust_files_scanned": 1991,
+        "untagged_enum_declarations": 2
+      },
+      "enum_inventory": [
+        {
+          "context": "production",
+          "enum": "PluginRegistryItemData",
+          "file": "crates/nu-protocol/src/plugin/registry_file/mod.rs",
+          "line": 211,
+          "variants": [
+            {
+              "line": 212,
+              "modeled": false,
+              "name": "Valid",
+              "reason": "unresolved_type:PluginMetadata"
+            },
+            {
+              "line": 223,
+              "modeled": false,
+              "name": "Invalid",
+              "reason": "unsupported_serde_attributes:deserialize_with,serialize_with"
+            }
+          ]
+        },
+        {
+          "context": "production",
+          "enum": "NuCow",
+          "file": "crates/nu-utils/src/nu_cow.rs",
+          "line": 8,
+          "variants": []
+        }
+      ],
+      "excluded": {
+        "generated_header": 1
+      },
+      "findings": [],
+      "head": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+      "name": "nushell",
+      "root": "/private/tmp/scry-analyzer-corpus/nushell"
+    },
+    {
+      "abstentions": [],
+      "counts": {
+        "candidates": 0,
+        "derived_untagged_enums": 1,
+        "modeled_variants": 2,
+        "rust_files_scanned": 102,
+        "untagged_enum_declarations": 1,
+        "variant_pairs_compared": 1
+      },
+      "enum_inventory": [
+        {
+          "context": "test",
+          "enum": "Data",
+          "file": "tests/json.rs",
+          "line": 110,
+          "variants": [
+            {
+              "line": 111,
+              "modeled": true,
+              "name": "Text",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "text",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            },
+            {
+              "line": 114,
+              "modeled": true,
+              "name": "Bytes",
+              "shape": {
+                "fields": [
+                  {
+                    "name": "bytes",
+                    "optional": false,
+                    "shape": {
+                      "kind": "string"
+                    }
+                  }
+                ],
+                "unknown": {
+                  "kind": "any"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "excluded": {},
+      "findings": [],
+      "head": "178cc027e283fd965cb72d0a7395b219eada170c",
+      "name": "ripgrep",
+      "root": "/private/tmp/scry-analyzer-corpus/ripgrep"
+    },
+    {
+      "abstentions": [],
+      "counts": {
+        "candidates": 0,
+        "rust_files_scanned": 23
+      },
+      "enum_inventory": [],
+      "excluded": {},
+      "findings": [],
+      "head": "7927f36440ffc34469da551c782a6487826f05d1",
+      "name": "scry",
+      "root": "/private/tmp/scry-analyzer-corpus/scry"
+    },
+    {
+      "abstentions": [
+        {
+          "context": "production",
+          "enum": "ShowAny",
+          "file": "src/cmd/ticket.rs",
+          "line": 301,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "Key",
+          "file": "src/keys.rs",
+          "line": 69,
+          "reason": "no_unconditional_derive_deserialize"
+        }
+      ],
+      "counts": {
+        "candidates": 0,
+        "rust_files_scanned": 84,
+        "untagged_enum_declarations": 2
+      },
+      "enum_inventory": [
+        {
+          "context": "production",
+          "enum": "ShowAny",
+          "file": "src/cmd/ticket.rs",
+          "line": 301,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "Key",
+          "file": "src/keys.rs",
+          "line": 69,
+          "variants": []
+        }
+      ],
+      "excluded": {
+        "generated_header": 1
+      },
+      "findings": [],
+      "head": "a99893d88d98b43616c07f5cfcf02d03c7048bf6",
+      "name": "kanspec",
+      "root": "/private/tmp/scry-analyzer-corpus/kanspec"
+    },
+    {
+      "abstentions": [
+        {
+          "context": "production",
+          "enum": "Saved",
+          "file": "rust/crates/assets/src/mcp/mod.rs",
+          "line": 491,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "Removed",
+          "file": "rust/crates/assets/src/mcp/mod.rs",
+          "line": 749,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "Saved",
+          "file": "rust/crates/insurance/src/mcp/mod.rs",
+          "line": 171,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "SavedProject",
+          "file": "rust/crates/projects/src/mcp/mod.rs",
+          "line": 182,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "SavedMaterial",
+          "file": "rust/crates/projects/src/mcp/mod.rs",
+          "line": 196,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "FindAnswer",
+          "file": "rust/crates/reports/src/mcp/find.rs",
+          "line": 155,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "AssetsFound",
+          "file": "rust/crates/reports/src/mcp/find.rs",
+          "line": 585,
+          "reason": "no_unconditional_derive_deserialize"
+        },
+        {
+          "context": "production",
+          "enum": "Saved",
+          "file": "rust/crates/tasks/src/mcp/save.rs",
+          "line": 41,
+          "reason": "no_unconditional_derive_deserialize"
+        }
+      ],
+      "counts": {
+        "candidates": 0,
+        "rust_files_scanned": 483,
+        "untagged_enum_declarations": 8
+      },
+      "enum_inventory": [
+        {
+          "context": "production",
+          "enum": "Saved",
+          "file": "rust/crates/assets/src/mcp/mod.rs",
+          "line": 491,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "Removed",
+          "file": "rust/crates/assets/src/mcp/mod.rs",
+          "line": 749,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "Saved",
+          "file": "rust/crates/insurance/src/mcp/mod.rs",
+          "line": 171,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "SavedProject",
+          "file": "rust/crates/projects/src/mcp/mod.rs",
+          "line": 182,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "SavedMaterial",
+          "file": "rust/crates/projects/src/mcp/mod.rs",
+          "line": 196,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "FindAnswer",
+          "file": "rust/crates/reports/src/mcp/find.rs",
+          "line": 155,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "AssetsFound",
+          "file": "rust/crates/reports/src/mcp/find.rs",
+          "line": 585,
+          "variants": []
+        },
+        {
+          "context": "production",
+          "enum": "Saved",
+          "file": "rust/crates/tasks/src/mcp/save.rs",
+          "line": 41,
+          "variants": []
+        }
+      ],
+      "excluded": {
+        "generated_header": 3
+      },
+      "findings": [],
+      "head": "c8baee7ca4cecbfdfc687dff7f4823c278720596",
+      "name": "adulting",
+      "root": "/private/tmp/scry-analyzer-corpus/adulting"
+    },
+    {
+      "abstentions": [],
+      "counts": {
+        "candidates": 0,
+        "rust_files_scanned": 139
+      },
+      "enum_inventory": [],
+      "excluded": {
+        "dependency_generated_or_fixture_path": 305,
+        "generated_header": 3
+      },
+      "findings": [],
+      "head": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+      "name": "oh-my-pi",
+      "root": "/private/tmp/scry-analyzer-corpus/oh-my-pi"
+    },
+    {
+      "abstentions": [],
+      "counts": {
+        "candidates": 0
+      },
+      "enum_inventory": [],
+      "excluded": {},
+      "findings": [],
+      "head": "61622b8df68b7a8e657caa6f98d9b70069643abf",
+      "name": "vite",
+      "root": "/private/tmp/scry-analyzer-corpus/vite"
+    },
+    {
+      "abstentions": [],
+      "counts": {
+        "candidates": 0
+      },
+      "enum_inventory": [],
+      "excluded": {},
+      "findings": [],
+      "head": "f6fbaf0299c48eea9e656e03e2ffe7ac755e8823",
+      "name": "hono",
+      "root": "/private/tmp/scry-analyzer-corpus/hono"
+    },
+    {
+      "abstentions": [],
+      "counts": {
+        "candidates": 0
+      },
+      "enum_inventory": [],
+      "excluded": {},
+      "findings": [],
+      "head": "2838b498d03ef3a3808fa714f43ea653f4e589b0",
+      "name": "typescript-eslint",
+      "root": "/private/tmp/scry-analyzer-corpus/typescript-eslint"
+    }
+  ],
+  "schema_version": 1,
+  "scope": "Tracked Rust source; JSON data model only; syntax-restricted acceptance inclusion"
+}

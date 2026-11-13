@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "analyzer": "serde-shadowed-untagged-json-variants",
+  "corpus_candidates": 0,
+  "confirmed_useful_findings": 0,
+  "confirmed_false_positives": 0,
+  "precision": null,
+  "precision_note": "No candidates emitted; precision cannot be estimated.",
+  "recommendation": "Do not promote as a default check on this evidence. Keep prototype for targeted serialization-heavy corpora or optional framework checks.",
+  "coverage": {
+    "rust_files_scanned": 3150,
+    "untagged_declarations": 57,
+    "derived_untagged_enums": 41,
+    "modeled_variants": 56,
+    "variants_seen_in_derived_enums": 100,
+    "variant_pairs_compared": 27
+  },
+  "limitations": [
+    "JSON value shapes only; not all Serde formats or duplicate-key document behavior.",
+    "No cross-file type resolution or macro expansion; generic/recursive/unknown types abstain.",
+    "Flatten, aliases, custom deserialization/default functions and conditional variant/field attributes abstain.",
+    "No claim that a nonfinding proves enum variants are reachable.",
+    "Findings require full shape inclusion; partial overlap is deliberately not reported."
+  ],
+  "fixture_validation": {
+    "cli_tests": 2,
+    "real_serde_runtime_tests": 2,
+    "modeled_shadowing_examples": 6,
+    "nonshadowing_examples": 5,
+    "abstention_examples": 5,
+    "serde_version": "1.0.229",
+    "serde_json_version": "1.0.154",
+    "synthetic_examples_count_as_corpus_findings": false
+  },
+  "source_review_samples": [
+    {
+      "repository": "tauri",
+      "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+      "file": "crates/tauri-utils/src/acl/value.rs",
+      "line": 17,
+      "enum": "Number",
+      "judgment": "intentional_nonfinding",
+      "reason": "Int(i64) precedes Float(f64). Fractional JSON numbers still reach Float; overlap on integers is deliberate and is not full shadowing."
+    },
+    {
+      "repository": "tauri",
+      "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+      "file": "crates/tauri-utils/src/config.rs",
+      "line": 1011,
+      "enum": "CustomSignCommandConfig",
+      "judgment": "intentional_nonfinding",
+      "reason": "The documented string shorthand and structured command object have distinct JSON shapes. Both were modeled."
+    },
+    {
+      "repository": "ripgrep",
+      "head": "178cc027e283fd965cb72d0a7395b219eada170c",
+      "file": "tests/json.rs",
+      "line": 110,
+      "enum": "Data",
+      "judgment": "intentional_nonfinding",
+      "reason": "Text requires text; Bytes requires bytes. Neither accepts every input of the other, and comments explain the UTF-8/base64 distinction. Classified as test code."
+    },
+    {
+      "repository": "nushell",
+      "head": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+      "file": "crates/nu-protocol/src/plugin/registry_file/mod.rs",
+      "line": 211,
+      "enum": "PluginRegistryItemData",
+      "judgment": "abstained_custom_semantics",
+      "reason": "Invalid is a documented fallback with custom deserialize_invalid consuming IgnoredAny. It belongs last. Valid depends on unresolved external types; the prototype correctly makes no inclusion claim."
+    },
+    {
+      "repository": "tauri",
+      "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+      "file": "crates/tauri/src/menu/plugin.rs",
+      "line": 316,
+      "enum": "MenuItemPayloadKind",
+      "judgment": "abstained_unresolved_types",
+      "reason": "Source explicitly says order matters. Payloads include external IDs, channels, and nested enums; these are unresolved. This is a coverage gap, not evidence that ordering is correct or incorrect."
+    },
+    {
+      "repository": "kanspec",
+      "head": "a99893d88d98b43616c07f5cfcf02d03c7048bf6",
+      "file": "src/cmd/ticket.rs",
+      "line": 301,
+      "enum": "ShowAny",
+      "judgment": "correctly_excluded",
+      "reason": "Derives Serialize only. The deserialization ordering check is inapplicable; matching output shapes would not make a finding."
+    },
+    {
+      "repository": "adulting",
+      "head": "c8baee7ca4cecbfdfc687dff7f4823c278720596",
+      "file": "rust/crates/tasks/src/mcp/save.rs",
+      "line": 41,
+      "enum": "Saved",
+      "judgment": "correctly_excluded",
+      "reason": "Saved derives Debug and Serialize only; Created/Updated/ExtraOn are response output variants. No derived Deserialize is present."
+    },
+    {
+      "repository": "tauri",
+      "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+      "file": "crates/tauri-utils/src/acl/capability.rs",
+      "line": 23,
+      "enum": "PermissionEntry",
+      "judgment": "correctly_excluded",
+      "reason": "Uses manual Deserialize with UntaggedEnumVisitor and explicit string/map dispatch. Applying derive-generated variant-order semantics would be wrong."
+    }
+  ]
+}

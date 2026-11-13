@@ -1,0 +1,7 @@
+test_manifest_selected_scripts_only (__main__.BuildProbeTests.test_manifest_selected_scripts_only) ... ok
+test_missing_inputs_and_covered_inputs_through_cli (__main__.BuildProbeTests.test_missing_inputs_and_covered_inputs_through_cli) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 1.696s
+
+OK

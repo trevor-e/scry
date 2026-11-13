@@ -1,0 +1,1552 @@
+{
+  "check": "missing-build-rerun",
+  "version": 1,
+  "repositories": [
+    {
+      "repo": "adulting",
+      "root": "/private/tmp/scry-analyzer-corpus/adulting",
+      "head": "c8baee7ca4cecbfdfc687dff7f4823c278720596",
+      "counts": {
+        "manifests": 36,
+        "build_scripts": 1,
+        "inputs": 0,
+        "candidates": 0,
+        "unknown": 0,
+        "covered": 0,
+        "excluded": 0
+      },
+      "scripts": [
+        {
+          "path": "rust/crates/workspace-hack/build.rs",
+          "package": "workspace-hack",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        }
+      ],
+      "manifest_errors": []
+    },
+    {
+      "repo": "hono",
+      "root": "/private/tmp/scry-analyzer-corpus/hono",
+      "head": "f6fbaf0299c48eea9e656e03e2ffe7ac755e8823",
+      "counts": {
+        "manifests": 0,
+        "build_scripts": 0,
+        "inputs": 0,
+        "candidates": 0,
+        "unknown": 0,
+        "covered": 0,
+        "excluded": 0
+      },
+      "scripts": [],
+      "manifest_errors": []
+    },
+    {
+      "repo": "kanspec",
+      "root": "/private/tmp/scry-analyzer-corpus/kanspec",
+      "head": "a99893d88d98b43616c07f5cfcf02d03c7048bf6",
+      "counts": {
+        "manifests": 1,
+        "build_scripts": 1,
+        "inputs": 2,
+        "candidates": 0,
+        "unknown": 0,
+        "covered": 0,
+        "excluded": 2
+      },
+      "scripts": [
+        {
+          "path": "build.rs",
+          "package": "kanspec",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "env",
+              "value": "CARGO_PKG_VERSION",
+              "symbol": null,
+              "line": 13,
+              "expression": "std::env::var(\"CARGO_PKG_VERSION\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 14,
+              "expression": "std::env::var(\"CARGO_MANIFEST_DIR\")",
+              "function": "main"
+            }
+          ],
+          "watches": [
+            {
+              "kind": "file",
+              "value": "assets",
+              "symbol": null,
+              "line": 8,
+              "expression": "println!(\"cargo:rerun-if-changed=assets\")"
+            },
+            {
+              "kind": "file",
+              "value": "docs",
+              "symbol": null,
+              "line": 9,
+              "expression": "println!(\"cargo:rerun-if-changed=docs\")"
+            },
+            {
+              "kind": "file",
+              "value": "src",
+              "symbol": null,
+              "line": 10,
+              "expression": "println!(\"cargo:rerun-if-changed=src\")"
+            },
+            {
+              "kind": "file",
+              "value": "Cargo.toml",
+              "symbol": null,
+              "line": 11,
+              "expression": "println!(\"cargo:rerun-if-changed=Cargo.toml\")"
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "path@block:1892",
+              "line": 42,
+              "expression": "println!(\"cargo:rerun-if-changed={path}\")"
+            }
+          ],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 34,
+              "call": "output"
+            },
+            {
+              "line": 41,
+              "call": "output"
+            },
+            {
+              "line": 45,
+              "call": "watch"
+            },
+            {
+              "line": 46,
+              "call": "output"
+            },
+            {
+              "line": 47,
+              "call": "output"
+            },
+            {
+              "line": 53,
+              "call": "watch"
+            },
+            {
+              "line": 59,
+              "call": "output"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": [
+            {
+              "kind": "env",
+              "value": "CARGO_PKG_VERSION",
+              "symbol": null,
+              "line": 13,
+              "expression": "std::env::var(\"CARGO_PKG_VERSION\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 14,
+              "expression": "std::env::var(\"CARGO_MANIFEST_DIR\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            }
+          ]
+        }
+      ],
+      "manifest_errors": []
+    },
+    {
+      "repo": "nushell",
+      "root": "/private/tmp/scry-analyzer-corpus/nushell",
+      "head": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+      "counts": {
+        "manifests": 48,
+        "build_scripts": 4,
+        "inputs": 4,
+        "candidates": 0,
+        "unknown": 0,
+        "covered": 1,
+        "excluded": 3
+      },
+      "scripts": [
+        {
+          "path": "scripts/build.rs",
+          "package": "nu",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 2,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_OS\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_ARCH",
+              "symbol": null,
+              "line": 3,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_ARCH\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "RUSTC_LINKER",
+              "symbol": null,
+              "line": 19,
+              "expression": "std::env::var_os(\"RUSTC_LINKER\")",
+              "function": "main"
+            }
+          ],
+          "watches": [
+            {
+              "kind": "file",
+              "value": "scripts/build.rs",
+              "symbol": null,
+              "line": 4,
+              "expression": "println!(\"cargo:rerun-if-changed=scripts/build.rs\")"
+            },
+            {
+              "kind": "file",
+              "value": "assets/nu_logo.ico",
+              "symbol": null,
+              "line": 11,
+              "expression": "println!(\"cargo:rerun-if-changed=assets/nu_logo.ico\")"
+            }
+          ],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 12,
+              "call": "winresource::WindowsResource::new"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 2,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_OS\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_ARCH",
+              "symbol": null,
+              "line": 3,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_ARCH\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "RUSTC_LINKER",
+              "symbol": null,
+              "line": 19,
+              "expression": "std::env::var_os(\"RUSTC_LINKER\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            }
+          ]
+        },
+        {
+          "path": "crates/nu-cmd-extra/build.rs",
+          "package": "nu-cmd-extra",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "file",
+              "value": "assets/228_themes.json",
+              "symbol": null,
+              "line": 34,
+              "expression": "File::open(\"assets/228_themes.json\")",
+              "function": "prepare_html_themes"
+            }
+          ],
+          "watches": [
+            {
+              "kind": "file",
+              "value": "build.rs",
+              "symbol": null,
+              "line": 16,
+              "expression": "println!(\"cargo::rerun-if-changed=build.rs\")"
+            },
+            {
+              "kind": "file",
+              "value": "assets/228_themes.json",
+              "symbol": null,
+              "line": 32,
+              "expression": "println!(\"cargo::rerun-if-changed=assets/228_themes.json\")"
+            }
+          ],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 23,
+              "call": "mod theme;"
+            },
+            {
+              "line": 35,
+              "call": "BufReader::new"
+            },
+            {
+              "line": 36,
+              "call": "serde_json::from_reader"
+            },
+            {
+              "line": 63,
+              "call": "quote::quote!"
+            },
+            {
+              "line": 90,
+              "call": "quote::quote!"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [
+            {
+              "kind": "file",
+              "value": "assets/228_themes.json",
+              "symbol": null,
+              "line": 34,
+              "expression": "File::open(\"assets/228_themes.json\")",
+              "function": "prepare_html_themes",
+              "reason": "explicit matching watch",
+              "watch_lines": [
+                32
+              ]
+            }
+          ],
+          "excluded": []
+        },
+        {
+          "path": "crates/nu-cmd-lang/build.rs",
+          "package": "nu-cmd-lang",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [
+            "NU_COMMIT_HASH"
+          ],
+          "helper_calls": [
+            {
+              "line": 13,
+              "call": "shadow_rs::ShadowBuilder::builder"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        },
+        {
+          "path": "crates/nu-test-support/build.rs",
+          "package": "nu-test-support",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        }
+      ],
+      "manifest_errors": []
+    },
+    {
+      "repo": "oh-my-pi",
+      "root": "/private/tmp/scry-analyzer-corpus/oh-my-pi",
+      "head": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+      "counts": {
+        "manifests": 10,
+        "build_scripts": 2,
+        "inputs": 8,
+        "candidates": 0,
+        "unknown": 0,
+        "covered": 4,
+        "excluded": 4
+      },
+      "scripts": [
+        {
+          "path": "crates/pi-natives/build.rs",
+          "package": "pi-natives",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 14,
+              "expression": "env::var(\"CARGO_MANIFEST_DIR\")",
+              "function": "generate_minimizer_builtin_filters"
+            },
+            {
+              "kind": "env",
+              "value": "OUT_DIR",
+              "symbol": null,
+              "line": 20,
+              "expression": "env::var(\"OUT_DIR\")",
+              "function": "generate_minimizer_builtin_filters"
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "defs_dir@282",
+              "line": 29,
+              "expression": "fs::read_dir(&defs_dir)",
+              "function": "generate_minimizer_builtin_filters"
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "path@block:1006",
+              "line": 41,
+              "expression": "fs::read_to_string(&path)",
+              "function": "generate_minimizer_builtin_filters"
+            }
+          ],
+          "watches": [
+            {
+              "kind": "file",
+              "value": "/private/tmp/scry-analyzer-corpus/oh-my-pi/crates/pi-natives/src/shell/minimizer/defs",
+              "symbol": "defs_dir@282",
+              "line": 23,
+              "expression": "println!(\"cargo:rerun-if-changed={}\", defs_dir.display())"
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "path@block:1006",
+              "line": 40,
+              "expression": "println!(\"cargo:rerun-if-changed={}\", path.display())"
+            }
+          ],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 9,
+              "call": "napi_build::setup"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "defs_dir@282",
+              "line": 29,
+              "expression": "fs::read_dir(&defs_dir)",
+              "function": "generate_minimizer_builtin_filters",
+              "reason": "explicit matching watch",
+              "watch_lines": [
+                23
+              ]
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "path@block:1006",
+              "line": 41,
+              "expression": "fs::read_to_string(&path)",
+              "function": "generate_minimizer_builtin_filters",
+              "reason": "explicit matching watch",
+              "watch_lines": [
+                40
+              ]
+            }
+          ],
+          "excluded": [
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 14,
+              "expression": "env::var(\"CARGO_MANIFEST_DIR\")",
+              "function": "generate_minimizer_builtin_filters",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "OUT_DIR",
+              "symbol": null,
+              "line": 20,
+              "expression": "env::var(\"OUT_DIR\")",
+              "function": "generate_minimizer_builtin_filters",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            }
+          ]
+        },
+        {
+          "path": "crates/pi-shell/build.rs",
+          "package": "pi-shell",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 13,
+              "expression": "env::var(\"CARGO_MANIFEST_DIR\")",
+              "function": "generate_minimizer_builtin_filters"
+            },
+            {
+              "kind": "env",
+              "value": "OUT_DIR",
+              "symbol": null,
+              "line": 18,
+              "expression": "env::var(\"OUT_DIR\")",
+              "function": "generate_minimizer_builtin_filters"
+            },
+            {
+              "kind": "file",
+              "value": "/private/tmp/scry-analyzer-corpus/oh-my-pi/crates/pi-shell/src/minimizer/defs",
+              "symbol": "defs_dir@260",
+              "line": 27,
+              "expression": "fs::read_dir(&defs_dir)",
+              "function": "generate_minimizer_builtin_filters"
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "path@block:983",
+              "line": 39,
+              "expression": "fs::read_to_string(&path)",
+              "function": "generate_minimizer_builtin_filters"
+            }
+          ],
+          "watches": [
+            {
+              "kind": "file",
+              "value": "/private/tmp/scry-analyzer-corpus/oh-my-pi/crates/pi-shell/src/minimizer/defs",
+              "symbol": "defs_dir@260",
+              "line": 21,
+              "expression": "println!(\"cargo:rerun-if-changed={}\", defs_dir.display())"
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "path@block:983",
+              "line": 38,
+              "expression": "println!(\"cargo:rerun-if-changed={}\", path.display())"
+            }
+          ],
+          "automatic_env": [],
+          "helper_calls": [],
+          "candidates": [],
+          "unknown": [],
+          "covered": [
+            {
+              "kind": "file",
+              "value": "/private/tmp/scry-analyzer-corpus/oh-my-pi/crates/pi-shell/src/minimizer/defs",
+              "symbol": "defs_dir@260",
+              "line": 27,
+              "expression": "fs::read_dir(&defs_dir)",
+              "function": "generate_minimizer_builtin_filters",
+              "reason": "explicit matching watch",
+              "watch_lines": [
+                21
+              ]
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "path@block:983",
+              "line": 39,
+              "expression": "fs::read_to_string(&path)",
+              "function": "generate_minimizer_builtin_filters",
+              "reason": "explicit matching watch",
+              "watch_lines": [
+                38
+              ]
+            }
+          ],
+          "excluded": [
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 13,
+              "expression": "env::var(\"CARGO_MANIFEST_DIR\")",
+              "function": "generate_minimizer_builtin_filters",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "OUT_DIR",
+              "symbol": null,
+              "line": 18,
+              "expression": "env::var(\"OUT_DIR\")",
+              "function": "generate_minimizer_builtin_filters",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            }
+          ]
+        }
+      ],
+      "manifest_errors": []
+    },
+    {
+      "repo": "ripgrep",
+      "root": "/private/tmp/scry-analyzer-corpus/ripgrep",
+      "head": "178cc027e283fd965cb72d0a7395b219eada170c",
+      "counts": {
+        "manifests": 11,
+        "build_scripts": 1,
+        "inputs": 2,
+        "candidates": 0,
+        "unknown": 0,
+        "covered": 0,
+        "excluded": 2
+      },
+      "scripts": [
+        {
+          "path": "build.rs",
+          "package": "ripgrep",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 15,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_OS\")",
+              "function": "set_windows_exe_options"
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_ENV",
+              "symbol": null,
+              "line": 16,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_ENV\")",
+              "function": "set_windows_exe_options"
+            }
+          ],
+          "watches": [
+            {
+              "kind": "file",
+              "value": "pkg/windows/Manifest.xml",
+              "symbol": "MANIFEST@442",
+              "line": 25,
+              "expression": "println!(\"cargo:rerun-if-changed={MANIFEST}\")"
+            }
+          ],
+          "automatic_env": [],
+          "helper_calls": [],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 15,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_OS\")",
+              "function": "set_windows_exe_options",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_ENV",
+              "symbol": null,
+              "line": 16,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_ENV\")",
+              "function": "set_windows_exe_options",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            }
+          ]
+        }
+      ],
+      "manifest_errors": []
+    },
+    {
+      "repo": "scry",
+      "root": "/private/tmp/scry-analyzer-corpus/scry",
+      "head": "7927f36440ffc34469da551c782a6487826f05d1",
+      "counts": {
+        "manifests": 1,
+        "build_scripts": 0,
+        "inputs": 0,
+        "candidates": 0,
+        "unknown": 0,
+        "covered": 0,
+        "excluded": 0
+      },
+      "scripts": [],
+      "manifest_errors": []
+    },
+    {
+      "repo": "tauri",
+      "root": "/private/tmp/scry-analyzer-corpus/tauri",
+      "head": "5edd31c8a8914674c217b21a660a914823da2dae",
+      "counts": {
+        "manifests": 26,
+        "build_scripts": 15,
+        "inputs": 19,
+        "candidates": 0,
+        "unknown": 8,
+        "covered": 1,
+        "excluded": 10
+      },
+      "scripts": [
+        {
+          "path": "bench/tests/cpu_intensive/src-tauri/build.rs",
+          "package": "bench_cpu_intensive",
+          "context": "example/test",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 6,
+              "call": "tauri_build::build"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        },
+        {
+          "path": "bench/tests/files_transfer/src-tauri/build.rs",
+          "package": "bench_files_transfer",
+          "context": "example/test",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 6,
+              "call": "tauri_build::build"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        },
+        {
+          "path": "bench/tests/helloworld/src-tauri/build.rs",
+          "package": "bench_helloworld",
+          "context": "example/test",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 6,
+              "call": "tauri_build::build"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        },
+        {
+          "path": "crates/tauri-cli/build.rs",
+          "package": "tauri-cli",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [
+            {
+              "kind": "file",
+              "value": "templates/",
+              "symbol": null,
+              "line": 6,
+              "expression": "println!(\"cargo:rerun-if-changed=templates/\")"
+            }
+          ],
+          "automatic_env": [],
+          "helper_calls": [],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        },
+        {
+          "path": "crates/tauri-runtime-wry/build.rs",
+          "package": "tauri-runtime-wry",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 15,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_OS\")",
+              "function": "main"
+            }
+          ],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 15,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_OS\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            }
+          ]
+        },
+        {
+          "path": "crates/tauri-runtime/build.rs",
+          "package": "tauri-runtime",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 15,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_OS\")",
+              "function": "main"
+            }
+          ],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 15,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_OS\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            }
+          ]
+        },
+        {
+          "path": "crates/tauri-schema-generator/build.rs",
+          "package": "tauri-schema-generator",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 32,
+              "expression": "std::env::var(\"CARGO_MANIFEST_DIR\")",
+              "function": "main"
+            }
+          ],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 27,
+              "call": "schema!"
+            },
+            {
+              "line": 28,
+              "call": "schema!"
+            },
+            {
+              "line": 29,
+              "call": "schema!"
+            },
+            {
+              "line": 38,
+              "call": "serde_json::to_string_pretty"
+            },
+            {
+              "line": 39,
+              "call": "write_if_changed"
+            },
+            {
+              "line": 48,
+              "call": "schema!"
+            },
+            {
+              "line": 52,
+              "call": "serde_json::to_string_pretty"
+            },
+            {
+              "line": 53,
+              "call": "write_if_changed"
+            },
+            {
+              "line": 54,
+              "call": "write_if_changed"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": [
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 32,
+              "expression": "std::env::var(\"CARGO_MANIFEST_DIR\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            }
+          ]
+        },
+        {
+          "path": "crates/tauri-utils/build.rs",
+          "package": "tauri-utils",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        },
+        {
+          "path": "crates/tauri/build.rs",
+          "package": "tauri",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "env",
+              "value": null,
+              "symbol": null,
+              "line": 236,
+              "expression": "std::env::var_os(format!(\"CARGO_FEATURE_{}\", AsShoutySnakeCase(feature)))",
+              "function": "has_feature"
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 259,
+              "expression": "std::env::var_os(\"CARGO_CFG_TARGET_OS\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "OUT_DIR",
+              "symbol": null,
+              "line": 264,
+              "expression": "env::var_os(\"OUT_DIR\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_ENV",
+              "symbol": null,
+              "line": 273,
+              "expression": "std::env::var_os(\"CARGO_CFG_TARGET_ENV\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "__TAURI_WORKSPACE__",
+              "symbol": null,
+              "line": 274,
+              "expression": "std::env::var_os(\"__TAURI_WORKSPACE__\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": null,
+              "symbol": "var@block:8150",
+              "line": 281,
+              "expression": "std::env::var(var)",
+              "function": "env_var"
+            },
+            {
+              "kind": "env",
+              "value": "WRY_ANDROID_KOTLIN_FILES_OUT_DIR",
+              "symbol": null,
+              "line": 286,
+              "expression": "std::env::var_os(\"WRY_ANDROID_KOTLIN_FILES_OUT_DIR\")",
+              "function": "main"
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "kotlin_files_path@8766",
+              "line": 302,
+              "expression": "fs::read_dir(kotlin_files_path)",
+              "function": "main"
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": null,
+              "line": 307,
+              "expression": "fs::read_to_string(file.path())",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "TAURI_ANDROID_PROJECT_PATH",
+              "symbol": null,
+              "line": 320,
+              "expression": "env::var_os(\"TAURI_ANDROID_PROJECT_PATH\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "TAURI_ANDROID_PACKAGE_UNESCAPED",
+              "symbol": null,
+              "line": 321,
+              "expression": "env::var(\"TAURI_ANDROID_PACKAGE_UNESCAPED\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 333,
+              "expression": "std::env::var_os(\"CARGO_MANIFEST_DIR\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 341,
+              "expression": "std::env::var_os(\"CARGO_MANIFEST_DIR\")",
+              "function": "main"
+            }
+          ],
+          "watches": [
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "kotlin_files_path@8766",
+              "line": 300,
+              "expression": "println!(\"cargo:rerun-if-changed={}\", kotlin_files_path.display())"
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "out_path@9345",
+              "line": 316,
+              "expression": "println!(\"cargo:rerun-if-changed={}\", out_path.display())"
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "manifest@15404",
+              "line": 491,
+              "expression": "println!(\"cargo:rerun-if-changed={}\", manifest.display())"
+            }
+          ],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 314,
+              "call": "write_if_changed"
+            },
+            {
+              "line": 342,
+              "call": "tauri_utils::build::link_apple_library"
+            },
+            {
+              "line": 350,
+              "call": "tauri_utils::plugin::define_global_api_script_path"
+            },
+            {
+              "line": 354,
+              "call": "tauri_utils::plugin::save_global_api_scripts_paths"
+            },
+            {
+              "line": 358,
+              "call": "tauri_utils::acl::build::generate_allowed_commands"
+            },
+            {
+              "line": 377,
+              "call": "tauri_utils::acl::build::autogenerate_command_permissions"
+            },
+            {
+              "line": 410,
+              "call": "write_if_changed"
+            },
+            {
+              "line": 413,
+              "call": "tauri_utils::acl::build::define_permissions"
+            },
+            {
+              "line": 414,
+              "call": "glob::Pattern::escape"
+            },
+            {
+              "line": 430,
+              "call": "tauri_utils::acl::build::generate_docs"
+            },
+            {
+              "line": 467,
+              "call": "write_if_changed"
+            },
+            {
+              "line": 470,
+              "call": "tauri_utils::acl::build::define_permissions"
+            },
+            {
+              "line": 471,
+              "call": "glob::Pattern::escape"
+            }
+          ],
+          "candidates": [],
+          "unknown": [
+            {
+              "kind": "env",
+              "value": null,
+              "symbol": null,
+              "line": 236,
+              "expression": "std::env::var_os(format!(\"CARGO_FEATURE_{}\", AsShoutySnakeCase(feature)))",
+              "function": "has_feature",
+              "reason": "unresolved helper effects may emit rerun directives",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "__TAURI_WORKSPACE__",
+              "symbol": null,
+              "line": 274,
+              "expression": "std::env::var_os(\"__TAURI_WORKSPACE__\")",
+              "function": "main",
+              "reason": "unresolved helper effects may emit rerun directives",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": null,
+              "symbol": "var@block:8150",
+              "line": 281,
+              "expression": "std::env::var(var)",
+              "function": "env_var",
+              "reason": "unresolved helper effects may emit rerun directives",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "WRY_ANDROID_KOTLIN_FILES_OUT_DIR",
+              "symbol": null,
+              "line": 286,
+              "expression": "std::env::var_os(\"WRY_ANDROID_KOTLIN_FILES_OUT_DIR\")",
+              "function": "main",
+              "reason": "unresolved helper effects may emit rerun directives",
+              "watch_lines": []
+            },
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": null,
+              "line": 307,
+              "expression": "fs::read_to_string(file.path())",
+              "function": "main",
+              "reason": "unresolved helper effects may emit rerun directives",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "TAURI_ANDROID_PROJECT_PATH",
+              "symbol": null,
+              "line": 320,
+              "expression": "env::var_os(\"TAURI_ANDROID_PROJECT_PATH\")",
+              "function": "main",
+              "reason": "unresolved helper effects may emit rerun directives",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "TAURI_ANDROID_PACKAGE_UNESCAPED",
+              "symbol": null,
+              "line": 321,
+              "expression": "env::var(\"TAURI_ANDROID_PACKAGE_UNESCAPED\")",
+              "function": "main",
+              "reason": "unresolved helper effects may emit rerun directives",
+              "watch_lines": []
+            }
+          ],
+          "covered": [
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "kotlin_files_path@8766",
+              "line": 302,
+              "expression": "fs::read_dir(kotlin_files_path)",
+              "function": "main",
+              "reason": "explicit matching watch",
+              "watch_lines": [
+                300
+              ]
+            }
+          ],
+          "excluded": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 259,
+              "expression": "std::env::var_os(\"CARGO_CFG_TARGET_OS\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "OUT_DIR",
+              "symbol": null,
+              "line": 264,
+              "expression": "env::var_os(\"OUT_DIR\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_ENV",
+              "symbol": null,
+              "line": 273,
+              "expression": "std::env::var_os(\"CARGO_CFG_TARGET_ENV\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 333,
+              "expression": "std::env::var_os(\"CARGO_MANIFEST_DIR\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_MANIFEST_DIR",
+              "symbol": null,
+              "line": 341,
+              "expression": "std::env::var_os(\"CARGO_MANIFEST_DIR\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            }
+          ]
+        },
+        {
+          "path": "crates/tests/restart/build.rs",
+          "package": "restart",
+          "context": "example/test",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        },
+        {
+          "path": "examples/api/src-tauri/build.rs",
+          "package": "api",
+          "context": "example/test",
+          "parse_error": false,
+          "inputs": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 29,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_OS\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_ENV",
+              "symbol": null,
+              "line": 30,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_ENV\")",
+              "function": "main"
+            },
+            {
+              "kind": "env",
+              "value": "__TAURI_WORKSPACE__",
+              "symbol": null,
+              "line": 31,
+              "expression": "std::env::var(\"__TAURI_WORKSPACE__\")",
+              "function": "main"
+            }
+          ],
+          "watches": [
+            {
+              "kind": "file",
+              "value": null,
+              "symbol": "manifest@1360",
+              "line": 47,
+              "expression": "println!(\"cargo:rerun-if-changed={}\", manifest.display())"
+            }
+          ],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 8,
+              "call": "tauri_build::try_build"
+            },
+            {
+              "line": 9,
+              "call": "tauri_build::Attributes::new"
+            },
+            {
+              "line": 10,
+              "call": "tauri_build::CodegenContext::new"
+            },
+            {
+              "line": 11,
+              "call": "WindowsAttributes::new_without_app_manifest"
+            },
+            {
+              "line": 14,
+              "call": "tauri_build::InlinedPlugin::new"
+            },
+            {
+              "line": 16,
+              "call": "tauri_build::AppManifest::new"
+            }
+          ],
+          "candidates": [],
+          "unknown": [
+            {
+              "kind": "env",
+              "value": "__TAURI_WORKSPACE__",
+              "symbol": null,
+              "line": 31,
+              "expression": "std::env::var(\"__TAURI_WORKSPACE__\")",
+              "function": "main",
+              "reason": "unresolved helper effects may emit rerun directives",
+              "watch_lines": []
+            }
+          ],
+          "covered": [],
+          "excluded": [
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_OS",
+              "symbol": null,
+              "line": 29,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_OS\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            },
+            {
+              "kind": "env",
+              "value": "CARGO_CFG_TARGET_ENV",
+              "symbol": null,
+              "line": 30,
+              "expression": "std::env::var(\"CARGO_CFG_TARGET_ENV\")",
+              "function": "main",
+              "reason": "Cargo-managed environment variable",
+              "watch_lines": []
+            }
+          ]
+        },
+        {
+          "path": "examples/api/src-tauri/tauri-plugin-sample/build.rs",
+          "package": "tauri-plugin-sample",
+          "context": "example/test",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 8,
+              "call": "tauri_plugin::Builder::new"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        },
+        {
+          "path": "examples/file-associations/src-tauri/build.rs",
+          "package": "tauri-file-associations-demo",
+          "context": "example/test",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 6,
+              "call": "tauri_build::build"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        },
+        {
+          "path": "examples/resources/src-tauri/build.rs",
+          "package": "resources",
+          "context": "example/test",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 6,
+              "call": "tauri_build::build"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        },
+        {
+          "path": "packages/cli/build.rs",
+          "package": "tauri-cli-node",
+          "context": "production",
+          "parse_error": false,
+          "inputs": [],
+          "watches": [],
+          "automatic_env": [],
+          "helper_calls": [
+            {
+              "line": 6,
+              "call": "napi_build::setup"
+            }
+          ],
+          "candidates": [],
+          "unknown": [],
+          "covered": [],
+          "excluded": []
+        }
+      ],
+      "manifest_errors": []
+    },
+    {
+      "repo": "typescript-eslint",
+      "root": "/private/tmp/scry-analyzer-corpus/typescript-eslint",
+      "head": "2838b498d03ef3a3808fa714f43ea653f4e589b0",
+      "counts": {
+        "manifests": 0,
+        "build_scripts": 0,
+        "inputs": 0,
+        "candidates": 0,
+        "unknown": 0,
+        "covered": 0,
+        "excluded": 0
+      },
+      "scripts": [],
+      "manifest_errors": []
+    },
+    {
+      "repo": "vite",
+      "root": "/private/tmp/scry-analyzer-corpus/vite",
+      "head": "61622b8df68b7a8e657caa6f98d9b70069643abf",
+      "counts": {
+        "manifests": 0,
+        "build_scripts": 0,
+        "inputs": 0,
+        "candidates": 0,
+        "unknown": 0,
+        "covered": 0,
+        "excluded": 0
+      },
+      "scripts": [],
+      "manifest_errors": []
+    }
+  ],
+  "summary": {
+    "manifests": 133,
+    "build_scripts": 24,
+    "inputs": 35,
+    "candidates": 0,
+    "unknown": 8,
+    "covered": 6,
+    "excluded": 21
+  },
+  "limits": [
+    "Syntax-only: no execution of corpus build scripts or external helpers; unresolved helper effects cause abstention.",
+    "Only manifest-selected build scripts, direct std env/fs/File reads, simple lexical path construction, and println! rerun directives.",
+    "Local function bodies are followed from main by bare function name; arbitrary call/trait/macro expansion is unsupported.",
+    "Conditional execution is not modeled: observed watches may over-suppress, so absence of findings is not proof of coverage.",
+    "Subprocess inputs (git/compilers), filesystem existence probes, build dependency implementation reads, and package include/exclude glob expansion are not inferred."
+  ]
+}

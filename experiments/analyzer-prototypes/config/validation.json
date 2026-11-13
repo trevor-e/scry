@@ -1,0 +1,141 @@
+{
+  "command": "/private/tmp/scry-analyzer-venv/bin/python /Users/telkins/dev/scry/experiments/analyzer-prototypes/config/validate.py",
+  "cases": [
+    {
+      "case": "rust-different-default",
+      "passed": true,
+      "within_scope_keys": [
+        "PORT"
+      ],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "ts-different-default",
+      "passed": true,
+      "within_scope_keys": [
+        "PORT"
+      ],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "ts-same-normalized-number",
+      "passed": true,
+      "within_scope_keys": [
+        "PORT"
+      ],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "same-default",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "separate-manifests",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": [
+        "PORT"
+      ]
+    },
+    {
+      "case": "inline-test-scope",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": [
+        "A"
+      ]
+    },
+    {
+      "case": "example-scope",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": [
+        "PORT"
+      ]
+    },
+    {
+      "case": "different-provider",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "nonliteral-default",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "multi-key-precedence",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "parser-difference",
+      "passed": true,
+      "within_scope_keys": [
+        "PORT"
+      ],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "arbitrary-same-fields",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "test-filenames",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": [
+        "PORT"
+      ]
+    },
+    {
+      "case": "rust-parse-chain",
+      "passed": true,
+      "within_scope_keys": [
+        "A"
+      ],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "unknown-transform",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "benchmark-scope",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": [
+        "PORT"
+      ]
+    },
+    {
+      "case": "argument-siblings-are-not-precedence",
+      "passed": true,
+      "within_scope_keys": [
+        "A"
+      ],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "explicit-precedence",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": []
+    },
+    {
+      "case": "dynamic-keys",
+      "passed": true,
+      "within_scope_keys": [],
+      "cross_scope_keys": []
+    }
+  ]
+}

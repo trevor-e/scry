@@ -1,0 +1,102 @@
+[
+  {
+    "name": "adulting",
+    "path": "/private/tmp/scry-analyzer-corpus/adulting",
+    "revision": "c8baee7ca4cecbfdfc687dff7f4823c278720596",
+    "origin": "/Users/telkins/dev/adulting",
+    "shallow": false,
+    "rust_files": 486,
+    "typescript_files": 438,
+    "build_scripts": 1
+  },
+  {
+    "name": "hono",
+    "path": "/private/tmp/scry-analyzer-corpus/hono",
+    "revision": "f6fbaf0299c48eea9e656e03e2ffe7ac755e8823",
+    "origin": "https://github.com/honojs/hono.git",
+    "shallow": true,
+    "rust_files": 0,
+    "typescript_files": 431,
+    "build_scripts": 0
+  },
+  {
+    "name": "kanspec",
+    "path": "/private/tmp/scry-analyzer-corpus/kanspec",
+    "revision": "a99893d88d98b43616c07f5cfcf02d03c7048bf6",
+    "origin": "/Users/telkins/dev/kanspec",
+    "shallow": false,
+    "rust_files": 85,
+    "typescript_files": 0,
+    "build_scripts": 1
+  },
+  {
+    "name": "nushell",
+    "path": "/private/tmp/scry-analyzer-corpus/nushell",
+    "revision": "7bff3d1d04d65529ee87f4b076448d7e9f538d09",
+    "origin": "https://github.com/nushell/nushell.git",
+    "shallow": true,
+    "rust_files": 1992,
+    "typescript_files": 0,
+    "build_scripts": 4
+  },
+  {
+    "name": "oh-my-pi",
+    "path": "/private/tmp/scry-analyzer-corpus/oh-my-pi",
+    "revision": "c66e2f6ac7c66192c093377ef6701a1c37e12b0f",
+    "origin": "/Users/telkins/dev/oh-my-pi",
+    "shallow": false,
+    "rust_files": 447,
+    "typescript_files": 4220,
+    "build_scripts": 2
+  },
+  {
+    "name": "ripgrep",
+    "path": "/private/tmp/scry-analyzer-corpus/ripgrep",
+    "revision": "178cc027e283fd965cb72d0a7395b219eada170c",
+    "origin": "https://github.com/BurntSushi/ripgrep.git",
+    "shallow": true,
+    "rust_files": 102,
+    "typescript_files": 0,
+    "build_scripts": 1
+  },
+  {
+    "name": "scry",
+    "path": "/private/tmp/scry-analyzer-corpus/scry",
+    "revision": "7927f36440ffc34469da551c782a6487826f05d1",
+    "origin": "/Users/telkins/dev/scry",
+    "shallow": false,
+    "rust_files": 23,
+    "typescript_files": 0,
+    "build_scripts": 0
+  },
+  {
+    "name": "tauri",
+    "path": "/private/tmp/scry-analyzer-corpus/tauri",
+    "revision": "5edd31c8a8914674c217b21a660a914823da2dae",
+    "origin": "https://github.com/tauri-apps/tauri.git",
+    "shallow": true,
+    "rust_files": 331,
+    "typescript_files": 46,
+    "build_scripts": 24
+  },
+  {
+    "name": "typescript-eslint",
+    "path": "/private/tmp/scry-analyzer-corpus/typescript-eslint",
+    "revision": "2838b498d03ef3a3808fa714f43ea653f4e589b0",
+    "origin": "https://github.com/typescript-eslint/typescript-eslint.git",
+    "shallow": true,
+    "rust_files": 0,
+    "typescript_files": 2721,
+    "build_scripts": 0
+  },
+  {
+    "name": "vite",
+    "path": "/private/tmp/scry-analyzer-corpus/vite",
+    "revision": "61622b8df68b7a8e657caa6f98d9b70069643abf",
+    "origin": "https://github.com/vitejs/vite.git",
+    "shallow": true,
+    "rust_files": 0,
+    "typescript_files": 625,
+    "build_scripts": 0
+  }
+]
