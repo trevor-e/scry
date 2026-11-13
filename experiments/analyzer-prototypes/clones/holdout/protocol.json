@@ -1,0 +1,79 @@
+{
+  "experiment": "fresh-corpus-frozen-detector",
+  "detector_revision": "f11f4268a0be6934425de33c4f3e494579de473a",
+  "detector_sha256": {
+    "probe.py": "2ba87ddaf9f90e456aee0fd8ce44ef15855018c486ea5394561631f9d796fdac",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8"
+  },
+  "parameters": {
+    "matching": "exact",
+    "commits": 200,
+    "similarity": 0.85
+  },
+  "clone_depth": 300,
+  "selection": "Ten projects selected before scan results: five primarily Rust and five primarily TypeScript, none in the original ten-repository corpus. Fixed set; no additions based on findings.",
+  "execution": "Read tracked source and git history only; do not run corpus application code, tests, or build scripts.",
+  "audit": "Inspect every emitted candidate. Keep useful_review, false_positive, and unresolved separate. Inspect rejected examples only to illustrate limits, not estimate recall. No detector or threshold changes.",
+  "repositories": [
+    {
+      "name": "tokio",
+      "origin": "https://github.com/tokio-rs/tokio.git",
+      "primary_language": "Rust",
+      "path": "/private/tmp/scry-clone-holdout/tokio"
+    },
+    {
+      "name": "clap",
+      "origin": "https://github.com/clap-rs/clap.git",
+      "primary_language": "Rust",
+      "path": "/private/tmp/scry-clone-holdout/clap"
+    },
+    {
+      "name": "ruff",
+      "origin": "https://github.com/astral-sh/ruff.git",
+      "primary_language": "Rust",
+      "path": "/private/tmp/scry-clone-holdout/ruff"
+    },
+    {
+      "name": "starship",
+      "origin": "https://github.com/starship/starship.git",
+      "primary_language": "Rust",
+      "path": "/private/tmp/scry-clone-holdout/starship"
+    },
+    {
+      "name": "bat",
+      "origin": "https://github.com/sharkdp/bat.git",
+      "primary_language": "Rust",
+      "path": "/private/tmp/scry-clone-holdout/bat"
+    },
+    {
+      "name": "pnpm",
+      "origin": "https://github.com/pnpm/pnpm.git",
+      "primary_language": "TypeScript",
+      "path": "/private/tmp/scry-clone-holdout/pnpm"
+    },
+    {
+      "name": "query",
+      "origin": "https://github.com/TanStack/query.git",
+      "primary_language": "TypeScript",
+      "path": "/private/tmp/scry-clone-holdout/query"
+    },
+    {
+      "name": "playwright",
+      "origin": "https://github.com/microsoft/playwright.git",
+      "primary_language": "TypeScript",
+      "path": "/private/tmp/scry-clone-holdout/playwright"
+    },
+    {
+      "name": "vitest",
+      "origin": "https://github.com/vitest-dev/vitest.git",
+      "primary_language": "TypeScript",
+      "path": "/private/tmp/scry-clone-holdout/vitest"
+    },
+    {
+      "name": "vue-core",
+      "origin": "https://github.com/vuejs/core.git",
+      "primary_language": "TypeScript",
+      "path": "/private/tmp/scry-clone-holdout/vue-core"
+    }
+  ]
+}
