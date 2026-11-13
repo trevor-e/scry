@@ -1,0 +1,34 @@
+{
+  "repo": "pnpm",
+  "revision": "63765162e6346aa5a667be9c1b5ef61103f1c58a",
+  "method": "Source and Git review only. These two post-hoc rejected examples are not emitted findings or an independently labelled recall set.",
+  "fix_commit": "9e44e8773545f80137f426f68a32376cadecbda1",
+  "classification": "false_positive_avoided",
+  "reason": "The MySQL fix has two relevant parts: deadline-aware connection acquisition, already present in the PostgreSQL survivors, and username decoding for MySQL binary collation, which does not transfer to PostgreSQL. Current PostgreSQL query shapes and row layouts also differ. Propagating the MySQL helper into these methods would be inappropriate.",
+  "candidates": [
+    {
+      "rejected_index": 10,
+      "changed_symbol": "MysqlDatabase::list_accounts#1",
+      "survivor": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/postgres.rs",
+        "line": 119,
+        "end_line": 128
+      },
+      "evidence": "Lines 121 and 123 use the PostgreSQL status query and the new pool.acquire().await? pattern. Line 126 retains normal username decoding. The fixed MySQL helper explicitly describes utf8mb4_bin decoding.",
+      "detector_rejection": "different_complete_body"
+    },
+    {
+      "rejected_index": 12,
+      "changed_symbol": "MysqlDatabase::find_owned_token_impl#1",
+      "survivor": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/postgres/tokens.rs",
+        "line": 56,
+        "end_line": 72
+      },
+      "evidence": "Lines 62 and 65 use PostgreSQL query syntax and pool.acquire().await?. The username column is index 8 at line 69; the MySQL pre-fix layout used index 9. The remaining username decoder change is backend-specific.",
+      "detector_rejection": "different_complete_body"
+    }
+  ],
+  "runtime_execution": false,
+  "detector_changes": false
+}

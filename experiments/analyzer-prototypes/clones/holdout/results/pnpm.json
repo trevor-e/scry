@@ -1,0 +1,1151 @@
+{
+  "repo": "pnpm",
+  "root": "/private/tmp/scry-clone-holdout/pnpm",
+  "revision": "63765162e6346aa5a667be9c1b5ef61103f1c58a",
+  "matching": "exact",
+  "broad_candidates": 16,
+  "rejected_candidates": [
+    {
+      "check": "missed_clone_fix",
+      "commit": "df33506e7704b4e055923bf6df15749c4f8b1795",
+      "subject": "fix: stabilize peer updates and script cleanup (#17994)",
+      "changed": {
+        "path": "pnpm/crates/package-manager/src/install/lockfile_freshness/directory_deps/recorded.rs",
+        "symbol": "check_recorded_directory#1",
+        "line": 13,
+        "end_line": 36
+      },
+      "changed_at_fix": {
+        "path": "pnpm/crates/package-manager/src/install/lockfile_freshness/directory_deps/recorded.rs",
+        "symbol": "check_recorded_directory#1",
+        "line": 13,
+        "end_line": 41
+      },
+      "survivor": {
+        "path": "pnpm/crates/package-manager/src/install/lockfile_freshness/directory_deps/package.rs",
+        "symbol": "check_legacy_directory#1",
+        "line": 90,
+        "end_line": 119
+      },
+      "similarity": 0.866,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 31,
+          "new_line": 36,
+          "survivor_line": 114,
+          "removed_tokens": [],
+          "added_tokens": [
+            "("
+          ],
+          "old_excerpt": "        manifest,\n        snapshot,\n        &peers.shadowed,",
+          "new_excerpt": "        manifest,\n        (snapshot, key),\n        &peers.shadowed,"
+        },
+        {
+          "operation": "insert",
+          "old_line": 31,
+          "new_line": 36,
+          "survivor_line": 114,
+          "removed_tokens": [],
+          "added_tokens": [
+            ",",
+            "$id",
+            ")"
+          ],
+          "old_excerpt": "        manifest,\n        snapshot,\n        &peers.shadowed,",
+          "new_excerpt": "        manifest,\n        (snapshot, key),\n        &peers.shadowed,"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "destructured or non-identifier parameter",
+        "right_fallback_reason": "destructured or non-identifier parameter",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "f876766c67811c61bd6421dcf9f61481718cc72a",
+      "subject": "fix: read current registry metadata before package mutations (#17943)",
+      "changed": {
+        "path": "pnpm/crates/cli/src/cli_args/deprecate/registry.rs",
+        "symbol": "fetch_package_meta_once#1",
+        "line": 59,
+        "end_line": 90
+      },
+      "changed_at_fix": {
+        "path": "pnpm/crates/cli/src/cli_args/deprecate/registry.rs",
+        "symbol": "fetch_package_meta_once#1",
+        "line": 59,
+        "end_line": 90
+      },
+      "survivor": {
+        "path": "pnpm/crates/cli/src/cli_args/dist_tag/registry.rs",
+        "symbol": "fetch_dist_tags_once#1",
+        "line": 194,
+        "end_line": 223
+      },
+      "similarity": 0.9667,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "replace",
+          "old_line": 67,
+          "new_line": 67,
+          "survivor_line": 201,
+          "removed_tokens": [
+            "$id"
+          ],
+          "added_tokens": [
+            "format",
+            "!",
+            "(",
+            "\"",
+            "{url}?write=true",
+            "\"",
+            ")"
+          ],
+          "old_excerpt": "            // Need full metadata for put update.\n            apply_auth_and_otp(client.get(url), auth_header, None)\n        })",
+          "new_excerpt": "            // Read the current revision before mutating the package document.\n            apply_auth_and_otp(client.get(format!(\"{url}?write=true\")), auth_header, None)\n        })"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "destructured Rust let",
+        "right_fallback_reason": "destructured Rust let",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "f876766c67811c61bd6421dcf9f61481718cc72a",
+      "subject": "fix: read current registry metadata before package mutations (#17943)",
+      "changed": {
+        "path": "pnpm11/registry-access/commands/src/deprecation/common.ts",
+        "symbol": "fetchPackageMeta#1",
+        "line": 81,
+        "end_line": 98
+      },
+      "changed_at_fix": {
+        "path": "pnpm11/registry-access/commands/src/deprecation/common.ts",
+        "symbol": "fetchPackageMeta#1",
+        "line": 81,
+        "end_line": 98
+      },
+      "survivor": {
+        "path": "pnpm11/registry-access/commands/src/star/common.ts",
+        "symbol": "fetchPackumentWithStars#1",
+        "line": 120,
+        "end_line": 137
+      },
+      "similarity": 0.9886,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 85,
+          "new_line": 85,
+          "survivor_line": 124,
+          "removed_tokens": [],
+          "added_tokens": [
+            "`",
+            "${"
+          ],
+          "old_excerpt": "): Promise<PackageMeta> {\n  const getResponse = await fetchFromRegistry(packageUrl, {\n    authHeaderValue: authHeader,",
+          "new_excerpt": "): Promise<PackageMeta> {\n  const getResponse = await fetchFromRegistry(`${packageUrl}?write=true`, {\n    authHeaderValue: authHeader,"
+        },
+        {
+          "operation": "insert",
+          "old_line": 85,
+          "new_line": 85,
+          "survivor_line": 124,
+          "removed_tokens": [],
+          "added_tokens": [
+            "}",
+            "?write=true",
+            "`"
+          ],
+          "old_excerpt": "): Promise<PackageMeta> {\n  const getResponse = await fetchFromRegistry(packageUrl, {\n    authHeaderValue: authHeader,",
+          "new_excerpt": "): Promise<PackageMeta> {\n  const getResponse = await fetchFromRegistry(`${packageUrl}?write=true`, {\n    authHeaderValue: authHeader,"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "destructured or non-identifier parameter",
+        "right_fallback_reason": "destructured or non-identifier parameter",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "f2b10fc8fc031b53333b8662ddd43bed3d99d992",
+      "subject": "fix(pnpr): read primary on embedded-replica archive and version misses (#17938)",
+      "changed": {
+        "path": "pnpr/crates/storage/src/metadata/sql.rs",
+        "symbol": "SqlMetadata::release_record_entry#1",
+        "line": 396,
+        "end_line": 412
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/storage/src/metadata/sql.rs",
+        "symbol": "SqlMetadata::release_record_entry#1",
+        "line": 398,
+        "end_line": 411
+      },
+      "survivor": {
+        "path": "pnpr/crates/storage/src/metadata/sql.rs",
+        "symbol": "SqlMetadata::tag_history#1",
+        "line": 265,
+        "end_line": 281
+      },
+      "similarity": 0.9639,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "replace",
+          "old_line": 408,
+          "new_line": 410,
+          "survivor_line": 277,
+          "removed_tokens": [
+            "read"
+          ],
+          "added_tokens": [
+            "read_present"
+          ],
+          "old_excerpt": "        let version = version.to_string();\n        self.read(org.to_string(), Freshness::Bounded, move |connection, _| {\n            log::record_entry(connection, &key, &version)",
+          "new_excerpt": "        let version = version.to_string();\n        self.read_present(move |connection, _| log::record_entry(connection, &key, &version)).await\n    }"
+        },
+        {
+          "operation": "delete",
+          "old_line": 410,
+          "new_line": 410,
+          "survivor_line": 279,
+          "removed_tokens": [
+            "}"
+          ],
+          "added_tokens": [],
+          "old_excerpt": "            log::record_entry(connection, &key, &version)\n        })\n        .await",
+          "new_excerpt": "        let version = version.to_string();\n        self.read_present(move |connection, _| log::record_entry(connection, &key, &version)).await\n    }"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "destructured or non-identifier parameter",
+        "right_fallback_reason": "destructured or non-identifier parameter",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "f2b10fc8fc031b53333b8662ddd43bed3d99d992",
+      "subject": "fix(pnpr): read primary on embedded-replica archive and version misses (#17938)",
+      "changed": {
+        "path": "pnpr/crates/storage/src/metadata/sql.rs",
+        "symbol": "SqlMetadata::release_record_entry#1",
+        "line": 396,
+        "end_line": 412
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/storage/src/metadata/sql.rs",
+        "symbol": "SqlMetadata::release_record_entry#1",
+        "line": 398,
+        "end_line": 411
+      },
+      "survivor": {
+        "path": "pnpr/crates/storage/src/metadata/sql.rs",
+        "symbol": "SqlMetadata::initial_publication#1",
+        "line": 358,
+        "end_line": 374
+      },
+      "similarity": 0.9639,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "replace",
+          "old_line": 408,
+          "new_line": 410,
+          "survivor_line": 370,
+          "removed_tokens": [
+            "read"
+          ],
+          "added_tokens": [
+            "read_present"
+          ],
+          "old_excerpt": "        let version = version.to_string();\n        self.read(org.to_string(), Freshness::Bounded, move |connection, _| {\n            log::record_entry(connection, &key, &version)",
+          "new_excerpt": "        let version = version.to_string();\n        self.read_present(move |connection, _| log::record_entry(connection, &key, &version)).await\n    }"
+        },
+        {
+          "operation": "delete",
+          "old_line": 410,
+          "new_line": 410,
+          "survivor_line": 372,
+          "removed_tokens": [
+            "}"
+          ],
+          "added_tokens": [],
+          "old_excerpt": "            log::record_entry(connection, &key, &version)\n        })\n        .await",
+          "new_excerpt": "        let version = version.to_string();\n        self.read_present(move |connection, _| log::record_entry(connection, &key, &version)).await\n    }"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "destructured or non-identifier parameter",
+        "right_fallback_reason": "destructured or non-identifier parameter",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "009dd02062206a594f1278ea36adb68c7a5d83f0",
+      "subject": "fix(pnpr): sweep abandoned publish staging files (#17937)",
+      "changed": {
+        "path": "pnpr/crates/storage/src/atomic_write.rs",
+        "symbol": "remove_if_present#1",
+        "line": 134,
+        "end_line": 140
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/storage/src/atomic_write.rs",
+        "symbol": "remove_if_present#1",
+        "line": 186,
+        "end_line": 195
+      },
+      "survivor": {
+        "path": "pnpr/crates/storage/src/local_store/hosted_backend.rs",
+        "symbol": "Store::remove_archive#1",
+        "line": 106,
+        "end_line": 112
+      },
+      "similarity": 0.9587,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "delete",
+          "old_line": 136,
+          "new_line": 188,
+          "survivor_line": 108,
+          "removed_tokens": [
+            "Ok",
+            "("
+          ],
+          "added_tokens": [],
+          "old_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),",
+          "new_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,"
+        },
+        {
+          "operation": "delete",
+          "old_line": 136,
+          "new_line": 188,
+          "survivor_line": 108,
+          "removed_tokens": [
+            ")"
+          ],
+          "added_tokens": [],
+          "old_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),",
+          "new_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,"
+        },
+        {
+          "operation": "delete",
+          "old_line": 137,
+          "new_line": 189,
+          "survivor_line": 109,
+          "removed_tokens": [
+            "Ok",
+            "("
+          ],
+          "added_tokens": [],
+          "old_excerpt": "        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),\n        Err(err) => Err(err.into()),",
+          "new_excerpt": "        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,\n        Err(err) => {"
+        },
+        {
+          "operation": "delete",
+          "old_line": 137,
+          "new_line": 189,
+          "survivor_line": 109,
+          "removed_tokens": [
+            ")"
+          ],
+          "added_tokens": [],
+          "old_excerpt": "        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),\n        Err(err) => Err(err.into()),",
+          "new_excerpt": "        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,\n        Err(err) => {"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: match_expression",
+        "right_fallback_reason": "unsupported binding context: match_expression",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "009dd02062206a594f1278ea36adb68c7a5d83f0",
+      "subject": "fix(pnpr): sweep abandoned publish staging files (#17937)",
+      "changed": {
+        "path": "pnpr/crates/storage/src/atomic_write.rs",
+        "symbol": "remove_if_present#1",
+        "line": 134,
+        "end_line": 140
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/storage/src/atomic_write.rs",
+        "symbol": "remove_if_present#1",
+        "line": 186,
+        "end_line": 195
+      },
+      "survivor": {
+        "path": "pnpr/crates/storage/src/local_store.rs",
+        "symbol": "Store::remove_blob#1",
+        "line": 176,
+        "end_line": 186
+      },
+      "similarity": 0.9431,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "delete",
+          "old_line": 136,
+          "new_line": 188,
+          "survivor_line": 182,
+          "removed_tokens": [
+            "Ok",
+            "("
+          ],
+          "added_tokens": [],
+          "old_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),",
+          "new_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,"
+        },
+        {
+          "operation": "delete",
+          "old_line": 136,
+          "new_line": 188,
+          "survivor_line": 182,
+          "removed_tokens": [
+            ")"
+          ],
+          "added_tokens": [],
+          "old_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),",
+          "new_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,"
+        },
+        {
+          "operation": "delete",
+          "old_line": 137,
+          "new_line": 189,
+          "survivor_line": 183,
+          "removed_tokens": [
+            "Ok",
+            "("
+          ],
+          "added_tokens": [],
+          "old_excerpt": "        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),\n        Err(err) => Err(err.into()),",
+          "new_excerpt": "        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,\n        Err(err) => {"
+        },
+        {
+          "operation": "delete",
+          "old_line": 137,
+          "new_line": 189,
+          "survivor_line": 183,
+          "removed_tokens": [
+            ")"
+          ],
+          "added_tokens": [],
+          "old_excerpt": "        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),\n        Err(err) => Err(err.into()),",
+          "new_excerpt": "        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,\n        Err(err) => {"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: match_expression",
+        "right_fallback_reason": "unsupported binding context: match_expression",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "009dd02062206a594f1278ea36adb68c7a5d83f0",
+      "subject": "fix(pnpr): sweep abandoned publish staging files (#17937)",
+      "changed": {
+        "path": "pnpr/crates/storage/src/atomic_write.rs",
+        "symbol": "remove_if_present#1",
+        "line": 134,
+        "end_line": 140
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/storage/src/atomic_write.rs",
+        "symbol": "remove_if_present#1",
+        "line": 186,
+        "end_line": 195
+      },
+      "survivor": {
+        "path": "pnpr/crates/storage/src/local_store.rs",
+        "symbol": "Store::remove_package#1",
+        "line": 163,
+        "end_line": 170
+      },
+      "similarity": 0.8976,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "delete",
+          "old_line": 136,
+          "new_line": 188,
+          "survivor_line": 166,
+          "removed_tokens": [
+            "Ok",
+            "("
+          ],
+          "added_tokens": [],
+          "old_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),",
+          "new_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,"
+        },
+        {
+          "operation": "delete",
+          "old_line": 136,
+          "new_line": 188,
+          "survivor_line": 166,
+          "removed_tokens": [
+            ")"
+          ],
+          "added_tokens": [],
+          "old_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),",
+          "new_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,"
+        },
+        {
+          "operation": "delete",
+          "old_line": 137,
+          "new_line": 189,
+          "survivor_line": 167,
+          "removed_tokens": [
+            "Ok",
+            "("
+          ],
+          "added_tokens": [],
+          "old_excerpt": "        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),\n        Err(err) => Err(err.into()),",
+          "new_excerpt": "        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,\n        Err(err) => {"
+        },
+        {
+          "operation": "delete",
+          "old_line": 137,
+          "new_line": 189,
+          "survivor_line": 167,
+          "removed_tokens": [
+            ")"
+          ],
+          "added_tokens": [],
+          "old_excerpt": "        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),\n        Err(err) => Err(err.into()),",
+          "new_excerpt": "        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,\n        Err(err) => {"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: match_expression",
+        "right_fallback_reason": "unsupported binding context: match_expression",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "009dd02062206a594f1278ea36adb68c7a5d83f0",
+      "subject": "fix(pnpr): sweep abandoned publish staging files (#17937)",
+      "changed": {
+        "path": "pnpr/crates/storage/src/atomic_write.rs",
+        "symbol": "remove_if_present#1",
+        "line": 134,
+        "end_line": 140
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/storage/src/atomic_write.rs",
+        "symbol": "remove_if_present#1",
+        "line": 186,
+        "end_line": 195
+      },
+      "survivor": {
+        "path": "pnpr/crates/storage/src/local_store.rs",
+        "symbol": "Store::remove_record#1",
+        "line": 279,
+        "end_line": 286
+      },
+      "similarity": 0.8529,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "delete",
+          "old_line": 136,
+          "new_line": 188,
+          "survivor_line": 282,
+          "removed_tokens": [
+            "Ok",
+            "("
+          ],
+          "added_tokens": [],
+          "old_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),",
+          "new_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,"
+        },
+        {
+          "operation": "delete",
+          "old_line": 136,
+          "new_line": 188,
+          "survivor_line": 282,
+          "removed_tokens": [
+            ")"
+          ],
+          "added_tokens": [],
+          "old_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),",
+          "new_excerpt": "    match fs::remove_file(path).await {\n        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,"
+        },
+        {
+          "operation": "delete",
+          "old_line": 137,
+          "new_line": 189,
+          "survivor_line": 283,
+          "removed_tokens": [
+            "Ok",
+            "("
+          ],
+          "added_tokens": [],
+          "old_excerpt": "        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),\n        Err(err) => Err(err.into()),",
+          "new_excerpt": "        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,\n        Err(err) => {"
+        },
+        {
+          "operation": "delete",
+          "old_line": 137,
+          "new_line": 189,
+          "survivor_line": 283,
+          "removed_tokens": [
+            ")"
+          ],
+          "added_tokens": [],
+          "old_excerpt": "        Ok(()) => Ok(true),\n        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),\n        Err(err) => Err(err.into()),",
+          "new_excerpt": "        Ok(()) => true,\n        Err(err) if err.kind() == ErrorKind::NotFound => false,\n        Err(err) => {"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: match_expression",
+        "right_fallback_reason": "unsupported binding context: match_expression",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "dce692e95f1b9a81606cf91cc6e630198e72b09f",
+      "subject": "fix(gvs): build global virtual store slots without locks (#17905)",
+      "changed": {
+        "path": "pnpm11/installing/deps-restorer/src/linkAllPkgs.ts",
+        "symbol": "findSideEffectsCacheKey#1",
+        "line": 135,
+        "end_line": 164
+      },
+      "changed_at_fix": {
+        "path": "pnpm11/installing/deps-restorer/src/linkAllPkgs.ts",
+        "symbol": "findSideEffectsCacheKey#1",
+        "line": 131,
+        "end_line": 161
+      },
+      "survivor": {
+        "path": "pnpm11/installing/deps-restorer/src/linkHoistedModules.ts",
+        "symbol": "pickSideEffectsCacheKey#1",
+        "line": 407,
+        "end_line": 435
+      },
+      "similarity": 0.9284,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 151,
+          "new_line": 148,
+          "survivor_line": 422,
+          "removed_tokens": [],
+          "added_tokens": [
+            "!=",
+            "null"
+          ],
+          "old_excerpt": "  if (remoteCacheKey != null) return remoteCacheKey\n  const hasLocalSideEffects = opts.sideEffectsCacheRead && filesResponse.sideEffectsMaps && !isEmpty(filesResponse.sideEffectsMaps)\n  if (!hasLocalSideEffects || opts.allowBuild?.(depNode.depPath) !== true) return remoteCacheKey",
+          "new_excerpt": "  const hasLocalSideEffects = opts.sideEffectsCacheRead &&\n    ((filesResponse.sideEffectsMaps != null && !isEmpty(filesResponse.sideEffectsMaps)) || filesResponse.emptySideEffects != null)\n  if (!hasLocalSideEffects || opts.allowBuild?.(depNode.depPath) !== true) return remoteCacheKey"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "destructured or non-identifier parameter",
+        "right_fallback_reason": "destructured or non-identifier parameter",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "9e44e8773545f80137f426f68a32376cadecbda1",
+      "subject": "fix(pnpr): correct SQL deadlines and MySQL compatibility (#17877)",
+      "changed": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/mysql.rs",
+        "symbol": "MysqlDatabase::list_accounts#1",
+        "line": 88,
+        "end_line": 97
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/mysql.rs",
+        "symbol": "MysqlDatabase::list_accounts#1",
+        "line": 98,
+        "end_line": 112
+      },
+      "survivor": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/postgres.rs",
+        "symbol": "PostgresDatabase::list_accounts#1",
+        "line": 119,
+        "end_line": 128
+      },
+      "similarity": 0.9324,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 95,
+          "new_line": 105,
+          "survivor_line": 126,
+          "removed_tokens": [],
+          "added_tokens": [
+            "{"
+          ],
+          "old_excerpt": "        rows.into_iter()\n            .map(|row| Ok(crate::UserAccount { id: row.try_get(0)?, username: row.try_get(1)? }))\n            .collect()",
+          "new_excerpt": "        rows.into_iter()\n            .map(|row| {\n                Ok(crate::UserAccount {"
+        },
+        {
+          "operation": "insert",
+          "old_line": 95,
+          "new_line": 108,
+          "survivor_line": 126,
+          "removed_tokens": [],
+          "added_tokens": [
+            "username_from_row",
+            "(",
+            "&"
+          ],
+          "old_excerpt": "        rows.into_iter()\n            .map(|row| Ok(crate::UserAccount { id: row.try_get(0)?, username: row.try_get(1)? }))\n            .collect()",
+          "new_excerpt": "                    id: row.try_get(0)?,\n                    username: username_from_row(&row, 1)?,\n                })"
+        },
+        {
+          "operation": "replace",
+          "old_line": 95,
+          "new_line": 108,
+          "survivor_line": 126,
+          "removed_tokens": [
+            ".",
+            "try_get",
+            "("
+          ],
+          "added_tokens": [
+            ","
+          ],
+          "old_excerpt": "        rows.into_iter()\n            .map(|row| Ok(crate::UserAccount { id: row.try_get(0)?, username: row.try_get(1)? }))\n            .collect()",
+          "new_excerpt": "                    id: row.try_get(0)?,\n                    username: username_from_row(&row, 1)?,\n                })"
+        },
+        {
+          "operation": "insert",
+          "old_line": 95,
+          "new_line": 108,
+          "survivor_line": 126,
+          "removed_tokens": [],
+          "added_tokens": [
+            ","
+          ],
+          "old_excerpt": "        rows.into_iter()\n            .map(|row| Ok(crate::UserAccount { id: row.try_get(0)?, username: row.try_get(1)? }))\n            .collect()",
+          "new_excerpt": "                    id: row.try_get(0)?,\n                    username: username_from_row(&row, 1)?,\n                })"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_complete_body"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "9e44e8773545f80137f426f68a32376cadecbda1",
+      "subject": "fix(pnpr): correct SQL deadlines and MySQL compatibility (#17877)",
+      "changed": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/mysql.rs",
+        "symbol": "MysqlDatabase::list_accounts#1",
+        "line": 88,
+        "end_line": 97
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/mysql.rs",
+        "symbol": "MysqlDatabase::list_accounts#1",
+        "line": 98,
+        "end_line": 112
+      },
+      "survivor": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/postgres/accounts.rs",
+        "symbol": "PostgresDatabase::accounts_by_id_impl#1",
+        "line": 146,
+        "end_line": 159
+      },
+      "similarity": 0.902,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 95,
+          "new_line": 105,
+          "survivor_line": 157,
+          "removed_tokens": [],
+          "added_tokens": [
+            "{"
+          ],
+          "old_excerpt": "        rows.into_iter()\n            .map(|row| Ok(crate::UserAccount { id: row.try_get(0)?, username: row.try_get(1)? }))\n            .collect()",
+          "new_excerpt": "        rows.into_iter()\n            .map(|row| {\n                Ok(crate::UserAccount {"
+        },
+        {
+          "operation": "insert",
+          "old_line": 95,
+          "new_line": 108,
+          "survivor_line": 157,
+          "removed_tokens": [],
+          "added_tokens": [
+            "username_from_row",
+            "(",
+            "&"
+          ],
+          "old_excerpt": "        rows.into_iter()\n            .map(|row| Ok(crate::UserAccount { id: row.try_get(0)?, username: row.try_get(1)? }))\n            .collect()",
+          "new_excerpt": "                    id: row.try_get(0)?,\n                    username: username_from_row(&row, 1)?,\n                })"
+        },
+        {
+          "operation": "replace",
+          "old_line": 95,
+          "new_line": 108,
+          "survivor_line": 157,
+          "removed_tokens": [
+            ".",
+            "try_get",
+            "("
+          ],
+          "added_tokens": [
+            ","
+          ],
+          "old_excerpt": "        rows.into_iter()\n            .map(|row| Ok(crate::UserAccount { id: row.try_get(0)?, username: row.try_get(1)? }))\n            .collect()",
+          "new_excerpt": "                    id: row.try_get(0)?,\n                    username: username_from_row(&row, 1)?,\n                })"
+        },
+        {
+          "operation": "insert",
+          "old_line": 95,
+          "new_line": 108,
+          "survivor_line": 157,
+          "removed_tokens": [],
+          "added_tokens": [
+            ","
+          ],
+          "old_excerpt": "        rows.into_iter()\n            .map(|row| Ok(crate::UserAccount { id: row.try_get(0)?, username: row.try_get(1)? }))\n            .collect()",
+          "new_excerpt": "                    id: row.try_get(0)?,\n                    username: username_from_row(&row, 1)?,\n                })"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "9e44e8773545f80137f426f68a32376cadecbda1",
+      "subject": "fix(pnpr): correct SQL deadlines and MySQL compatibility (#17877)",
+      "changed": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/mysql/tokens.rs",
+        "symbol": "MysqlDatabase::find_owned_token_impl#1",
+        "line": 57,
+        "end_line": 73
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/mysql/tokens.rs",
+        "symbol": "MysqlDatabase::find_owned_token_impl#1",
+        "line": 57,
+        "end_line": 73
+      },
+      "survivor": {
+        "path": "pnpr/crates/auth/src/sqlx_backend/postgres/tokens.rs",
+        "symbol": "PostgresDatabase::find_owned_token_impl#1",
+        "line": 56,
+        "end_line": 72
+      },
+      "similarity": 0.9231,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 70,
+          "new_line": 70,
+          "survivor_line": 69,
+          "removed_tokens": [],
+          "added_tokens": [
+            "username_from_row",
+            "(",
+            "&"
+          ],
+          "old_excerpt": "            Ok(token_record_from_row(&row, token_hash)?\n                .with_owner_name(row.try_get::<String, _>(9)?))\n        })",
+          "new_excerpt": "            Ok(token_record_from_row(&row, token_hash)?\n                .with_owner_name(username_from_row(&row, 9)?))\n        })"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_complete_body"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "24ff92a4f27ec173edfdcfe00c949fe0f16883b5",
+      "subject": "fix: send npm-command on the registry writes that accept an OTP (#17843)",
+      "changed": {
+        "path": "pnpm/crates/cli/src/cli_args/token/registry.rs",
+        "symbol": "create_token#1",
+        "line": 185,
+        "end_line": 224
+      },
+      "changed_at_fix": {
+        "path": "pnpm/crates/cli/src/cli_args/token/registry.rs",
+        "symbol": "create_token#1",
+        "line": 189,
+        "end_line": 234
+      },
+      "survivor": {
+        "path": "pnpm/crates/cli/src/cli_args/token/registry.rs",
+        "symbol": "fetch_token_list_page#1",
+        "line": 118,
+        "end_line": 150
+      },
+      "similarity": 0.8777,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 199,
+          "new_line": 208,
+          "survivor_line": 125,
+          "removed_tokens": [],
+          "added_tokens": [
+            ","
+          ],
+          "old_excerpt": "    let (_client, response) = send_with_retry(http_client, &endpoint, single_attempt, |cli| {\n        apply_auth_and_otp(cli.post(&endpoint).json(request), Some(auth_header), otp)\n    })",
+          "new_excerpt": "            Some(auth_header),\n            otp,\n        )"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: macro_invocation",
+        "right_fallback_reason": "destructured Rust let",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "bbae0b99fe9dbd617869b9c948c3cae26614b6aa",
+      "subject": "fix(pnpr): bind authorization to immutable account and team IDs (#17824)",
+      "changed": {
+        "path": "pnpr/crates/auth/src/libsql_backend.rs",
+        "symbol": "LibsqlAuth::stored_hash#1",
+        "line": 147,
+        "end_line": 155
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/auth/src/libsql_backend.rs",
+        "symbol": "LibsqlAuth::stored_hash#1",
+        "line": 148,
+        "end_line": 158
+      },
+      "survivor": {
+        "path": "pnpr/crates/auth/src/libsql_backend/accounts.rs",
+        "symbol": "LibsqlAuth::account_name_by_id#1",
+        "line": 94,
+        "end_line": 104
+      },
+      "similarity": 0.9764,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 152,
+          "new_line": 155,
+          "survivor_line": 101,
+          "removed_tokens": [],
+          "added_tokens": [
+            "("
+          ],
+          "old_excerpt": "                    .await?;\n            first_row(rows, |row| Ok(row.get::<String>(0)?)).await\n        })",
+          "new_excerpt": "            .await?;\n            first_row(rows, |row| Ok((row.get::<String>(0)?, row.get::<String>(1)?))).await\n        })"
+        },
+        {
+          "operation": "insert",
+          "old_line": 152,
+          "new_line": 155,
+          "survivor_line": 101,
+          "removed_tokens": [],
+          "added_tokens": [
+            ",",
+            "$id",
+            ".",
+            "get",
+            "::",
+            "<",
+            "String",
+            ">",
+            "(",
+            "1",
+            ")",
+            "?",
+            ")"
+          ],
+          "old_excerpt": "                    .await?;\n            first_row(rows, |row| Ok(row.get::<String>(0)?)).await\n        })",
+          "new_excerpt": "            .await?;\n            first_row(rows, |row| Ok((row.get::<String>(0)?, row.get::<String>(1)?))).await\n        })"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: macro_invocation",
+        "right_fallback_reason": "unsupported binding context: macro_invocation",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    },
+    {
+      "check": "missed_clone_fix",
+      "commit": "bbae0b99fe9dbd617869b9c948c3cae26614b6aa",
+      "subject": "fix(pnpr): bind authorization to immutable account and team IDs (#17824)",
+      "changed": {
+        "path": "pnpr/crates/auth/src/libsql_backend.rs",
+        "symbol": "LibsqlAuth::stored_hash#1",
+        "line": 147,
+        "end_line": 155
+      },
+      "changed_at_fix": {
+        "path": "pnpr/crates/auth/src/libsql_backend.rs",
+        "symbol": "LibsqlAuth::stored_hash#1",
+        "line": 148,
+        "end_line": 158
+      },
+      "survivor": {
+        "path": "pnpr/crates/auth/src/libsql_backend/accounts.rs",
+        "symbol": "LibsqlAuth::active_account_name_by_id#1",
+        "line": 106,
+        "end_line": 116
+      },
+      "similarity": 0.9764,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 152,
+          "new_line": 155,
+          "survivor_line": 113,
+          "removed_tokens": [],
+          "added_tokens": [
+            "("
+          ],
+          "old_excerpt": "                    .await?;\n            first_row(rows, |row| Ok(row.get::<String>(0)?)).await\n        })",
+          "new_excerpt": "            .await?;\n            first_row(rows, |row| Ok((row.get::<String>(0)?, row.get::<String>(1)?))).await\n        })"
+        },
+        {
+          "operation": "insert",
+          "old_line": 152,
+          "new_line": 155,
+          "survivor_line": 113,
+          "removed_tokens": [],
+          "added_tokens": [
+            ",",
+            "$id",
+            ".",
+            "get",
+            "::",
+            "<",
+            "String",
+            ">",
+            "(",
+            "1",
+            ")",
+            "?",
+            ")"
+          ],
+          "old_excerpt": "                    .await?;\n            first_row(rows, |row| Ok(row.get::<String>(0)?)).await\n        })",
+          "new_excerpt": "            .await?;\n            first_row(rows, |row| Ok((row.get::<String>(0)?, row.get::<String>(1)?))).await\n        })"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: macro_invocation",
+        "right_fallback_reason": "unsupported binding context: macro_invocation",
+        "decision": "rejected",
+        "reason": "different_function_signature"
+      }
+    }
+  ],
+  "source_files": 4827,
+  "function_bodies": 33953,
+  "history_commits": 200,
+  "fix_labelled_commits": 140,
+  "changed_functions_compared": 1638,
+  "missing_history_parents": 0,
+  "parse_error_files": [
+    "pnpm/crates/install-coordinator/src/metadata_file.rs",
+    "pnpm11/installing/deps-resolver/src/resolveDependencies.ts"
+  ],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

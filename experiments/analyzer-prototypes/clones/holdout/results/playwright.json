@@ -1,0 +1,137 @@
+{
+  "repo": "playwright",
+  "root": "/private/tmp/scry-clone-holdout/playwright",
+  "revision": "8534271f0413bae6a455b7cf43b2637391bc614b",
+  "matching": "exact",
+  "broad_candidates": 1,
+  "rejected_candidates": [],
+  "source_files": 717,
+  "function_bodies": 8334,
+  "history_commits": 200,
+  "fix_labelled_commits": 81,
+  "changed_functions_compared": 135,
+  "missing_history_parents": 0,
+  "parse_error_files": [
+    "packages/isomorphic/trace/trace.ts"
+  ],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [
+    {
+      "check": "missed_clone_fix",
+      "commit": "bac1f9f67e9cff2a8e7ecbac25d56ec3bb1d15c6",
+      "subject": "fix(chromium): pass deep evaluation arguments outside protocol JSON (#44069)",
+      "changed": {
+        "path": "packages/playwright-core/src/server/webkit/wkExecutionContext.ts",
+        "symbol": "WKExecutionContext::evaluateWithArguments#1",
+        "line": 66,
+        "end_line": 88
+      },
+      "changed_at_fix": {
+        "path": "packages/playwright-core/src/server/webkit/wkExecutionContext.ts",
+        "symbol": "WKExecutionContext::evaluateWithArguments#1",
+        "line": 66,
+        "end_line": 89
+      },
+      "survivor": {
+        "path": "packages/playwright-core/src/server/webkit/webview/wvExecutionContext.ts",
+        "symbol": "WVExecutionContext::evaluateWithArguments#1",
+        "line": 66,
+        "end_line": 88
+      },
+      "similarity": 1.0,
+      "normalized_exact": true,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 68,
+          "new_line": 69,
+          "survivor_line": 68,
+          "removed_tokens": [],
+          "added_tokens": [
+            "const",
+            "$id",
+            "=",
+            "$id",
+            ".",
+            "map",
+            "(",
+            "$id",
+            "=>",
+            "$id",
+            ".",
+            "stringify",
+            "(",
+            "$id",
+            ")",
+            "??",
+            "'",
+            "undefined",
+            "'",
+            ")",
+            ".",
+            "join",
+            "(",
+            "'",
+            ",",
+            "'",
+            ")",
+            ";"
+          ],
+          "old_excerpt": "    try {\n      const response = await this._session.send('Runtime.callFunctionOn', {\n        functionDeclaration: expression,",
+          "new_excerpt": "      // Keep serialized values out of the protocol arguments to avoid WebKit's JSON depth limit.\n      const serializedValues = values.map(value => JSON.stringify(value) ?? 'undefined').join(',');\n      const response = await this._session.send('Runtime.callFunctionOn', {"
+        },
+        {
+          "operation": "insert",
+          "old_line": 69,
+          "new_line": 71,
+          "survivor_line": 69,
+          "removed_tokens": [],
+          "added_tokens": [
+            "`",
+            "(utilityScript, ...handles) => (",
+            "${"
+          ],
+          "old_excerpt": "      const response = await this._session.send('Runtime.callFunctionOn', {\n        functionDeclaration: expression,\n        objectId: utilityScript._objectId!,",
+          "new_excerpt": "      const response = await this._session.send('Runtime.callFunctionOn', {\n        functionDeclaration: `(utilityScript, ...handles) => (${expression})(utilityScript, ...[${serializedValues}], ...handles)`,\n        objectId: utilityScript._objectId!,"
+        },
+        {
+          "operation": "insert",
+          "old_line": 69,
+          "new_line": 71,
+          "survivor_line": 69,
+          "removed_tokens": [],
+          "added_tokens": [
+            "}",
+            ")(utilityScript, ...[",
+            "${",
+            "$id",
+            "}",
+            "], ...handles)",
+            "`"
+          ],
+          "old_excerpt": "      const response = await this._session.send('Runtime.callFunctionOn', {\n        functionDeclaration: expression,\n        objectId: utilityScript._objectId!,",
+          "new_excerpt": "      const response = await this._session.send('Runtime.callFunctionOn', {\n        functionDeclaration: `(utilityScript, ...handles) => (${expression})(utilityScript, ...[${serializedValues}], ...handles)`,\n        objectId: utilityScript._objectId!,"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "literal_identifiers",
+        "right_mode": "literal_identifiers",
+        "left_fallback_reason": "unsupported binding context: catch_clause",
+        "right_fallback_reason": "unsupported binding context: catch_clause",
+        "decision": "accepted",
+        "reason": "same_complete_pre_fix_structure"
+      }
+    }
+  ],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

@@ -1,0 +1,210 @@
+{
+  "detector_sha256_before": {
+    "probe.py": "2ba87ddaf9f90e456aee0fd8ce44ef15855018c486ea5394561631f9d796fdac",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8"
+  },
+  "detector_sha256_after": {
+    "probe.py": "2ba87ddaf9f90e456aee0fd8ce44ef15855018c486ea5394561631f9d796fdac",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8"
+  },
+  "parameters": {
+    "matching": "exact",
+    "commits": 200,
+    "similarity": 0.85
+  },
+  "python": "3.15.2 (main, Oct 25 2026, 16:57:51) [Clang 21.0.0 (clang-2100.3.34.2)]",
+  "commands": [
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/bat",
+      "--matching",
+      "exact",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/clap",
+      "--matching",
+      "exact",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/playwright",
+      "--matching",
+      "exact",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/pnpm",
+      "--matching",
+      "exact",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/query",
+      "--matching",
+      "exact",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/ruff",
+      "--matching",
+      "exact",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/starship",
+      "--matching",
+      "exact",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/tokio",
+      "--matching",
+      "exact",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/vitest",
+      "--matching",
+      "exact",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ],
+    [
+      "/private/tmp/scry-analyzer-venv/bin/python",
+      "/Users/telkins/dev/scry/experiments/analyzer-prototypes/clones/probe.py",
+      "/private/tmp/scry-clone-holdout/vue-core",
+      "--matching",
+      "exact",
+      "--commits",
+      "200",
+      "--similarity",
+      "0.85"
+    ]
+  ],
+  "reports": [
+    {
+      "repo": "bat",
+      "revision": "8cf33bdde9a6e4c11d0f866415b1fc867df0cd40",
+      "findings": 0,
+      "rejected": 0,
+      "source_files": 45,
+      "history_commits": 200
+    },
+    {
+      "repo": "clap",
+      "revision": "ec93e71255c0b833a34f50662a3fdb22f53f6ded",
+      "findings": 0,
+      "rejected": 0,
+      "source_files": 124,
+      "history_commits": 200
+    },
+    {
+      "repo": "playwright",
+      "revision": "8534271f0413bae6a455b7cf43b2637391bc614b",
+      "findings": 1,
+      "rejected": 0,
+      "source_files": 717,
+      "history_commits": 200
+    },
+    {
+      "repo": "pnpm",
+      "revision": "63765162e6346aa5a667be9c1b5ef61103f1c58a",
+      "findings": 0,
+      "rejected": 16,
+      "source_files": 4827,
+      "history_commits": 200
+    },
+    {
+      "repo": "query",
+      "revision": "19f555cf919a1438885d7d20c95b17b26d6d6859",
+      "findings": 0,
+      "rejected": 0,
+      "source_files": 479,
+      "history_commits": 200
+    },
+    {
+      "repo": "ruff",
+      "revision": "124210f4fde57836a8d8270fdcfb10ae3dacab31",
+      "findings": 0,
+      "rejected": 0,
+      "source_files": 1908,
+      "history_commits": 200
+    },
+    {
+      "repo": "starship",
+      "revision": "e3b64da0b660552377de8f7101a73a36b145791c",
+      "findings": 0,
+      "rejected": 0,
+      "source_files": 255,
+      "history_commits": 200
+    },
+    {
+      "repo": "tokio",
+      "revision": "ab0814fc8c62b3d8be40aad068e2fed6562cfeb0",
+      "findings": 0,
+      "rejected": 0,
+      "source_files": 487,
+      "history_commits": 200
+    },
+    {
+      "repo": "vitest",
+      "revision": "47c87ebb5025010141cf8aa5dc69c5b57c10d2fa",
+      "findings": 0,
+      "rejected": 1,
+      "source_files": 546,
+      "history_commits": 200
+    },
+    {
+      "repo": "vue-core",
+      "revision": "21738b527bac4a91eef9cbdfc2cc5ac1f3dbdec9",
+      "findings": 0,
+      "rejected": 0,
+      "source_files": 273,
+      "history_commits": 200
+    }
+  ]
+}

@@ -1,0 +1,100 @@
+{
+  "status": "passed",
+  "detector_sha256": {
+    "probe.py": "2ba87ddaf9f90e456aee0fd8ce44ef15855018c486ea5394561631f9d796fdac",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8"
+  },
+  "parameters": {
+    "matching": "exact",
+    "commits": 200,
+    "similarity": 0.85
+  },
+  "repositories_verified": 10,
+  "all_pinned_checkouts_clean": true,
+  "detector_matches_frozen_git_revision": true,
+  "prior_clone_artifacts_unchanged": true,
+  "dependencies": {
+    "tree-sitter": "0.26.1",
+    "tree-sitter-rust": "0.24.2",
+    "tree-sitter-typescript": "0.23.2"
+  },
+  "totals": {
+    "source_files": 9661,
+    "function_bodies": 77052,
+    "history_commits": 2000,
+    "fix_labelled_commits": 643,
+    "changed_functions_compared": 2156,
+    "missing_history_parents": 0,
+    "candidates_omitted_by_per_function_cap": 0,
+    "broad_candidates": 18,
+    "emitted_candidates": 1,
+    "rejected_candidates": 17,
+    "head_files_with_parse_errors": 10
+  },
+  "eligible_files_by_language": [
+    {
+      "repo": "tokio",
+      "rust": 487,
+      "typescript": 0
+    },
+    {
+      "repo": "clap",
+      "rust": 124,
+      "typescript": 0
+    },
+    {
+      "repo": "ruff",
+      "rust": 1908,
+      "typescript": 0
+    },
+    {
+      "repo": "starship",
+      "rust": 255,
+      "typescript": 0
+    },
+    {
+      "repo": "bat",
+      "rust": 45,
+      "typescript": 0
+    },
+    {
+      "repo": "pnpm",
+      "rust": 3491,
+      "typescript": 1336
+    },
+    {
+      "repo": "query",
+      "rust": 0,
+      "typescript": 479
+    },
+    {
+      "repo": "playwright",
+      "rust": 0,
+      "typescript": 717
+    },
+    {
+      "repo": "vitest",
+      "rust": 0,
+      "typescript": 546
+    },
+    {
+      "repo": "vue-core",
+      "rust": 0,
+      "typescript": 273
+    }
+  ],
+  "emitted_audit": {
+    "useful_review": 1,
+    "false_positive": 0,
+    "unresolved": 0,
+    "runtime_confirmed": 0
+  },
+  "selected_rejected_audit": {
+    "reviewed": 7,
+    "false_positive_avoided": 6,
+    "useful_review_suppressed": 1,
+    "unresolved": 0,
+    "not_manually_classified": 10
+  },
+  "validation": "All ten real CLI scans completed; manifest, source hashes, parameters, coverage counters, parser versions, and audit identities reconciled. Corpus code/tests were not executed; detector implementation was not changed."
+}

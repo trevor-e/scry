@@ -1,0 +1,104 @@
+{
+  "repo": "playwright",
+  "revision": "8534271f0413bae6a455b7cf43b2637391bc614b",
+  "fix_commit": "bac1f9f67e9cff2a8e7ecbac25d56ec3bb1d15c6",
+  "finding": {
+    "path": "packages/playwright-core/src/server/webkit/webview/wvExecutionContext.ts",
+    "symbol": "WVExecutionContext::evaluateWithArguments#1",
+    "line": 66,
+    "end_line": 88
+  },
+  "classification": "useful_review",
+  "title": "WebView evaluation retains nested protocol arguments after the other backends moved them into function source",
+  "confidence": "Source-supported missing-propagation lead; runtime impact not reproduced",
+  "summary": "The complete surviving WebView method is textually identical to the WebKit method before the fix. The fix explicitly avoids WebKit protocol JSON depth limits by moving serialized values into functionDeclaration, while the survivor still sends every value as nested JSON under arguments. The survivor is used by the active stock-WebKit/Mobile-Safari backend and receives the same shared evaluation serializer output, so this is a concrete review target rather than an incidental name match.",
+  "exact_textual_equality_verified": true,
+  "evidence": [
+    {
+      "path": "packages/playwright-core/src/server/webkit/webview/wvExecutionContext.ts",
+      "line": 66,
+      "end_line": 88,
+      "description": "Survivor still sends values.map(value => ({ value })) in Runtime.callFunctionOn.arguments at line 73.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/packages/playwright-core/src/server/webkit/webview/wvExecutionContext.ts#L66-L88"
+    },
+    {
+      "path": "packages/playwright-core/src/server/webkit/wkExecutionContext.ts",
+      "line": 66,
+      "end_line": 89,
+      "description": "Fixed counterpart states the WebKit JSON-depth rationale and moves serialized values into functionDeclaration; only handles remain in protocol arguments.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/packages/playwright-core/src/server/webkit/wkExecutionContext.ts#L66-L89"
+    },
+    {
+      "path": "packages/playwright-core/src/server/javascript.ts",
+      "line": 257,
+      "end_line": 294,
+      "description": "Common evaluateExpression serializes arguments, builds utilityScriptValues and calls the context delegate; no WebView-specific flattening or depth guard here.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/packages/playwright-core/src/server/javascript.ts#L257-L294"
+    },
+    {
+      "path": "packages/playwright-core/src/server/javascript.ts",
+      "line": 88,
+      "end_line": 91,
+      "description": "Shared ExecutionContext forwards evaluation values to its delegate.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/packages/playwright-core/src/server/javascript.ts#L88-L91"
+    },
+    {
+      "path": "packages/playwright-core/src/server/webkit/webview/wvPage.ts",
+      "line": 477,
+      "end_line": 488,
+      "description": "Live page execution contexts instantiate WVExecutionContext as their delegate.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/packages/playwright-core/src/server/webkit/webview/wvPage.ts#L477-L488"
+    },
+    {
+      "path": "packages/playwright-core/src/server/webkit/webkit.ts",
+      "line": 52,
+      "end_line": 54,
+      "description": "WebKit connectOverCDP routes through connectOverRDP.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/packages/playwright-core/src/server/webkit/webkit.ts#L52-L54"
+    },
+    {
+      "path": "packages/playwright-core/src/server/webkit/webview/wvBrowser.ts",
+      "line": 119,
+      "end_line": 121,
+      "description": "The WebView transport JSON-stringifies the entire protocol message; it does not move nested values out of protocol JSON.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/packages/playwright-core/src/server/webkit/webview/wvBrowser.ts#L119-L121"
+    },
+    {
+      "path": "packages/playwright-core/src/server/webkit/webview/wvBrowser.ts",
+      "line": 203,
+      "end_line": 211,
+      "description": "Backend attaches an RDP transport or Mobile Safari tabs.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/packages/playwright-core/src/server/webkit/webview/wvBrowser.ts#L203-L211"
+    },
+    {
+      "path": "tests/page/page-evaluate.spec.ts",
+      "line": 272,
+      "end_line": 290,
+      "description": "Fix includes an existing deep-argument regression scenario; source comment documents a WebKit protocol nesting limit. This test was read, not executed.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/tests/page/page-evaluate.spec.ts#L272-L290"
+    },
+    {
+      "path": "tests/webview/playwright.config.ts",
+      "line": 55,
+      "end_line": 63,
+      "description": "WebView test project includes the shared page test directory.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/tests/webview/playwright.config.ts#L55-L63"
+    },
+    {
+      "path": "tests/webview/webviewTest.ts",
+      "line": 161,
+      "end_line": 175,
+      "description": "WebView page fixture connects through playwright.webkit.connectOverCDP.",
+      "url": "https://github.com/microsoft/playwright/blob/8534271f0413bae6a455b7cf43b2637391bc614b/tests/webview/webviewTest.ts#L161-L175"
+    }
+  ],
+  "counterevidence_and_limits": [
+    "WK and WV have different session/protocol types and connect to different WebKit distributions. Identical methods alone cannot prove equal backend limits.",
+    "The checked repository does not contain the stock Mobile Safari JSON parser implementation or a runtime result for this regression; an unaffected parser version could make this a false positive.",
+    "The fix also updates Firefox for consistency, demonstrating that propagation can be desirable without proving every backend had the identical defect.",
+    "The shared WebView test configuration includes page-evaluate.spec.ts, and its expectations file has no EV-032 exclusion. This makes the existing test applicable in principle but does not prove it has run or failed on this backend.",
+    "No downloaded application code, target tests, builds, network backend, or runtime reproduction was executed."
+  ],
+  "follow_up": "Maintainer review should establish whether the existing EV-032 deep-argument regression succeeds on the supported stock-WebKit/Mobile-Safari backend before treating this as a confirmed defect.",
+  "detector_changes": false
+}

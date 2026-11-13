@@ -1,0 +1,112 @@
+[
+  {
+    "name": "tokio",
+    "origin": "https://github.com/tokio-rs/tokio.git",
+    "primary_language": "Rust",
+    "path": "/private/tmp/scry-clone-holdout/tokio",
+    "revision": "ab0814fc8c62b3d8be40aad068e2fed6562cfeb0",
+    "shallow": true,
+    "available_commits": 1613,
+    "rust_files": 816,
+    "typescript_files": 0
+  },
+  {
+    "name": "clap",
+    "origin": "https://github.com/clap-rs/clap.git",
+    "primary_language": "Rust",
+    "path": "/private/tmp/scry-clone-holdout/clap",
+    "revision": "ec93e71255c0b833a34f50662a3fdb22f53f6ded",
+    "shallow": true,
+    "available_commits": 1103,
+    "rust_files": 337,
+    "typescript_files": 0
+  },
+  {
+    "name": "ruff",
+    "origin": "https://github.com/astral-sh/ruff.git",
+    "primary_language": "Rust",
+    "path": "/private/tmp/scry-clone-holdout/ruff",
+    "revision": "124210f4fde57836a8d8270fdcfb10ae3dacab31",
+    "shallow": true,
+    "available_commits": 300,
+    "rust_files": 2048,
+    "typescript_files": 49
+  },
+  {
+    "name": "starship",
+    "origin": "https://github.com/starship/starship.git",
+    "primary_language": "Rust",
+    "path": "/private/tmp/scry-clone-holdout/starship",
+    "revision": "e3b64da0b660552377de8f7101a73a36b145791c",
+    "shallow": true,
+    "available_commits": 300,
+    "rust_files": 257,
+    "typescript_files": 0
+  },
+  {
+    "name": "bat",
+    "origin": "https://github.com/sharkdp/bat.git",
+    "primary_language": "Rust",
+    "path": "/private/tmp/scry-clone-holdout/bat",
+    "revision": "8cf33bdde9a6e4c11d0f866415b1fc867df0cd40",
+    "shallow": true,
+    "available_commits": 1515,
+    "rust_files": 67,
+    "typescript_files": 4
+  },
+  {
+    "name": "pnpm",
+    "origin": "https://github.com/pnpm/pnpm.git",
+    "primary_language": "TypeScript",
+    "path": "/private/tmp/scry-clone-holdout/pnpm",
+    "revision": "63765162e6346aa5a667be9c1b5ef61103f1c58a",
+    "shallow": true,
+    "available_commits": 300,
+    "rust_files": 4618,
+    "typescript_files": 2271
+  },
+  {
+    "name": "query",
+    "origin": "https://github.com/TanStack/query.git",
+    "primary_language": "TypeScript",
+    "path": "/private/tmp/scry-clone-holdout/query",
+    "revision": "19f555cf919a1438885d7d20c95b17b26d6d6859",
+    "shallow": true,
+    "available_commits": 300,
+    "rust_files": 0,
+    "typescript_files": 2022
+  },
+  {
+    "name": "playwright",
+    "origin": "https://github.com/microsoft/playwright.git",
+    "primary_language": "TypeScript",
+    "path": "/private/tmp/scry-clone-holdout/playwright",
+    "revision": "8534271f0413bae6a455b7cf43b2637391bc614b",
+    "shallow": true,
+    "available_commits": 300,
+    "rust_files": 0,
+    "typescript_files": 1412
+  },
+  {
+    "name": "vitest",
+    "origin": "https://github.com/vitest-dev/vitest.git",
+    "primary_language": "TypeScript",
+    "path": "/private/tmp/scry-clone-holdout/vitest",
+    "revision": "47c87ebb5025010141cf8aa5dc69c5b57c10d2fa",
+    "shallow": true,
+    "available_commits": 300,
+    "rust_files": 0,
+    "typescript_files": 2211
+  },
+  {
+    "name": "vue-core",
+    "origin": "https://github.com/vuejs/core.git",
+    "primary_language": "TypeScript",
+    "path": "/private/tmp/scry-clone-holdout/vue-core",
+    "revision": "21738b527bac4a91eef9cbdfc2cc5ac1f3dbdec9",
+    "shallow": true,
+    "available_commits": 300,
+    "rust_files": 0,
+    "typescript_files": 491
+  }
+]

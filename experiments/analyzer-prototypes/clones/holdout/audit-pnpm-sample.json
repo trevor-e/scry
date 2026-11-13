@@ -1,0 +1,136 @@
+{
+  "repo": "pnpm",
+  "revision": "63765162e6346aa5a667be9c1b5ef61103f1c58a",
+  "audit_scope": "Post-hoc source review of rejected_candidates indices 0, 1, 2, and 9 only. These are not emitted detector findings and are not a recall estimate.",
+  "execution": "Read source and git history only; no corpus code, tests, builds, registry requests, or detector changes.",
+  "summary": {
+    "reviewed_rejections": 4,
+    "false_positive_avoided": 3,
+    "useful_review_suppressed": 1,
+    "unresolved": 0
+  },
+  "cases": [
+    {
+      "rejected_index": 0,
+      "commit": "df33506e7704b4e055923bf6df15749c4f8b1795",
+      "changed_symbol": "check_recorded_directory#1",
+      "survivor_symbol": "check_legacy_directory#1",
+      "judgment": "false_positive_avoided",
+      "reason": "The fix passes a PackageKey into the recorded-input checker to resolve peer ownership in new lockfiles. The surviving function is deliberately the compatibility path for old entries without specifiers; it calls a different child checker. Its source explicitly says it takes no new fixes and will be removed at the next lockfile major.",
+      "structural_rejection": "different_function_signature; destructured Rust parameter fallback keeps literal identifiers",
+      "evidence": [
+        {
+          "path": "pnpm/crates/package-manager/src/install/lockfile_freshness/directory_deps/package.rs",
+          "lines": "77-89",
+          "observation": "Dispatches entries with specifiers to check_recorded_directory and others to check_legacy_directory; the legacy-path comment states its maintenance policy."
+        },
+        {
+          "path": "pnpm/crates/package-manager/src/install/lockfile_freshness/directory_deps/recorded.rs",
+          "lines": "13-40",
+          "observation": "Requires PackageKey and calls check_recorded_local_targets with (snapshot, key)."
+        },
+        {
+          "path": "pnpm/crates/package-manager/src/install/lockfile_freshness/directory_deps/package.rs",
+          "lines": "110-118",
+          "observation": "Legacy path calls check_local_dep_children_freshness, then its own peer freshness check."
+        }
+      ]
+    },
+    {
+      "rejected_index": 1,
+      "commit": "f876766c67811c61bd6421dcf9f61481718cc72a",
+      "changed_symbol": "fetch_package_meta_once#1",
+      "survivor_symbol": "fetch_dist_tags_once#1",
+      "judgment": "false_positive_avoided",
+      "reason": "The fixed reader fetches a whole package document before mutation and requests its current revision. The surviving reader fetches a dist-tag map from a separate endpoint. Tag mutations use direct PUT/DELETE requests and do not write back a fetched package revision. Similar HTTP/error-handling scaffolding does not establish a shared freshness requirement.",
+      "structural_rejection": "different_function_signature; generic package metadata versus BTreeMap<String, String> and distinct context/error types",
+      "evidence": [
+        {
+          "path": "pnpm/crates/cli/src/cli_args/deprecate/registry.rs",
+          "lines": "59-68",
+          "observation": "Fixed package reader adds ?write=true; comment explains current revision before package-document mutation."
+        },
+        {
+          "path": "pnpm/crates/cli/src/cli_args/dist_tag/registry.rs",
+          "lines": "180-223",
+          "observation": "Survivor fetches and deserializes a dist-tag map."
+        },
+        {
+          "path": "pnpm/crates/cli/src/cli_args/dist_tag/registry.rs",
+          "lines": "31-74,354-370",
+          "observation": "Writes directly to /-/package/<package>/dist-tags/<tag>; list reads use /-/package/<package>/dist-tags. No package-document revision is read then written."
+        }
+      ]
+    },
+    {
+      "rejected_index": 2,
+      "commit": "f876766c67811c61bd6421dcf9f61481718cc72a",
+      "changed_symbol": "fetchPackageMeta#1",
+      "survivor_symbol": "fetchPackumentWithStars#1",
+      "judgment": "useful_review_suppressed",
+      "reason": "The legacy star/unstar path performs the same package-document read-modify-write operation affected by the revision-freshness fix. It still fetches the plain package URL, changes users, and PUTs the full document using its fetched _rev. The stricter matcher discards this review lead because helper parameters and return types differ, despite the similar mutation contract.",
+      "structural_rejection": "different_function_signature; deprecation takes (FetchFromRegistry, PackageMetaRequest), star takes (LegacyStarActionArgs, string), with different return types and destructuring fallback",
+      "evidence": [
+        {
+          "path": "pnpm11/registry-access/commands/src/deprecation/common.ts",
+          "lines": "48-65,81-98",
+          "observation": "Fixed helper GETs ?write=true before changing version deprecation fields and PUTting the package document."
+        },
+        {
+          "path": "pnpm11/registry-access/commands/src/star/common.ts",
+          "lines": "71-74,89-112,120-137",
+          "observation": "Legacy fallback is reachable after supported modern-endpoint errors; it GETs without write=true, edits users, and PUTs the full document at /-rev/<fetched revision> when present."
+        },
+        {
+          "path": "pnpm11/network/fetch/src/fetchFromRegistry.ts",
+          "lines": "68-78,181-195",
+          "observation": "Shared fetch passes the caller's URL through; fullMetadata selects the Accept header, not a write=true query."
+        },
+        {
+          "path": "pnpm11/registry-access/commands/test/star.ts",
+          "lines": "36-62",
+          "observation": "Existing legacy-star test mocks a plain /foo GET and one fixed revision; it does not exercise stale versus current registry revisions. Read only, not executed."
+        }
+      ],
+      "limits": [
+        "Source-supported review lead, not a reproduced bug.",
+        "Modern star endpoints avoid the package-document fallback.",
+        "Actual stale-read behavior and write=true support of registries using the legacy fallback were not tested."
+      ]
+    },
+    {
+      "rejected_index": 9,
+      "commit": "dce692e95f1b9a81606cf91cc6e630198e72b09f",
+      "changed_symbol": "findSideEffectsCacheKey#1",
+      "survivor_symbol": "pickSideEffectsCacheKey#1",
+      "judgment": "false_positive_avoided",
+      "reason": "The new emptySideEffects check feeds a new global-virtual-store decision distinguishing an empty cache row from no row. That distinction tells an already placed shared slot to stage a build for effects outside the package. The hoisted importer has no shared-slot placement shortcut or getCacheRow consumer: it always imports the fetched package and uses the cache key only for file maps. Propagating this local key-generation change alone has no corresponding hoisted behavior to fix.",
+      "structural_rejection": "different_function_signature; PackageImportContext versus ImportPkgContext and different argument layout",
+      "evidence": [
+        {
+          "path": "pnpm11/installing/deps-restorer/src/linkAllPkgs.ts",
+          "lines": "146-170",
+          "observation": "Recognizes emptySideEffects, calculates a cache key, then calls getCacheRow and selectImportDir."
+        },
+        {
+          "path": "pnpm11/building/during-install/src/globalVirtualStoreSlot.ts",
+          "lines": "42-56,79-91",
+          "observation": "An empty row causes a previously placed slot to stage another build for outside effects. No staging token returns the regular package directory."
+        },
+        {
+          "path": "pnpm11/installing/deps-restorer/src/linkHoistedModules.ts",
+          "lines": "377-398,407-435",
+          "observation": "Survivor's caller always imports; it has no getCacheRow/selectImportDir placement decision."
+        },
+        {
+          "path": "pnpm11/store/create-cafs-store/src/index.ts",
+          "lines": "96-113",
+          "observation": "Cache keys without an associated sideEffectsMaps entry do not change the imported file map or isBuilt result."
+        }
+      ],
+      "limits": [
+        "Judgment concerns propagation of this emitted edit, not a blanket claim that all empty-cache or hoisted build behavior is correct."
+      ]
+    }
+  ]
+}

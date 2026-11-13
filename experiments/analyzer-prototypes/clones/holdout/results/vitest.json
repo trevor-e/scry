@@ -1,0 +1,88 @@
+{
+  "repo": "vitest",
+  "root": "/private/tmp/scry-clone-holdout/vitest",
+  "revision": "47c87ebb5025010141cf8aa5dc69c5b57c10d2fa",
+  "matching": "exact",
+  "broad_candidates": 1,
+  "rejected_candidates": [
+    {
+      "check": "missed_clone_fix",
+      "commit": "47c87ebb5025010141cf8aa5dc69c5b57c10d2fa",
+      "subject": "fix(pool): terminate stuck orphaned forks workers (#11939)",
+      "changed": {
+        "path": "packages/vitest/src/node/pools/workers/forksWorker.ts",
+        "symbol": "ForksPoolWorker::constructor#1",
+        "line": 30,
+        "end_line": 38
+      },
+      "changed_at_fix": {
+        "path": "packages/vitest/src/node/pools/workers/forksWorker.ts",
+        "symbol": "ForksPoolWorker::constructor#1",
+        "line": 32,
+        "end_line": 41
+      },
+      "survivor": {
+        "path": "packages/vitest/src/node/pools/workers/threadsWorker.ts",
+        "symbol": "ThreadsPoolWorker::constructor#1",
+        "line": 19,
+        "end_line": 27
+      },
+      "similarity": 0.9821,
+      "normalized_exact": false,
+      "edits": [
+        {
+          "operation": "insert",
+          "old_line": 37,
+          "new_line": 37,
+          "survivor_line": 26,
+          "removed_tokens": [],
+          "added_tokens": [
+            "distPath",
+            "=",
+            "$id",
+            ".",
+            "distPath",
+            "this",
+            "."
+          ],
+          "old_excerpt": "    /** Loads {@link file://./../../../runtime/workers/forks.ts} */\n    this.entrypoint = resolve(options.distPath, 'workers/forks.js')\n  }",
+          "new_excerpt": "    this.stderr = options.project.vitest.logger.errorStream\n    this.distPath = options.distPath\n\n    /** Loads {@link file://./../../../runtime/workers/forks.ts} */\n    this.entrypoint = resolve(options.distPath, 'workers/forks.js')\n  }"
+        }
+      ],
+      "status": "candidate",
+      "structural_comparison": {
+        "left_mode": "resolved_locals",
+        "right_mode": "resolved_locals",
+        "left_fallback_reason": null,
+        "right_fallback_reason": null,
+        "decision": "rejected",
+        "reason": "different_complete_body"
+      }
+    }
+  ],
+  "source_files": 546,
+  "function_bodies": 2976,
+  "history_commits": 200,
+  "fix_labelled_commits": 109,
+  "changed_functions_compared": 158,
+  "missing_history_parents": 0,
+  "parse_error_files": [
+    "packages/browser/src/vendor-types.ts",
+    "packages/mocker/src/node/esmWalker.ts",
+    "packages/vitest/src/public/node.ts",
+    "packages/vitest/src/runtime/benchmark.ts",
+    "packages/vitest/src/runtime/runner/types.ts"
+  ],
+  "candidates_omitted_by_per_function_cap": 0,
+  "findings": [],
+  "limitations": [
+    "Fix labels select history; do not prove defect fixes.",
+    "Identifier normalization preserves calls, properties, types, literals and operators but loses local variable identity.",
+    "Nested closures are part of their enclosing function; tests/examples/generated/vendor paths excluded.",
+    "No semantic equivalence or proof of missing fix; surviving old fragments need manual inspection.",
+    "Exact mode requires identical signature/body tokens after conservative local binding renaming; unsupported bindings keep all names literal.",
+    "Same-spelled imports, type aliases and receiver members can still resolve differently across files; no type checker or module resolution.",
+    "Whole-body equality intentionally misses partial clones and copies with additional legitimate differences.",
+    "Current HEAD survivors only; deletions, renames, very small/large functions and older history may be missed."
+  ]
+}

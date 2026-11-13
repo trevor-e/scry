@@ -1,0 +1,107 @@
+{
+  "method": "Read-only source and Git review; target repository code and tests were not executed.",
+  "detector_sha256_verified": {
+    "probe.py": "2ba87ddaf9f90e456aee0fd8ce44ef15855018c486ea5394561631f9d796fdac",
+    "bindings.py": "aeaaa9d1555b5535840efcefe890d63531e59f86a850e2abc5adfe3ee2a349e8"
+  },
+  "detector_revision_verified": "f11f4268a0be6934425de33c4f3e494579de473a",
+  "protocol_commit": "ddbe489907060a3ac274eda8e1fd400383fec974",
+  "fresh_vs_previous_corpus": true,
+  "all_ten_pinned_revisions_and_origins_verified": true,
+  "all_ten_commands_use_frozen_parameters": true,
+  "dependencies": {
+    "tree-sitter": "0.26.1",
+    "tree-sitter-rust": "0.24.2",
+    "tree-sitter-typescript": "0.23.2"
+  },
+  "totals": {
+    "source_files": 9661,
+    "function_bodies": 77052,
+    "history_commits": 2000,
+    "fix_labelled_commits": 643,
+    "changed_functions_compared": 2156,
+    "missing_history_parents": 0,
+    "candidates_omitted_by_per_function_cap": 0,
+    "broad_candidates": 18,
+    "emitted_candidates": 1,
+    "rejected_candidates": 17,
+    "head_files_with_parse_errors": 10
+  },
+  "parse_error_files": {
+    "pnpm": [
+      "pnpm/crates/install-coordinator/src/metadata_file.rs",
+      "pnpm11/installing/deps-resolver/src/resolveDependencies.ts"
+    ],
+    "playwright": [
+      "packages/isomorphic/trace/trace.ts"
+    ],
+    "vitest": [
+      "packages/browser/src/vendor-types.ts",
+      "packages/mocker/src/node/esmWalker.ts",
+      "packages/vitest/src/public/node.ts",
+      "packages/vitest/src/runtime/benchmark.ts",
+      "packages/vitest/src/runtime/runner/types.ts"
+    ],
+    "vue-core": [
+      "packages/compiler-sfc/src/parse.ts",
+      "packages/runtime-dom/src/jsx.ts"
+    ]
+  },
+  "caveats": [
+    "The 200-commit limit selects non-merge commits before fix/bug/regression subject filtering; it is not 200 fixes per repository.",
+    "source_files counts eligible tracked paths; function_bodies counts extracted named function bodies before the 45-1200-token candidate index filter.",
+    "HEAD parse errors are recorded per file; unaffected parsed bodies in those files may still be included. Historical parse errors are not separately counted.",
+    "All repositories are shallow clones. No selected fix commit lacked its parent, but this does not cover older history.",
+    "The detector excludes test/example/generated/vendor paths, requires matching file extensions, and does not expand Rust macros.",
+    "The pnpm checkout includes extensive Rust and TypeScript source, so repository primary-language groups are not language-isolated samples.",
+    "One emitted candidate is too little to establish general precision. No independently labelled recall set was built; rejected samples do not estimate recall.",
+    "Exact whole-function matching intentionally misses partial clones and legitimate signature or body differences; same-spelled external types and members are not resolved."
+  ],
+  "rejected_example": {
+    "repo": "vitest",
+    "revision": "47c87ebb5025010141cf8aa5dc69c5b57c10d2fa",
+    "commit": "47c87ebb5025010141cf8aa5dc69c5b57c10d2fa",
+    "classification": "false_positive_avoided",
+    "emitted": false,
+    "changed": {
+      "path": "packages/vitest/src/node/pools/workers/forksWorker.ts",
+      "line": 32,
+      "end_line": 41
+    },
+    "survivor": {
+      "path": "packages/vitest/src/node/pools/workers/threadsWorker.ts",
+      "line": 19,
+      "end_line": 27
+    },
+    "detector_rejection": "different_complete_body",
+    "reason": "The constructor addition stores distPath for a new child-process watchdog. ThreadsPoolWorker uses node:worker_threads, a different entrypoint, and thread.terminate(); the fork PID watchdog does not transfer to this worker backend.",
+    "evidence": [
+      {
+        "path": "packages/vitest/src/node/pools/workers/forksWorker.ts",
+        "line": 37,
+        "fact": "Stores distPath; start uses it in watchProcess(this._fork, this.distPath) at line 72."
+      },
+      {
+        "path": "packages/vitest/src/node/pools/workers/threadsWorker.ts",
+        "line": 26,
+        "fact": "Entrypoint literal is workers/threads.js, unlike workers/forks.js; this whole-body difference is enough for exact rejection."
+      },
+      {
+        "path": "packages/vitest/src/node/pools/workers/threadsWorker.ts",
+        "line": 43,
+        "fact": "Constructs node:worker_threads Worker; stop calls thread.terminate at line 65."
+      },
+      {
+        "path": "packages/vitest/src/node/pools/watchdog.ts",
+        "line": 10,
+        "fact": "watchProcess requires ChildProcess and tracks child.pid."
+      },
+      {
+        "path": "packages/vitest/src/runtime/workers/watchdog.ts",
+        "line": 21,
+        "fact": "On parent IPC disconnect the watchdog kills tracked process IDs with SIGKILL."
+      }
+    ],
+    "confidence": "Source-supported avoided false positive; no target runtime execution."
+  }
+}
